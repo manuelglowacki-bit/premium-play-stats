@@ -12,7 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ClassementRouteImport } from './routes/classement'
 import { Route as GazetteRouteImport } from './routes/gazette'
+import { Route as ProfilRouteImport } from './routes/profil'
 import { Route as PronosticsRouteImport } from './routes/pronostics'
+import { Route as StatistiquesRouteImport } from './routes/statistiques'
+import { Route as TropheesRouteImport } from './routes/trophees'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,9 +32,24 @@ const GazetteRoute = GazetteRouteImport.update({
   path: '/gazette',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProfilRoute = ProfilRouteImport.update({
+  id: '/profil',
+  path: '/profil',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PronosticsRoute = PronosticsRouteImport.update({
   id: '/pronostics',
   path: '/pronostics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StatistiquesRoute = StatistiquesRouteImport.update({
+  id: '/statistiques',
+  path: '/statistiques',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TropheesRoute = TropheesRouteImport.update({
+  id: '/trophees',
+  path: '/trophees',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -39,34 +57,68 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/classement': typeof ClassementRoute
   '/gazette': typeof GazetteRoute
+  '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
+  '/statistiques': typeof StatistiquesRoute
+  '/trophees': typeof TropheesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/classement': typeof ClassementRoute
   '/gazette': typeof GazetteRoute
+  '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
+  '/statistiques': typeof StatistiquesRoute
+  '/trophees': typeof TropheesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/classement': typeof ClassementRoute
   '/gazette': typeof GazetteRoute
+  '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
+  '/statistiques': typeof StatistiquesRoute
+  '/trophees': typeof TropheesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/classement' | '/gazette' | '/pronostics'
+  fullPaths:
+    | '/'
+    | '/classement'
+    | '/gazette'
+    | '/profil'
+    | '/pronostics'
+    | '/statistiques'
+    | '/trophees'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/classement' | '/gazette' | '/pronostics'
-  id: '__root__' | '/' | '/classement' | '/gazette' | '/pronostics'
+  to:
+    | '/'
+    | '/classement'
+    | '/gazette'
+    | '/profil'
+    | '/pronostics'
+    | '/statistiques'
+    | '/trophees'
+  id:
+    | '__root__'
+    | '/'
+    | '/classement'
+    | '/gazette'
+    | '/profil'
+    | '/pronostics'
+    | '/statistiques'
+    | '/trophees'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ClassementRoute: typeof ClassementRoute
   GazetteRoute: typeof GazetteRoute
+  ProfilRoute: typeof ProfilRoute
   PronosticsRoute: typeof PronosticsRoute
+  StatistiquesRoute: typeof StatistiquesRoute
+  TropheesRoute: typeof TropheesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -92,11 +144,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GazetteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/profil': {
+      id: '/profil'
+      path: '/profil'
+      fullPath: '/profil'
+      preLoaderRoute: typeof ProfilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pronostics': {
       id: '/pronostics'
       path: '/pronostics'
       fullPath: '/pronostics'
       preLoaderRoute: typeof PronosticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/statistiques': {
+      id: '/statistiques'
+      path: '/statistiques'
+      fullPath: '/statistiques'
+      preLoaderRoute: typeof StatistiquesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trophees': {
+      id: '/trophees'
+      path: '/trophees'
+      fullPath: '/trophees'
+      preLoaderRoute: typeof TropheesRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -106,7 +179,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ClassementRoute: ClassementRoute,
   GazetteRoute: GazetteRoute,
+  ProfilRoute: ProfilRoute,
   PronosticsRoute: PronosticsRoute,
+  StatistiquesRoute: StatistiquesRoute,
+  TropheesRoute: TropheesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

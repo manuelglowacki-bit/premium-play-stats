@@ -67,7 +67,7 @@ export function Leaderboard() {
   }, []);
 
   return (
-    <section id="classement" className="glass sheen glow-sky animate-rise p-5 sm:p-7">
+    <section className="glass sheen glow-sky animate-rise p-5 sm:p-7">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4 sm:flex sm:justify-between">
         <div className="min-w-0">
           <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground">
