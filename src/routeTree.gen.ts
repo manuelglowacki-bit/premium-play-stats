@@ -10,33 +10,63 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ClassementRouteImport } from './routes/classement'
+import { Route as GazetteRouteImport } from './routes/gazette'
+import { Route as PronosticsRouteImport } from './routes/pronostics'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ClassementRoute = ClassementRouteImport.update({
+  id: '/classement',
+  path: '/classement',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GazetteRoute = GazetteRouteImport.update({
+  id: '/gazette',
+  path: '/gazette',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PronosticsRoute = PronosticsRouteImport.update({
+  id: '/pronostics',
+  path: '/pronostics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/classement': typeof ClassementRoute
+  '/gazette': typeof GazetteRoute
+  '/pronostics': typeof PronosticsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/classement': typeof ClassementRoute
+  '/gazette': typeof GazetteRoute
+  '/pronostics': typeof PronosticsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/classement': typeof ClassementRoute
+  '/gazette': typeof GazetteRoute
+  '/pronostics': typeof PronosticsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/classement' | '/gazette' | '/pronostics'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/classement' | '/gazette' | '/pronostics'
+  id: '__root__' | '/' | '/classement' | '/gazette' | '/pronostics'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ClassementRoute: typeof ClassementRoute
+  GazetteRoute: typeof GazetteRoute
+  PronosticsRoute: typeof PronosticsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +78,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/classement': {
+      id: '/classement'
+      path: '/classement'
+      fullPath: '/classement'
+      preLoaderRoute: typeof ClassementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/gazette': {
+      id: '/gazette'
+      path: '/gazette'
+      fullPath: '/gazette'
+      preLoaderRoute: typeof GazetteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pronostics': {
+      id: '/pronostics'
+      path: '/pronostics'
+      fullPath: '/pronostics'
+      preLoaderRoute: typeof PronosticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ClassementRoute: ClassementRoute,
+  GazetteRoute: GazetteRoute,
+  PronosticsRoute: PronosticsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
