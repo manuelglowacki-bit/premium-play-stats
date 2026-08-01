@@ -32,7 +32,7 @@ function Podium({ players }: { players: Player[] }) {
       {order.map((player, i) => (
         <div
           key={player.name}
-          className={`relative flex flex-1 flex-col items-center justify-end rounded-2xl border bg-gradient-to-b px-2 pb-4 ${heights[i]} ${accents[i]} animate-rise`}
+          className={`relative flex flex-1 flex-col items-center justify-end rounded-2xl border bg-gradient-to-b px-2 pb-4 ${i === 1 ? "pt-24" : "pt-16"} ${heights[i]} ${accents[i]} animate-rise`}
           style={{ animationDelay: `${i * 120}ms` }}
         >
           {i === 1 && (
