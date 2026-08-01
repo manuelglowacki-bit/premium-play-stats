@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Crown, Minus, MoveUpRight, Trophy } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { clubOf, ranking, type Player } from "@/lib/prono-data";
 import { ClubCrest } from "./ClubCrest";
 
@@ -67,7 +68,7 @@ export function Leaderboard() {
   }, []);
 
   return (
-    <section id="classement" className="glass sheen glow-sky animate-rise p-5 sm:p-7">
+    <section className="glass sheen glow-sky animate-rise p-5 sm:p-7">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4 sm:flex sm:justify-between">
         <div className="min-w-0">
           <p className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground">
@@ -77,9 +78,12 @@ export function Leaderboard() {
             <Trophy className="size-6 text-gold icon-lume" /> Classement général
           </h2>
         </div>
-        <button className="tap inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-3 py-2 text-xs font-semibold text-accent">
+        <Link
+          to="/classement"
+          className="tap inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-3 py-2 text-xs font-semibold text-accent"
+        >
           Complet <ChevronRight className="size-4" />
-        </button>
+        </Link>
       </div>
 
       <div className="mt-7">
