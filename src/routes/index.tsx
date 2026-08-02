@@ -46,7 +46,7 @@ function Index() {
           </p>
           <h1 className="mt-5 font-display text-[clamp(2.6rem,7vw,4.6rem)] leading-[0.88] tracking-tight">
             PRÉDIS LES RÉSULTATS DE
-            <span className="block text-primary">LA LIGUE 1</span>
+            <span className="block text-gold">LA LIGUE 1</span>
           </h1>
           <p className="mt-4 text-sm text-muted-foreground sm:text-base">
             Affronte tes amis, fais les bons pronos et deviens le champion des pronostics.
