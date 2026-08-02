@@ -16,9 +16,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <img
           src={stadium}
           alt=""
-          className="size-full object-cover opacity-20 mix-blend-luminosity"
+          className="size-full object-cover opacity-60"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/92 to-background" />
+        <div className="absolute inset-0 bg-gradient-to-b from-background/55 via-background/70 to-background/85" />
       </div>
       <div
         aria-hidden
