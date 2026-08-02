@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Bell, ChevronDown } from "lucide-react";
+import stadium from "@/assets/stadium-night.jpg";
 import { BottomNav } from "./BottomNav";
 import { ClubCrest } from "./ClubCrest";
 import { navItems } from "./nav-items";
@@ -11,6 +12,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="relative min-h-screen overflow-hidden">
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0">
+        <img
+          src={stadium}
+          alt=""
+          className="size-full object-cover opacity-20 mix-blend-luminosity"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-background/85 via-background/92 to-background" />
+      </div>
       <div
         aria-hidden
         className="pointer-events-none absolute -right-40 top-24 size-[36rem] rounded-full bg-accent/20 blur-[120px] animate-drift"
