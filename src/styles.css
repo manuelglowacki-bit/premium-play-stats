@@ -226,8 +226,8 @@
 @utility glass {
   background: linear-gradient(
     140deg,
-    oklch(0.35 0.05 250 / 0.42),
-    oklch(0.2 0.035 250 / 0.55)
+    oklch(0.3 0.05 256 / 0.4),
+    oklch(0.15 0.03 256 / 0.6)
   );
   border: 1px solid var(--border);
   backdrop-filter: blur(18px) saturate(135%);
