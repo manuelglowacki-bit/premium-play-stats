@@ -10,16 +10,28 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ClassementRouteImport } from './routes/classement'
 import { Route as GazetteRouteImport } from './routes/gazette'
 import { Route as ProfilRouteImport } from './routes/profil'
 import { Route as PronosticsRouteImport } from './routes/pronostics'
-import { Route as StatistiquesRouteImport } from './routes/statistiques'
+import { Route as StatsRouteImport } from './routes/stats'
 import { Route as TropheesRouteImport } from './routes/trophees'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ClassementRoute = ClassementRouteImport.update({
@@ -42,9 +54,9 @@ const PronosticsRoute = PronosticsRouteImport.update({
   path: '/pronostics',
   getParentRoute: () => rootRouteImport,
 } as any)
-const StatistiquesRoute = StatistiquesRouteImport.update({
-  id: '/statistiques',
-  path: '/statistiques',
+const StatsRoute = StatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TropheesRoute = TropheesRouteImport.update({
@@ -55,69 +67,83 @@ const TropheesRoute = TropheesRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
   '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
-  '/statistiques': typeof StatistiquesRoute
+  '/stats': typeof StatsRoute
   '/trophees': typeof TropheesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
   '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
-  '/statistiques': typeof StatistiquesRoute
+  '/stats': typeof StatsRoute
   '/trophees': typeof TropheesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
   '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
-  '/statistiques': typeof StatistiquesRoute
+  '/stats': typeof StatsRoute
   '/trophees': typeof TropheesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
+    | '/auth'
     | '/classement'
     | '/gazette'
     | '/profil'
     | '/pronostics'
-    | '/statistiques'
+    | '/stats'
     | '/trophees'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
+    | '/auth'
     | '/classement'
     | '/gazette'
     | '/profil'
     | '/pronostics'
-    | '/statistiques'
+    | '/stats'
     | '/trophees'
   id:
     | '__root__'
     | '/'
+    | '/admin'
+    | '/auth'
     | '/classement'
     | '/gazette'
     | '/profil'
     | '/pronostics'
-    | '/statistiques'
+    | '/stats'
     | '/trophees'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
+  AuthRoute: typeof AuthRoute
   ClassementRoute: typeof ClassementRoute
   GazetteRoute: typeof GazetteRoute
   ProfilRoute: typeof ProfilRoute
   PronosticsRoute: typeof PronosticsRoute
-  StatistiquesRoute: typeof StatistiquesRoute
+  StatsRoute: typeof StatsRoute
   TropheesRoute: typeof TropheesRoute
 }
 
@@ -128,6 +154,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/classement': {
@@ -158,11 +198,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PronosticsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/statistiques': {
-      id: '/statistiques'
-      path: '/statistiques'
-      fullPath: '/statistiques'
-      preLoaderRoute: typeof StatistiquesRouteImport
+    '/stats': {
+      id: '/stats'
+      path: '/stats'
+      fullPath: '/stats'
+      preLoaderRoute: typeof StatsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/trophees': {
@@ -177,23 +217,15 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
+  AuthRoute: AuthRoute,
   ClassementRoute: ClassementRoute,
   GazetteRoute: GazetteRoute,
   ProfilRoute: ProfilRoute,
   PronosticsRoute: PronosticsRoute,
-  StatistiquesRoute: StatistiquesRoute,
+  StatsRoute: StatsRoute,
   TropheesRoute: TropheesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

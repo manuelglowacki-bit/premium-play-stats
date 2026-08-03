@@ -1,122 +1,110 @@
-import type { ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
-import { Bell, ChevronDown } from "lucide-react";
-import { BottomNav } from "./BottomNav";
-import { ClubCrest } from "./ClubCrest";
-import { navItems } from "./nav-items";
-import { clubOf } from "@/lib/prono-data";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { Trophy, Calendar, Newspaper, User, Shield } from "lucide-react";
 
-export function AppShell({ children }: { children: ReactNode }) {
-  const club = clubOf("tfc");
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const routerState = useRouterState();
+  const currentPath = routerState.location.pathname;
+
+  const navItems = [
+    { label: "Accueil", to: "/", icon: Calendar },
+    { label: "Pronos", to: "/pronostics", icon: Calendar },
+    { label: "Classement", to: "/classement", icon: Trophy },
+    { label: "Gazette", to: "/gazette", icon: Newspaper },
+    { label: "Profil", to: "/profil", icon: User },
+    { label: "Admin", to: "/admin", icon: Shield },
+  ];
 
   return (
-    <div className="relative min-h-screen overflow-hidden text-white flex flex-col">
-      {/* Arrière-plan global avec l'image bg-joueurs */}
-      <div 
-        className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat pointer-events-none"
-        style={{ backgroundImage: `url('/bg-joueurs.jpg')` }}
-      >
-        {/* Voile sombre pour garder une excellente lisibilité sur toutes les pages */}
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/90 via-slate-950/80 to-slate-950/95 backdrop-blur-[2px]" />
+    <div className="min-h-screen bg-[#030712] text-slate-100 relative flex flex-col font-sans">
+      
+      {/* ================= ARRIÈRE-PLAN STADE FIXE GLOBAL ================= */}
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+        {/* Remplace l'URL ci-dessous par ton image locale si tu en as une (ex: "/stade.jpg") */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center opacity-15 filter brightness-75 scale-105"
+          style={{ backgroundImage: `url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1920&auto=format&fit=crop')` }}
+        />
+        {/* Assombrissement progressif pour garder un confort de lecture optimal */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#030712]/95 via-[#060b16]/90 to-[#030712]/95 backdrop-blur-[2px]" />
       </div>
 
-      {/* Éléments lumineux décoratifs en arrière-plan */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-40 top-24 size-[36rem] rounded-full bg-accent/20 blur-[120px] animate-drift"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-52 top-[46rem] size-[34rem] rounded-full bg-primary/15 blur-[130px] animate-drift"
-      />
-
-      <header className="relative z-10 mx-auto flex max-w-[1240px] items-center gap-8 px-5 py-4 sm:px-7 w-full">
-        <Link to="/" className="flex min-w-0 items-center gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-full border-2 border-primary font-display text-sm font-extrabold text-primary icon-lume">
-            L1
-          </span>
-          <span className="min-w-0 leading-none">
-            <b className="block font-display text-lg tracking-wide">PRONO</b>
-            <strong className="block font-display text-base tracking-wide text-accent">
-              LIGUE <i className="not-italic text-primary">1</i>
-            </strong>
-          </span>
-        </Link>
-
-        <nav className="mx-auto hidden items-center gap-7 lg:flex" aria-label="Navigation">
-          {navItems.map(({ label, to }) => (
-            <Link
-              key={to}
-              to={to}
-              className="text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
-              activeProps={{
-                className: "text-foreground [text-shadow:0_0_18px_var(--sky)]",
-              }}
-              activeOptions={{ exact: to === "/" }}
-            >
-              {label}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="ml-auto flex shrink-0 items-center gap-3">
-          <button className="tap relative grid size-10 place-items-center rounded-full border border-border text-accent">
-            <Bell className="size-4 icon-lume" />
-            <b className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-primary text-[9px] text-primary-foreground">
-              3
-            </b>
-          </button>
-          <Link
-            to="/profil"
-            className="tap flex items-center gap-2 rounded-full border border-border px-2 py-1.5 text-left"
-          >
-            <ClubCrest club={club} size={22} />
-            <span className="hidden sm:block">
-              <strong className="block text-xs">Red evils</strong>
-              <small className="block text-[10px] text-muted-foreground">Mon profil</small>
-            </span>
-            <ChevronDown className="size-4 text-muted-foreground" />
+      {/* ================= HEADER / NAVIGATION ================= */}
+      <header className="sticky top-0 z-50 border-b border-slate-800/80 bg-[#060b16]/80 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3.5 md:px-8">
+          
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="size-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-display font-black text-xl shadow-[0_0_15px_rgba(16,185,129,0.2)] group-hover:scale-105 transition-transform">
+              L1
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display text-base font-extrabold uppercase tracking-wider text-white">
+                  Prono Ligue 1
+                </span>
+                <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <span className="font-mono text-[10px] text-slate-400 uppercase tracking-widest block">
+                Saison 2026-2027
+              </span>
+            </div>
           </Link>
+
+          <nav className="hidden lg:flex items-center gap-1.5 bg-[#0d1322]/90 border border-slate-800 p-1.5 rounded-2xl shadow-inner">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = currentPath === item.to;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl font-display text-xs font-bold transition-all ${
+                    isActive
+                      ? "bg-emerald-500 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                  }`}
+                >
+                  <Icon size={15} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="hidden sm:flex items-center gap-2 rounded-2xl border border-slate-800 bg-[#0d1322] px-3.5 py-1.5 shadow-inner">
+            <span className="size-2 rounded-full bg-emerald-500" />
+            <span className="font-mono text-xs font-bold text-slate-300">J1 • 2026</span>
+          </div>
+
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto max-w-[1240px] w-full space-y-5 px-4 pb-32 pt-3 sm:space-y-6 sm:px-7 lg:pb-16 flex-1">
+      {/* ================= CONTENU DE LA PAGE (Z-10 pour passer au-dessus du fond) ================= */}
+      <main className="relative z-10 flex-1 px-4 py-6 md:px-8 md:py-10">
         {children}
-
-        <footer className="flex flex-wrap items-center gap-2 px-1 pb-2 text-xs text-muted-foreground">
-          <span className="font-display text-base tracking-wide text-foreground">PRONO LIGUE</span>
-          Le football se joue aussi dans les pronostics.
-        </footer>
       </main>
 
-      <BottomNav />
-    </div>
-  );
-}
-
-export function PageHead({
-  kicker,
-  title,
-  subtitle,
-  action,
-}: {
-  kicker: string;
-  title: string;
-  subtitle?: string;
-  action?: ReactNode;
-}) {
-  return (
-    <section className="glass sheen glow-sky animate-rise grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4 p-5 sm:flex sm:justify-between sm:p-8">
-      <div className="min-w-0">
-        <p className="font-mono text-[10px] tracking-[0.18em] text-accent">{kicker}</p>
-        <h1 className="mt-2 font-display text-[clamp(2rem,5vw,3.2rem)] leading-none tracking-tight">
-          {title}
-        </h1>
-        {subtitle ? (
-          <p className="mt-3 text-sm text-muted-foreground">{subtitle}</p>
-        ) : null}
+      {/* ================= NAVIGATION MOBILE ================= */}
+      <div className="lg:hidden fixed bottom-4 left-4 right-4 z-50">
+        <nav className="flex items-center justify-around bg-[#060b16]/95 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-2 shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPath === item.to;
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${
+                  isActive ? "text-emerald-400 bg-emerald-500/10" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Icon size={18} />
+                <span className="text-[10px] font-mono font-bold">{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
-    </section>
+
+    </div>
   );
 }
