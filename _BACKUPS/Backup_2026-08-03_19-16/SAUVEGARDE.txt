@@ -1,0 +1,10 @@
+========================================
+SAUVEGARDE DU PROJET
+========================================
+
+Date : 08/03/2026 19:16:18
+
+Cette sauvegarde contient le projet complet
+(sans node_modules, dist et .git).
+
+========================================

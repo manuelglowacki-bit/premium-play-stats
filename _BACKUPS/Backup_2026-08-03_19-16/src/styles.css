@@ -1,0 +1,299 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-display: "Barlow Condensed", sans-serif;
+  --font-sans: "Outfit", sans-serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
+  --color-gold: var(--gold);
+  --color-sky: var(--sky);
+  --color-mint: var(--mint);
+  --animate-rise: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pop: pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-drift: drift 18s ease-in-out infinite alternate;
+  --animate-shine: shine 6s linear infinite;
+  --animate-flash: flash 1.1s ease-out both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4%, -6%, 0) scale(1.15);
+  }
+}
+@keyframes shine {
+  from {
+    transform: translateX(-120%) rotate(8deg);
+  }
+  to {
+    transform: translateX(220%) rotate(8deg);
+  }
+}
+@keyframes flash {
+  0% {
+    background-color: color-mix(in oklab, var(--sky) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.875rem;
+
+  /* Palette Prono Ligue 1 - Base sombre par défaut */
+  --background: #030914;
+  --foreground: #ffffff;
+  --card: #0b1325;
+  --card-foreground: #ffffff;
+  --popover: #0b1325;
+  --popover-foreground: #ffffff;
+
+  /* Couleurs d'action et accents */
+  --primary: #1652f0;
+  --primary-foreground: #ffffff;
+  --secondary: #1e293b;
+  --secondary-foreground: #ffffff;
+  --muted: #131c31;
+  --muted-foreground: #94a3b8;
+  --accent: #1e293b;
+  --accent-foreground: #ffffff;
+  
+  /* Retours utilisateur et états */
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #1e293b;
+  --input: #1e293b;
+  --ring: #1652f0;
+  
+  /* Couleurs sémantiques personnalisées */
+  --sky: #1652f0; /* Bleu principal */
+  --gold: #f5a623; /* Or pour les couronnes et titres */
+  --mint: #10b981; /* Vert de succès/hausse */
+
+  /* Graphiques */
+  --chart-1: #1652f0;
+  --chart-2: #f5a623;
+  --chart-3: #10b981;
+  --chart-4: #ef4444;
+  --chart-5: #94a3b8;
+
+  /* Sidebar */
+  --sidebar: #0b1325;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #1652f0;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #1652f0;
+}
+
+/* Le mode sombre (identique à :root car le design est 100% orienté "dark mode") */
+.dark {
+  --background: #030914;
+  --foreground: #ffffff;
+  --card: #0b1325;
+  --card-foreground: #ffffff;
+  --popover: #0b1325;
+  --popover-foreground: #ffffff;
+  --primary: #1652f0;
+  --primary-foreground: #ffffff;
+  --secondary: #1e293b;
+  --secondary-foreground: #ffffff;
+  --muted: #131c31;
+  --muted-foreground: #94a3b8;
+  --accent: #1e293b;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #1e293b;
+  --input: #1e293b;
+  --ring: #1652f0;
+  --chart-1: #1652f0;
+  --chart-2: #f5a623;
+  --chart-3: #10b981;
+  --chart-4: #ef4444;
+  --chart-5: #94a3b8;
+  --sidebar: #0b1325;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #1652f0;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #1652f0;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    
+    /* 
+      Ici on superpose 3 couches :
+      1. Un dégradé qui va de la gauche (très sombre) vers la droite (transparent) pour lire le texte
+      2. Un dégradé qui part du bas (très sombre) pour faire un fondu en scrollant
+      3. Ton image de fond
+    */
+    background-image: 
+      linear-gradient(to right, rgba(3, 9, 20, 1) 10%, rgba(3, 9, 20, 0.4) 60%, rgba(3, 9, 20, 0) 100%),
+      linear-gradient(to top, rgba(3, 9, 20, 1) 0%, rgba(3, 9, 20, 0) 50%),
+      url('/bg-joueurs.png'); /* <-- ATTENTION : Mets le nom exact de ton fichier image ici */
+      
+    background-size: cover;
+    background-position: top right;
+    background-attachment: fixed; /* Maintient l'image en place quand on scroll */
+    background-repeat: no-repeat;
+    
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@utility glass {
+  background: linear-gradient(
+    140deg,
+    rgba(11, 19, 37, 0.6), /* Légère opacité sur le bleu de la carte */
+    rgba(3, 9, 20, 0.8)    /* Fondu vers le fond de l'application */
+  );
+  border: 1px solid var(--border);
+  backdrop-filter: blur(18px) saturate(135%);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
+  border-radius: var(--radius-2xl);
+}
+
+@utility sheen {
+  position: relative;
+  overflow: hidden;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.25),
+      transparent
+    );
+  }
+  &::after {
+    content: "";
+    position: absolute;
+    top: -60%;
+    left: 0;
+    width: 45%;
+    height: 220%;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.05),
+      transparent
+    );
+    animation: var(--animate-shine);
+  }
+}
+
+@utility glow-sky {
+  box-shadow: 0 0 0 1px rgba(22, 82, 240, 0.3), 0 26px 70px -30px rgba(22, 82, 240, 0.4);
+}
+
+@utility glow-warm {
+  box-shadow: 0 0 0 1px rgba(245, 166, 35, 0.3), 0 26px 70px -30px rgba(245, 166, 35, 0.4);
+}
+
+@utility tap {
+  transition:
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.22s ease,
+    filter 0.22s ease;
+  &:hover {
+    transform: translateY(-2px) scale(1.035);
+    filter: brightness(1.06);
+  }
+  &:active {
+    transform: scale(0.98);
+  }
+}
+
+@utility icon-lume {
+  filter: drop-shadow(0 0 10px color-mix(in oklab, currentColor 55%, transparent));
+}
