@@ -1,5 +1,15 @@
-import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
-import { Trophy, Calendar, Newspaper, User, Shield, LogIn, LogOut } from "lucide-react";
+﻿import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
+import {
+  Home,
+  Target,
+  Trophy,
+  Newspaper,
+  BarChart3,
+  User,
+  Shield,
+  LogIn,
+  LogOut,
+} from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -29,10 +39,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const navItems = [
-    { label: "Accueil", to: "/", icon: Calendar },
-    { label: "Pronos", to: "/pronostics", icon: Calendar },
+    { label: "Accueil", to: "/", icon: Home },
+    { label: "Pronos", to: "/pronostics", icon: Target },
     { label: "Classement", to: "/classement", icon: Trophy },
     { label: "Gazette", to: "/gazette", icon: Newspaper },
+    { label: "Stats", to: "/stats", icon: BarChart3 },
     { label: "Profil", to: "/profil", icon: User },
     { label: "Admin", to: "/admin", icon: Shield },
   ];
@@ -40,22 +51,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-[#030712] text-slate-100 relative flex flex-col font-sans">
       
-      {/* ================= ARRIÈRE-PLAN STADE FIXE GLOBAL ================= */}
-      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-        <div 
-          className="absolute inset-0 bg-cover bg-center opacity-15 filter brightness-75 scale-105"
-          style={{ backgroundImage: `url('https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1920&auto=format&fit=crop')` }}
+      {/* ================= ARRIÈRE-PLAN GLOBAL PREMIUM ================= */}
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-[#050b14]">
+        
+        {/* Calque 1 : L'image de fond brute */}
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-90"
+          style={{
+            backgroundImage: "url('/background-l1.png')",
+            backgroundAttachment: "fixed",
+          }}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#030712]/95 via-[#060b16]/90 to-[#030712]/95 backdrop-blur-[2px]" />
+        
+        {/* Calque 2 : Effet EA Sports / Vignette (Lumière au centre, sombre sur les bords) */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(6,11,22,0)_0%,rgba(3,7,18,0.85)_100%)]" />
+        
+        {/* Calque 3 : Reflets subtils aux couleurs de la Ligue 1 (émeraude/bleu) */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/20 via-transparent to-emerald-500/10 mix-blend-overlay" />
       </div>
 
       {/* ================= HEADER / NAVIGATION ================= */}
-      <header className="sticky top-0 z-50 border-b border-slate-800/80 bg-[#060b16]/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-50 border-b border-slate-800/80 bg-[#060b16]/75 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3.5 md:px-8">
           
           <Link to="/" className="flex items-center gap-3 group">
-            <div className="size-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-display font-black text-xl shadow-[0_0_15px_rgba(16,185,129,0.2)] group-hover:scale-105 transition-transform">
-              L1
+            <div className="size-10 rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.2)] group-hover:scale-105 transition-transform">
+              <div
+                aria-hidden
+                className="size-full"
+                style={{
+                  backgroundImage: "url('/hero-l1.jpg')",
+                  backgroundSize: "119px 64px",
+                  backgroundPosition: "-73px -4px",
+                  backgroundRepeat: "no-repeat",
+                }}
+              />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -128,7 +158,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* ================= NAVIGATION MOBILE ================= */}
       <div className="lg:hidden fixed bottom-4 left-4 right-4 z-50">
-        <nav className="flex items-center justify-around bg-[#060b16]/95 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-2 shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
+        <nav className="flex items-center justify-around bg-[#060b16]/90 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-2 shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentPath === item.to;

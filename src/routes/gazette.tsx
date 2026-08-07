@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import { 
   Newspaper, 
@@ -12,6 +12,7 @@ import {
   Target, 
   MessageSquare 
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/gazette")({
   head: () => ({
@@ -26,8 +27,49 @@ export const Route = createFileRoute("/gazette")({
 const matchdaysGazette = ["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10", "J11", "J12", "J13", "J14"];
 
 function GazettePage() {
-  const [selectedDay, setSelectedDay] = useState(4); // J5 par défaut comme sur l'image
+  const [selectedDay, setSelectedDay] = useState(0); // J1 par défaut pour le début de saison
+  const [supportersStats, setSupportersStats] = useState<{ favorite_team: string; count: number }[]>([]);
   const scrollerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    async function fetchSupporters() {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('favorite_team')
+        .not('favorite_team', 'is', null);
+
+      if (!error && data) {
+        // Grouper et compter les supporters par équipe
+        const counts: Record<string, number> = {};
+        data.forEach(row => {
+          if (row.favorite_team) {
+            counts[row.favorite_team] = (counts[row.favorite_team] || 0) + 1;
+          }
+        });
+        const formatted = Object.entries(counts)
+          .map(([favorite_team, count]) => ({ favorite_team, count }))
+          .sort((a, b) => b.count - a.count);
+        setSupportersStats(formatted);
+      }
+    }
+    fetchSupporters();
+  }, []);
+
+  // Génération de la phrase éditoriale dynamique de début de saison (Phase 7)
+  const renderSeasonIntro = () => {
+    if (supportersStats.length === 0) {
+      return "Cette saison, la course aux pronostics s'annonce palpitante entre tous les passionnés !";
+    }
+    const parts = supportersStats.map(s => {
+      const teamName = s.favorite_team.toUpperCase();
+      const prefix = teamName === "OM" ? "l'OM" : teamName === "PSG" ? "le PSG" : `le ${s.favorite_team}`;
+      return `${s.count} ${s.count > 1 ? "joueurs soutiennent" : "joueur soutient"} ${prefix}`;
+    });
+    
+    if (parts.length === 1) return `Cette saison, ${parts[0]}...`;
+    if (parts.length === 2) return `Cette saison, ${parts[0]} et ${parts[1]}...`;
+    return `Cette saison, ${parts.slice(0, -1).join(", ")}, et ${parts[parts.length - 1]}...`;
+  };
 
   const scroll = (dir: -1 | 1) => {
     scrollerRef.current?.scrollBy({ left: dir * 140, behavior: "smooth" });
@@ -61,7 +103,7 @@ function GazettePage() {
 
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-[#060b16] px-4 py-2 font-mono text-xs text-slate-300 shadow-inner">
               <span className="size-2 rounded-full bg-blue-500 animate-pulse" />
-              ÉDITION J5 EN LIGNE
+              ÉDITION {matchdaysGazette[selectedDay]} EN LIGNE
             </div>
           </div>
         </section>
@@ -112,7 +154,7 @@ function GazettePage() {
         {/* ================= GRID SUPÉRIEUR : ÉDITO & JOUEUR DE LA SEMAINE ================= */}
         <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-6">
 
-          {/* CARTE ÉDITO À LA UNE */}
+          {/* CARTE ÉDITO À LA UNE (Phase 7 : Intégration des supporters) */}
           <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 flex flex-col justify-between shadow-[0_0_40px_rgba(0,0,0,0.6)]">
             <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none translate-x-10 translate-y-10">
               <Flame size={280} className="text-amber-400" />
@@ -120,20 +162,20 @@ function GazettePage() {
 
             <div className="relative z-10 space-y-4">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[10px] font-bold">
-                <Sparkles size={12} /> ÉDITO
+                <Sparkles size={12} /> ÉDITO — DÉBUT DE SAISON
               </span>
 
               <h2 className="font-display text-3xl md:text-4xl text-white tracking-tight leading-tight">
-                Le grand retournement de situation
+                Les forces en présence
               </h2>
 
               <p className="text-sm text-slate-300 leading-relaxed max-w-xl">
-                Personne n'avait vu venir un tel rythme. Alors que les stratégies semblaient figées, cette journée rebat totalement les cartes du classement général. Décryptage d'un week-end fou.
+                {renderSeasonIntro()}
               </p>
             </div>
 
             <div className="relative z-10 pt-8 mt-6 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono text-slate-400">
-              <span>La Rédac • 5 min de lecture</span>
+              <span>La Rédac • 3 min de lecture</span>
               <span className="text-emerald-400 flex items-center gap-1 hover:underline cursor-pointer">
                 Lire l'article <ArrowRight size={14} />
               </span>
@@ -149,7 +191,6 @@ function GazettePage() {
                 <Trophy size={12} /> JOUEUR DE LA SEMAINE
               </div>
 
-              {/* Cercle Avatar Hugo */}
               <div className="relative mx-auto size-24 rounded-full p-1 bg-gradient-to-tr from-amber-500 to-yellow-300 shadow-xl flex items-center justify-center">
                 <div className="size-full rounded-full bg-[#060b16] border-2 border-amber-400 flex items-center justify-center text-amber-400">
                   <span className="font-display text-3xl font-black">H</span>
@@ -164,7 +205,6 @@ function GazettePage() {
               </div>
             </div>
 
-            {/* Réactions / Émojis */}
             <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-center gap-3">
               <button className="tap flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300 hover:border-amber-500/50 transition-colors">
                 🔥 <span>14</span>
@@ -180,7 +220,6 @@ function GazettePage() {
         {/* ================= GRID INFÉRIEUR : ARTICLES SECONDAIRES ================= */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-          {/* ARTICLE 1 */}
           <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-7 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)]">
             <div className="space-y-3">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[10px] font-bold">
@@ -205,7 +244,6 @@ function GazettePage() {
             </div>
           </div>
 
-          {/* ARTICLE 2 */}
           <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-7 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)]">
             <div className="space-y-3">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-mono text-[10px] font-bold">

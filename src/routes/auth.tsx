@@ -25,23 +25,46 @@ function AuthPage() {
 
     try {
       if (isSignUp) {
-        const { error: signUpError } = await supabase.auth.signUp({
+        const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: { pseudo },
           },
         });
+
         if (signUpError) throw signUpError;
-        setMessage("Inscription réussie ! Tu peux maintenant te connecter.");
+
+        if (data.user) {
+          const { error: profileError } = await supabase
+            .from("profiles")
+            .upsert({
+              id: data.user.id,
+              pseudo,
+              avatar_url: null,
+              favorite_team: null,
+              is_admin: false,
+            });
+
+          if (profileError) {
+            console.error(profileError);
+          }
+        }
+
+        setMessage("Compte créé avec succès ! Tu peux maintenant te connecter.");
         setIsSignUp(false);
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        const { data, error: signInError } =
+          await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+
         if (signInError) throw signInError;
-        navigate({ to: "/pronostics" });
+
+        if (data.session) {
+          navigate({ to: "/pronostics" });
+        }
       }
     } catch (err: any) {
       setError(err.message || "Une erreur est survenue lors de l'authentification.");

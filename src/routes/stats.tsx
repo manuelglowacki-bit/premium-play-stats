@@ -1,14 +1,16 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/prono/AppShell";
-import { BarChart3, Award } from "lucide-react";
+import { BarChart3, Award, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/stats")({
   head: () => ({
     meta: [
-      { title: "Mes statistiques — Prono Ligue 1" },
+      { title: "Mes statistiques â€” Prono Ligue 1" },
       {
         name: "description",
-        content: "Retrouve tes statistiques détaillées, ta moyenne de points et tes performances journée par journée.",
+        content: "Retrouve tes statistiques dÃ©taillÃ©es, ta moyenne de points et tes performances journÃ©e par journÃ©e.",
       },
     ],
   }),
@@ -16,15 +18,42 @@ export const Route = createFileRoute("/stats")({
 });
 
 function StatsPage() {
+  const [supporters, setSupporters] = useState<{ team: string; count: number }[]>([]);
+
+  useEffect(() => {
+    async function loadSupportersStats() {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('favorite_team')
+        .not('favorite_team', 'is', null);
+
+      if (!error && data) {
+        const counts: Record<string, number> = {};
+        data.forEach(row => {
+          if (row.favorite_team) {
+            counts[row.favorite_team] = (counts[row.favorite_team] || 0) + 1;
+          }
+        });
+        const formatted = Object.entries(counts)
+          .map(([team, count]) => ({ team, count }))
+          .sort((a, b) => b.count - a.count);
+        setSupporters(formatted);
+      }
+    }
+    loadSupportersStats();
+  }, []);
+
+  const maxSupporterCount = Math.max(...supporters.map(s => s.count), 1);
+
   const statsData = {
     successRate: "68%",
     successSub: "34 / 50 pronos",
     exactScores: "2",
     exactSub: "4% des pronos",
     avgPoints: "22.4",
-    avgSub: "Par journée",
+    avgSub: "Par journÃ©e",
     bestDay: "41",
-    bestDaySub: "Points • J3",
+    bestDaySub: "Points â€¢ J3",
     playedDays: "5 / 34",
     playedSub: "15% de la saison",
   };
@@ -39,7 +68,7 @@ function StatsPage() {
 
   return (
     <AppShell>
-      {/* Effets de lumière d'arrière-plan */}
+      {/* Effets de lumiÃ¨re d'arriÃ¨re-plan */}
       <div aria-hidden className="pointer-events-none absolute inset-0 z-0 opacity-40">
         <div className="absolute left-1/3 top-10 h-96 w-96 rounded-full bg-blue-600/15 blur-[120px]" />
         <div className="absolute right-10 top-1/2 h-96 w-96 rounded-full bg-emerald-600/10 blur-[120px]" />
@@ -47,7 +76,7 @@ function StatsPage() {
 
       <div className="relative z-10 mx-auto max-w-6xl pb-20 space-y-8">
         
-        {/* EN-TÊTE */}
+        {/* EN-TÃŠTE */}
         <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 rounded-3xl border border-slate-800/80 bg-[#060b16]/50 p-6 md:p-8 backdrop-blur-sm">
           <div>
             <p className="mb-2 font-mono text-[10px] font-bold tracking-widest text-emerald-400 uppercase">
@@ -57,18 +86,18 @@ function StatsPage() {
               Mes statistiques
             </h1>
             <p className="mt-2 text-sm text-slate-400">
-              Tes performances journée par journée, analysées en détail.
+              Tes performances journÃ©e par journÃ©e, analysÃ©es en dÃ©tail.
             </p>
           </div>
           <div className="shrink-0">
             <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/50 px-4 py-2 font-mono text-[10px] font-bold text-slate-300">
               <BarChart3 size={14} className="text-emerald-400" />
-              5 JOURNÉES ANALYSÉES
+              5 JOURNÃ‰ES ANALYSÃ‰ES
             </span>
           </div>
         </header>
 
-        {/* GRILLE DES 5 CARTES CLÉS */}
+        {/* GRILLE DES 5 CARTES CLÃ‰S */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           
           {/* Carte 1 : Bons pronos */}
@@ -107,10 +136,10 @@ function StatsPage() {
             </div>
           </div>
 
-          {/* Carte 4 : Meilleure journée */}
+          {/* Carte 4 : Meilleure journÃ©e */}
           <div className="group rounded-2xl border border-slate-800 bg-[#0d1322] p-5 transition-all hover:border-indigo-500/40 hover:shadow-[0_0_20px_rgba(99,102,241,0.1)] flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-medium text-slate-400">Meilleure journée</span>
+              <span className="text-xs font-medium text-slate-400">Meilleure journÃ©e</span>
               <div className="h-2 w-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.8)]" />
             </div>
             <div>
@@ -119,10 +148,10 @@ function StatsPage() {
             </div>
           </div>
 
-          {/* Carte 5 : Journées jouées */}
+          {/* Carte 5 : JournÃ©es jouÃ©es */}
           <div className="group col-span-2 md:col-span-1 rounded-2xl border border-slate-800 bg-[#0d1322] p-5 transition-all hover:border-sky-500/40 hover:shadow-[0_0_20px_rgba(14,165,233,0.1)] flex flex-col justify-between">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-medium text-slate-400">Journées jouées</span>
+              <span className="text-xs font-medium text-slate-400">JournÃ©es jouÃ©es</span>
               <div className="h-2 w-2 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.8)]" />
             </div>
             <div>
@@ -133,11 +162,43 @@ function StatsPage() {
 
         </div>
 
-        {/* SECTION GRAPHIQUE : POINTS PAR JOURNÉE */}
+        {/* PHASE 6 : NOUVELLE CARTE SUPPORTERS */}
+        <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8">
+          <div className="flex items-center gap-2.5 mb-6">
+            <Users className="size-5 text-emerald-400" />
+            <h2 className="font-display text-2xl text-white">Supporters</h2>
+          </div>
+
+          <div className="space-y-4">
+            {supporters.length === 0 ? (
+              <p className="text-xs text-slate-500">Aucune Ã©quipe favorite enregistrÃ©e pour le moment.</p>
+            ) : (
+              supporters.map((item) => {
+                const percentage = Math.round((item.count / maxSupporterCount) * 100);
+                return (
+                  <div key={item.team} className="space-y-1.5">
+                    <div className="flex justify-between text-xs font-mono">
+                      <span className="font-bold text-white uppercase">{item.team}</span>
+                      <span className="text-emerald-400 font-bold">{item.count} {item.count > 1 ? "supporters" : "supporter"}</span>
+                    </div>
+                    <div className="h-3 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                      <div 
+                        className="h-full bg-gradient-to-r from-emerald-500 to-blue-500 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.max(percentage, 10)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+
+        {/* SECTION GRAPHIQUE : POINTS PAR JOURNÃ‰E */}
         <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-8">
             <div>
-              <h2 className="font-display text-2xl text-white">Points par journée</h2>
+              <h2 className="font-display text-2xl text-white">Points par journÃ©e</h2>
               <p className="text-xs text-slate-400 mt-1">Ta meilleure performance reste la J3 avec 41 points.</p>
             </div>
             <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-full w-max">
@@ -174,9 +235,9 @@ function StatsPage() {
           </div>
         </section>
 
-        {/* SECTION : RÉPARTITION DE TES PRONOS */}
+        {/* SECTION : RÃ‰PARTITION DE TES PRONOS */}
         <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8">
-          <h2 className="font-display text-2xl text-white mb-6">Répartition de tes pronos</h2>
+          <h2 className="font-display text-2xl text-white mb-6">RÃ©partition de tes pronos</h2>
 
           <div className="space-y-6">
             
@@ -206,11 +267,11 @@ function StatsPage() {
               </div>
             </div>
 
-            {/* Ligne 3 : Pronos ratés */}
+            {/* Ligne 3 : Pronos ratÃ©s */}
             <div>
               <div className="flex justify-between items-center text-sm mb-2">
                 <span className="font-medium text-slate-300 flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-slate-600"></span> Pronos ratés
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-600"></span> Pronos ratÃ©s
                 </span>
                 <span className="font-display text-slate-400 text-lg">32%</span>
               </div>
@@ -226,3 +287,4 @@ function StatsPage() {
     </AppShell>
   );
 }
+

@@ -1,1 +1,44 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------- */
+/* Transition d'entrée entre les pages (voir __root.tsx)            */
+/* ---------------------------------------------------------------- */
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-transition {
+  animation: page-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-transition {
+    animation: none;
+  }
+}
+
+html,
+body,
+#root{
+    min-height:100%;
+}
+
+body{
+    margin:0;
+    background-image:
+        linear-gradient(rgba(8,12,20,.72),rgba(8,12,20,.88)),
+        url('/background-l1.png');
+    background-size:cover;
+    background-position:center;
+    background-repeat:no-repeat;
+    background-attachment:fixed;
+}
+

@@ -1,394 +1,1870 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
-import { supabase } from "@/lib/supabase";
-import { 
-  Calendar, 
-  Users, 
-  Settings, 
-  RefreshCw, 
-  CheckCircle2, 
-  Save,
+import AdminRoute from "@/components/auth/AdminRoute";
+import {
+  type Player,
+  type Payment,
+  type Match,
+  type Matchday,
+  type Team,
+  type Season,
+  type Competition,
+  type AppSettings,
+  getPlayers,
+  deletePlayer as apiDeletePlayer,
+  setPlayerAdmin,
+  updatePlayer,
+  getPayments,
+  setPaymentPaid,
+  setPaymentAmount,
+  generateMissingPayments,
+  getMatches,
+  createMatch,
+  updateMatch,
+  deleteMatch as apiDeleteMatch,
+  getMatchdays,
+  createMatchday,
+  updateMatchday,
+  setMatchdayFinished,
+  deleteMatchday as apiDeleteMatchday,
+  getTeams,
+  getSeasons,
+  getCompetitions,
+  getSettings,
+  updateSettings,
+} from "@/services/adminService";
+
+import {
+  Users,
   Wallet,
-  Check,
+  Shield,
+  ShieldOff,
+  Settings as SettingsIcon,
+  Calendar,
+  RefreshCw,
+  CheckCircle2,
+  Save,
+  Trash2,
+  Plus,
+  Pencil,
   X,
-  Trash2
+  Lock,
+  Unlock,
+  AlertTriangle,
+  Crown,
+  Gift,
+  Timer,
+  CalendarClock,
+  Check,
 } from "lucide-react";
 
 export const Route = createFileRoute("/admin")({
-  head: () => ({
-    meta: [
-      { title: "Administration — Prono Ligue 1" },
-      { name: "description", content: "Centre de contrôle administrateur pour la gestion des pronostics et des joueurs." },
-    ],
-  }),
   component: AdminPage,
 });
 
-type AdminTab = "calendrier" | "joueurs" | "finances" | "reglages";
+// ============================================================
+// Données club (réutilisées de la page pronostics)
+// ============================================================
+const OFFICIAL_L1_CLUBS = [
+  { id: "angers", name: "Angers SCO", crestUrl: "/clubs/angers.png" },
+  { id: "monaco", name: "AS Monaco", crestUrl: "/clubs/monaco.png" },
+  { id: "auxerre", name: "AJ Auxerre", crestUrl: "/clubs/auxerre.png" },
+  { id: "brest", name: "Stade Brestois 29", crestUrl: "/clubs/brest.png" },
+  { id: "lehavre", name: "Le Havre AC", crestUrl: "/clubs/lehavre.png" },
+  { id: "lemans", name: "Le Mans FC", crestUrl: "/clubs/lemans.png" },
+  { id: "lens", name: "RC Lens", crestUrl: "/clubs/lens.png" },
+  { id: "lorient", name: "FC Lorient", crestUrl: "/clubs/lorient.png" },
+  { id: "lille", name: "LOSC Lille", crestUrl: "/clubs/lille.png" },
+  { id: "ol", name: "Olympique Lyonnais", crestUrl: "/clubs/ol.png" },
+  { id: "om", name: "Olympique de Marseille", crestUrl: "/clubs/om.png" },
+  { id: "parisfc", name: "Paris FC", crestUrl: "/clubs/parisfc.png" },
+  { id: "psg", name: "Paris Saint-Germain", crestUrl: "/clubs/psg.png" },
+  { id: "rennes", name: "Stade Rennais FC", crestUrl: "/clubs/rennes.png" },
+  { id: "strasbourg", name: "RC Strasbourg Alsace", crestUrl: "/clubs/strasbourg.png" },
+  { id: "tfc", name: "Toulouse FC", crestUrl: "/clubs/tfc.png" },
+  { id: "troyes", name: "ESTAC Troyes", crestUrl: "/clubs/troyes.png" },
+  { id: "nice", name: "OGC Nice", crestUrl: "/clubs/nice.png" },
+];
 
-function AdminPage() {
-  const [activeTab, setActiveTab] = useState<AdminTab>("finances");
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncSuccess, setSyncSuccess] = useState(false);
-  const [entryFee, setEntryFee] = useState(10);
+function clubOf(key: string | null | undefined) {
+  if (!key) return null;
+  const normalized = key.toLowerCase();
+  return (
+    OFFICIAL_L1_CLUBS.find((c) => c.id === normalized) ||
+    OFFICIAL_L1_CLUBS.find((c) => c.name.toLowerCase().includes(normalized)) ||
+    null
+  );
+}
 
-  const [players, setPlayers] = useState([
-    { id: "1", name: "Red evils", points: 112, rank: 5, hasPaid: false, amount: 0 },
-    { id: "2", name: "Éric", points: 136, rank: 1, hasPaid: true, amount: 10 },
-    { id: "3", name: "Samuel", points: 136, rank: 1, hasPaid: true, amount: 10 },
-    { id: "4", name: "Jo B", points: 128, rank: 2, hasPaid: false, amount: 0 },
-    { id: "5", name: "Hugo", points: 136, rank: 1, hasPaid: true, amount: 10 },
-  ]);
+function teamOf(teams: Team[], id: string | null | undefined) {
+  if (!id) return null;
+  return teams.find((t) => t.id === id) ?? null;
+}
 
-  const handleSync = () => {
-    setIsSyncing(true);
-    setSyncSuccess(false);
-    setTimeout(() => {
-      setIsSyncing(false);
-      setSyncSuccess(true);
-      setTimeout(() => setSyncSuccess(false), 3000);
-    }, 1200);
-  };
+function TeamBadge({ teams, teamId, size = "size-6" }: { teams: Team[]; teamId: string | null; size?: string }) {
+  const team = teamOf(teams, teamId);
+  const [broken, setBroken] = useState(false);
 
-  const togglePayment = (id: string) => {
-    setPlayers(prev => prev.map(p => {
-      if (p.id === id) {
-        const newStatus = !p.hasPaid;
-        return { ...p, hasPaid: newStatus, amount: newStatus ? entryFee : 0 };
-      }
-      return p;
-    }));
-  };
-
-  const handleDeletePlayer = async (id: string, name: string) => {
-    if (!window.confirm(`Voulez-vous vraiment supprimer le joueur ${name} ?`)) return;
-
-    try {
-      const { error } = await supabase.rpc("delete_user_by_id", { user_id: id });
-      if (error) {
-        console.warn("Note RPC Supabase :", error.message);
-      }
-    } catch (e) {
-      console.error("Erreur suppression :", e);
-    } finally {
-      setPlayers(prev => prev.filter(p => p.id !== id));
-    }
-  };
-
-  const totalCollected = players.reduce((acc, p) => acc + (p.hasPaid ? p.amount : 0), 0);
-  const totalExpected = players.length * entryFee;
+  if (!team) {
+    return (
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+        <span className={`${size} rounded-md bg-slate-800 border border-slate-700`} />
+        —
+      </span>
+    );
+  }
 
   return (
-    <AppShell>
-      <div className="relative z-10 mx-auto max-w-6xl pb-20 space-y-6">
-        
-        <header className="relative flex flex-col md:flex-row md:items-center justify-between gap-6 rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 shadow-[0_0_30px_rgba(0,0,0,0.5)] overflow-hidden">
-          <div className="absolute top-0 right-0 w-96 h-full bg-gradient-to-l from-blue-500/10 to-transparent pointer-events-none" />
-          
-          <div className="z-10">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-              <p className="font-mono text-[10px] font-bold tracking-widest text-emerald-400 uppercase">
-                CENTRE DE CONTRÔLE
-              </p>
-            </div>
-            <h1 className="font-display text-3xl md:text-4xl text-white tracking-tight">
-              Administration Premium
-            </h1>
-            <p className="mt-1 text-xs md:text-sm text-slate-400">
-              Chaque module reste ouvert pendant la synchronisation, sans retour automatique à l'accueil.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 z-10 shrink-0">
-            <div className="rounded-2xl border border-slate-800 bg-[#060b16] px-5 py-3">
-              <span className="block font-mono text-[10px] uppercase text-slate-500">ÉTAT</span>
-              <strong className="font-display text-sm text-emerald-400 flex items-center gap-1.5 mt-0.5">
-                Administration prête
-              </strong>
-            </div>
-            <button
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="tap flex items-center gap-2 rounded-2xl bg-emerald-500 hover:bg-emerald-600 px-5 py-3 font-display text-xs font-bold text-slate-950 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] disabled:opacity-50"
-            >
-              <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-              {isSyncing ? "Synchro..." : "Synchroniser"}
-            </button>
-          </div>
-        </header>
-
-        {syncSuccess && (
-          <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-400 font-mono text-xs flex items-center gap-2">
-            <CheckCircle2 size={16} /> Synchronisation réussie avec la base de données !
-          </div>
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`relative ${size} shrink-0 rounded-md overflow-hidden bg-white/5 border border-slate-800 flex items-center justify-center`}>
+        {broken || !team.logo_url ? (
+          <span className="font-mono text-[8px] font-bold text-slate-300">
+            {(team.short_name || team.name).slice(0, 2).toUpperCase()}
+          </span>
+        ) : (
+          <img
+            src={team.logo_url}
+            alt={team.name}
+            className="size-full object-contain"
+            onError={() => setBroken(true)}
+          />
         )}
+      </span>
+      <span className="text-xs font-semibold text-slate-200">{team.short_name || team.name}</span>
+    </span>
+  );
+}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <button
-            onClick={() => setActiveTab("calendrier")}
-            className={`tap text-left rounded-2xl border p-4 transition-all flex items-center gap-3 ${
-              activeTab === "calendrier"
-                ? "border-emerald-500/60 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-                : "border-slate-800 bg-[#0d1322] hover:border-slate-700"
-            }`}
-          >
-            <div className="size-9 rounded-xl bg-emerald-500/20 text-emerald-400 grid place-items-center shrink-0">
-              <Calendar size={18} />
-            </div>
-            <div className="min-w-0">
-              <strong className="block font-display text-sm text-white truncate">Calendrier</strong>
-              <small className="text-[11px] text-slate-400 truncate block">Ligue 1 & bonus</small>
-            </div>
-          </button>
+function ClubBadge({ value, size = "size-6" }: { value: string | null; size?: string }) {
+  const club = clubOf(value);
+  const [broken, setBroken] = useState(false);
 
-          <button
-            onClick={() => setActiveTab("joueurs")}
-            className={`tap text-left rounded-2xl border p-4 transition-all flex items-center gap-3 ${
-              activeTab === "joueurs"
-                ? "border-purple-500/60 bg-purple-500/10 shadow-[0_0_15px_rgba(168,85,247,0.15)]"
-                : "border-slate-800 bg-[#0d1322] hover:border-slate-700"
-            }`}
-          >
-            <div className="size-9 rounded-xl bg-purple-500/20 text-purple-400 grid place-items-center shrink-0">
-              <Users size={18} />
-            </div>
-            <div className="min-w-0">
-              <strong className="block font-display text-sm text-white truncate">Joueurs</strong>
-              <small className="text-[11px] text-slate-400 truncate block">Comptes & points</small>
-            </div>
-          </button>
+  if (!club) {
+    return (
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
+        <span className={`${size} rounded-md bg-slate-800 border border-slate-700`} />
+        {value || "—"}
+      </span>
+    );
+  }
 
-          <button
-            onClick={() => setActiveTab("finances")}
-            className={`tap text-left rounded-2xl border p-4 transition-all flex items-center gap-3 ${
-              activeTab === "finances"
-                ? "border-blue-500/60 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]"
-                : "border-slate-800 bg-[#0d1322] hover:border-slate-700"
-            }`}
-          >
-            <div className="size-9 rounded-xl bg-blue-500/20 text-blue-400 grid place-items-center shrink-0">
-              <Wallet size={18} />
-            </div>
-            <div className="min-w-0">
-              <strong className="block font-display text-sm text-white truncate">Caisse & Paiements</strong>
-              <small className="text-[11px] text-slate-400 truncate block">Suivi des cotisations</small>
-            </div>
-          </button>
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`relative ${size} shrink-0 rounded-md overflow-hidden bg-white/5 border border-slate-800 flex items-center justify-center`}>
+        {broken ? (
+          <span className="font-mono text-[8px] font-bold text-slate-300">{club.name.slice(0, 2).toUpperCase()}</span>
+        ) : (
+          <img src={club.crestUrl} alt={club.name} className="size-full object-contain p-0.5" onError={() => setBroken(true)} />
+        )}
+      </span>
+      <span className="text-xs font-semibold text-slate-200">{club.name}</span>
+    </span>
+  );
+}
 
-          <button
-            onClick={() => setActiveTab("reglages")}
-            className={`tap text-left rounded-2xl border p-4 transition-all flex items-center gap-3 ${
-              activeTab === "reglages"
-                ? "border-amber-500/60 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.15)]"
-                : "border-slate-800 bg-[#0d1322] hover:border-slate-700"
-            }`}
-          >
-            <div className="size-9 rounded-xl bg-amber-500/20 text-amber-400 grid place-items-center shrink-0">
-              <Settings size={18} />
+// ============================================================
+// Petits composants UI partagés (style du reste de l'app)
+// ============================================================
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`rounded-2xl border border-slate-800 bg-[#0b1325] shadow-inner ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function StatPill({ label, value, tone = "text-emerald-400" }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-[#0d1322] px-4 py-3">
+      <div className="font-mono text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
+      <div className={`font-display text-2xl font-black ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+function PrimaryButton({
+  children,
+  onClick,
+  disabled,
+  type = "button",
+  className = "",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  type?: "button" | "submit";
+  className?: string;
+}) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 font-display text-xs font-bold uppercase tracking-wide text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.25)] transition-all hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function GhostButton({
+  children,
+  onClick,
+  className = "",
+  danger = false,
+  title,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  className?: string;
+  danger?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-mono text-[11px] font-bold transition-all ${
+        danger
+          ? "border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white"
+          : "border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-700 hover:text-white"
+      } ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const { className = "", ...rest } = props;
+  return (
+    <input
+      {...rest}
+      className={`w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/40 ${className}`}
+    />
+  );
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs font-semibold text-amber-300">
+      <AlertTriangle size={16} className="shrink-0" />
+      {message}
+    </div>
+  );
+}
+
+const TABLE_MISSING_HINT =
+  "Table introuvable dans Supabase. Exécutez le script SQL fourni (supabase_admin_schema.sql) puis synchronisez.";
+
+// ============================================================
+// PAGE ADMIN
+// ============================================================
+type AdminTab = "joueurs" | "paiements" | "matchs" | "journees" | "reglages";
+
+const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
+  { id: "joueurs", label: "Joueurs", icon: Users },
+  { id: "paiements", label: "Paiements", icon: Wallet },
+  { id: "matchs", label: "Matchs", icon: Calendar },
+  { id: "journees", label: "Journées", icon: Calendar },
+  { id: "reglages", label: "Réglages", icon: SettingsIcon },
+];
+
+function AdminPage() {
+  const [activeTab, setActiveTab] = useState<AdminTab>("joueurs");
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
+
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [matchdays, setMatchdays] = useState<Matchday[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [competitions, setCompetitions] = useState<Competition[]>([]);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    initialize();
+  }, []);
+
+  async function initialize() {
+    setLoading(true);
+    await loadAll();
+    setLoading(false);
+  }
+
+  async function loadAll() {
+    const nextErrors: Record<string, string> = {};
+
+    try {
+      setPlayers(await getPlayers());
+    } catch (e) {
+      console.error(e);
+      nextErrors.joueurs = "Impossible de charger les joueurs.";
+    }
+
+    try {
+      setPayments(await getPayments());
+    } catch (e) {
+      console.warn("payments:", e);
+      nextErrors.paiements = TABLE_MISSING_HINT;
+    }
+
+    try {
+      setMatches(await getMatches());
+    } catch (e) {
+      console.warn("matches:", e);
+      nextErrors.matchs = TABLE_MISSING_HINT;
+    }
+
+    try {
+      setMatchdays(await getMatchdays());
+    } catch (e) {
+      console.warn("matchdays:", e);
+      nextErrors.journees = TABLE_MISSING_HINT;
+    }
+
+    try {
+      setTeams(await getTeams());
+    } catch (e) {
+      console.warn("teams:", e);
+      nextErrors.matchs = TABLE_MISSING_HINT;
+    }
+
+    try {
+      setSeasons(await getSeasons());
+    } catch (e) {
+      console.warn("seasons:", e);
+      nextErrors.journees = TABLE_MISSING_HINT;
+    }
+
+    try {
+      setCompetitions(await getCompetitions());
+    } catch (e) {
+      console.warn("competitions:", e);
+      nextErrors.journees = TABLE_MISSING_HINT;
+    }
+
+    try {
+      setSettings(await getSettings());
+    } catch (e) {
+      console.warn("app_settings:", e);
+      nextErrors.reglages = TABLE_MISSING_HINT;
+    }
+
+    setErrors(nextErrors);
+  }
+
+  async function handleSync() {
+    setSyncing(true);
+    await loadAll();
+    setSyncSuccess(true);
+    setSyncing(false);
+    setTimeout(() => setSyncSuccess(false), 2500);
+  }
+
+  const entryFee = settings?.entry_fee ?? 10;
+
+  const paidCount = useMemo(() => payments.filter((p) => p.paid).length, [payments]);
+  const totalCollected = useMemo(
+    () => payments.filter((p) => p.paid).reduce((sum, p) => sum + Number(p.amount || 0), 0),
+    [payments],
+  );
+  const totalExpected = useMemo(() => players.length * entryFee, [players, entryFee]);
+  const adminCount = useMemo(() => players.filter((p) => p.is_admin).length, [players]);
+  const openMatchdaysCount = useMemo(() => matchdays.filter((m) => !m.is_finished).length, [matchdays]);
+
+  if (loading) {
+    return (
+      <AdminRoute>
+        <AppShell>
+          <div className="flex h-[70vh] items-center justify-center">
+            <RefreshCw className="animate-spin text-emerald-400" size={42} />
+          </div>
+        </AppShell>
+      </AdminRoute>
+    );
+  }
+
+  return (
+    <AdminRoute>
+      <AppShell>
+        <div className="mx-auto max-w-6xl space-y-6 pb-32">
+          {/* ================= EN-TÊTE ================= */}
+          <section className="relative overflow-hidden rounded-3xl border border-emerald-500/20 bg-[#060b16] p-6 shadow-[0_0_60px_rgba(0,0,0,0.6)] sm:p-8">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-70"
+              style={{
+                background:
+                  "radial-gradient(ellipse 65% 55% at 88% -10%, rgba(16,185,129,0.20), transparent 70%)",
+              }}
+            />
+            <div className="relative z-10 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 font-mono text-[10px] font-bold tracking-[0.14em] text-emerald-400">
+                  <Shield size={12} />
+                  ESPACE ADMINISTRATEUR
+                </div>
+                <h1 className="font-display text-3xl font-black uppercase tracking-tight text-white sm:text-4xl">
+                  Gestion de la ligue
+                </h1>
+                <p className="mt-1 text-sm text-slate-400">
+                  Joueurs, paiements, matchs, journées et réglages de la saison {settings?.season ?? "2026-2027"}.
+                </p>
+              </div>
+
+              <GhostButton onClick={handleSync} className="!px-4 !py-2.5">
+                {syncSuccess ? (
+                  <CheckCircle2 size={14} className="text-emerald-400" />
+                ) : (
+                  <RefreshCw size={14} className={syncing ? "animate-spin" : ""} />
+                )}
+                {syncSuccess ? "Synchronisé" : "Synchroniser"}
+              </GhostButton>
             </div>
-            <div className="min-w-0">
-              <strong className="block font-display text-sm text-white truncate">Réglages</strong>
-              <small className="text-[11px] text-slate-400 truncate block">Supabase & club</small>
+
+            {/* Stats rapides */}
+            <div className="relative z-10 mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <StatPill label="Joueurs" value={String(players.length)} />
+              <StatPill label="Admins" value={String(adminCount)} tone="text-sky-400" />
+              <StatPill label="Cagnotte" value={`${totalCollected}€`} tone="text-gold" />
+              <StatPill label="Journées ouvertes" value={String(openMatchdaysCount)} tone="text-mint" />
             </div>
-          </button>
+          </section>
+
+          {/* ================= NAVIGATION ONGLETS ================= */}
+          <nav className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-800 bg-[#0d1322]/90 p-1.5 shadow-inner">
+            {TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              const hasError = !!errors[tab.id];
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative flex items-center gap-2 rounded-xl px-4 py-2 font-display text-xs font-bold uppercase tracking-wide transition-all ${
+                    isActive
+                      ? "bg-emerald-500 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                      : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
+                  }`}
+                >
+                  <Icon size={14} />
+                  {tab.label}
+                  {hasError && (
+                    <span className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-400" />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* ================= CONTENU ================= */}
+          {activeTab === "joueurs" && (
+            <PlayersTab
+              players={players}
+              error={errors.joueurs}
+              onChanged={async () => setPlayers(await getPlayers())}
+            />
+          )}
+
+          {activeTab === "paiements" && (
+            <PaymentsTab
+              players={players}
+              payments={payments}
+              entryFee={entryFee}
+              paidCount={paidCount}
+              totalCollected={totalCollected}
+              totalExpected={totalExpected}
+              error={errors.paiements}
+              onChanged={async () => setPayments(await getPayments())}
+            />
+          )}
+
+          {activeTab === "matchs" && (
+            <MatchesTab
+              matches={matches}
+              matchdays={matchdays}
+              teams={teams}
+              error={errors.matchs}
+              onChanged={async () => setMatches(await getMatches())}
+            />
+          )}
+
+          {activeTab === "journees" && (
+            <MatchdaysTab
+              matchdays={matchdays}
+              matches={matches}
+              seasons={seasons}
+              competitions={competitions}
+              error={errors.journees}
+              onChanged={async () => setMatchdays(await getMatchdays())}
+            />
+          )}
+
+          {activeTab === "reglages" && (
+            <SettingsTab
+              settings={settings}
+              error={errors.reglages}
+              onChanged={async () => setSettings(await getSettings())}
+            />
+          )}
+        </div>
+      </AppShell>
+    </AdminRoute>
+  );
+}
+
+// ============================================================
+// 👥 ONGLET JOUEURS (Mis à jour avec Équipe favorite et Dérogation admin - Phases 2, 3, 4)
+// ============================================================
+function PlayersTab({
+  players,
+  error,
+  onChanged,
+}: {
+  players: Player[];
+  error?: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Player | null>(null);
+  const [editing, setEditing] = useState<Player | null>(null);
+  const [editForm, setEditForm] = useState({ pseudo: "", favorite_team: "" });
+  const [saving, setSaving] = useState(false);
+
+  function openEdit(player: Player) {
+    setEditing(player);
+    setEditForm({ pseudo: player.pseudo ?? "", favorite_team: player.favorite_team ?? "" });
+  }
+
+  async function submitEdit() {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await updatePlayer(editing.id, {
+        pseudo: editForm.pseudo.trim() || null,
+        favorite_team: editForm.favorite_team || null,
+        favorite_team_override: true, // Phase 4 : Dérogation admin active lors de la modification admin
+      });
+      setEditing(null);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la modification du joueur.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleAdmin(player: Player) {
+    setBusyId(player.id);
+    try {
+      await setPlayerAdmin(player.id, !player.is_admin);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la mise à jour.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function confirmAndDelete() {
+    if (!confirmDelete) return;
+    setBusyId(confirmDelete.id);
+    try {
+      await apiDeletePlayer(confirmDelete.id);
+      setConfirmDelete(null);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la suppression.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Users size={18} className="text-emerald-400" />
+          Joueurs ({players.length})
+        </h2>
+      </div>
+
+      {error && (
+        <div className="mb-4">
+          <ErrorBanner message={error} />
+        </div>
+      )}
+
+      {players.length === 0 ? (
+        <p className="py-10 text-center text-sm text-slate-500">Aucun joueur pour le moment.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[700px] border-collapse">
+            <thead>
+              <tr className="border-b border-slate-800 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                <th className="pb-2 pr-3">Joueur</th>
+                <th className="pb-2 pr-3">Équipe favorite</th>
+                <th className="pb-2 pr-3">Statut</th>
+                <th className="pb-2 pr-3">Rôle</th>
+                <th className="pb-2 pr-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {players.map((player) => (
+                <tr key={player.id} className="border-b border-slate-800/60 last:border-0 hover:bg-slate-900/40 transition-colors">
+                  <td className="py-3 pr-3">
+                    <div className="flex items-center gap-3">
+                      <span className="relative size-9 shrink-0 overflow-hidden rounded-full border border-slate-700 bg-slate-800">
+                        {player.avatar_url ? (
+                          <img src={player.avatar_url} alt={player.pseudo ?? ""} className="size-full object-cover" />
+                        ) : (
+                          <span className="flex size-full items-center justify-center font-display text-sm font-bold text-slate-400">
+                            {(player.pseudo ?? "?").slice(0, 1).toUpperCase()}
+                          </span>
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-slate-100">{player.pseudo ?? "Sans pseudo"}</div>
+                        <div className="truncate font-mono text-[10px] text-slate-500">{player.id}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 pr-3">
+                    <ClubBadge value={player.favorite_team} />
+                  </td>
+                  <td className="py-3 pr-3">
+                    {player.favorite_team ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-400 text-xs font-mono">
+                        <Check size={14} /> {player.favorite_team_override ? "Modifié (Admin)" : "OK"}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-amber-400 text-xs font-mono">
+                        <AlertTriangle size={14} /> En attente
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-3">
+                    {player.is_admin ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/10 px-2.5 py-1 font-mono text-[10px] font-bold text-gold">
+                        <Crown size={11} />
+                        ADMIN
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-mono text-[10px] font-bold text-slate-400">
+                        JOUEUR
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 pr-0 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <GhostButton onClick={() => openEdit(player)} title="Modifier">
+                        <Pencil size={12} />
+                        Modifier
+                      </GhostButton>
+                      <GhostButton onClick={() => toggleAdmin(player)} title="Basculer le rôle">
+                        {busyId === player.id ? (
+                          <RefreshCw size={12} className="animate-spin" />
+                        ) : player.is_admin ? (
+                          <ShieldOff size={12} />
+                        ) : (
+                          <Shield size={12} />
+                        )}
+                        {player.is_admin ? "Rétrograder" : "Promouvoir"}
+                      </GhostButton>
+                      <GhostButton danger onClick={() => setConfirmDelete(player)} title="Supprimer">
+                        <Trash2 size={12} />
+                      </GhostButton>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {editing && (
+        <Modal title="Modifier le joueur" onClose={() => setEditing(null)}>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                Pseudo
+              </label>
+              <TextInput
+                value={editForm.pseudo}
+                onChange={(e) => setEditForm((f) => ({ ...f, pseudo: e.target.value }))}
+                placeholder="Pseudo du joueur"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                Équipe favorite
+              </label>
+              <select
+                value={editForm.favorite_team}
+                onChange={(e) => setEditForm((f) => ({ ...f, favorite_team: e.target.value }))}
+                className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+              >
+                <option value="">— Aucune —</option>
+                {OFFICIAL_L1_CLUBS.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <GhostButton onClick={() => setEditing(null)}>Annuler</GhostButton>
+              <PrimaryButton onClick={submitEdit} disabled={saving}>
+                {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                Enregistrer
+              </PrimaryButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Supprimer ce joueur ?"
+          description={`${confirmDelete.pseudo ?? "Ce joueur"} sera définitivement supprimé, ainsi que ses pronostics et paiements associés.`}
+          confirmLabel="Supprimer"
+          busy={busyId === confirmDelete.id}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={confirmAndDelete}
+        />
+      )}
+    </Card>
+  );
+}
+
+// ============================================================
+// 💳 ONGLET PAIEMENTS
+// ============================================================
+function PaymentsTab({
+  players,
+  payments,
+  entryFee,
+  paidCount,
+  totalCollected,
+  totalExpected,
+  error,
+  onChanged,
+}: {
+  players: Player[];
+  payments: Payment[];
+  entryFee: number;
+  paidCount: number;
+  totalCollected: number;
+  totalExpected: number;
+  error?: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingAmount, setEditingAmount] = useState<Record<string, string>>({});
+  const [generating, setGenerating] = useState(false);
+
+  const playerById = useMemo(() => {
+    const map = new Map<string, Player>();
+    players.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [players]);
+
+  async function togglePaid(payment: Payment) {
+    setBusyId(payment.id);
+    try {
+      await setPaymentPaid(payment.id, !payment.paid);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la mise à jour.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveAmount(payment: Payment) {
+    const raw = editingAmount[payment.id];
+    if (raw === undefined) return;
+    const amount = Number(raw.replace(",", "."));
+    if (Number.isNaN(amount) || amount < 0) return;
+
+    setBusyId(payment.id);
+    try {
+      await setPaymentAmount(payment.id, amount);
+      await onChanged();
+      setEditingAmount((prev) => {
+        const next = { ...prev };
+        delete next[payment.id];
+        return next;
+      });
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la mise à jour du montant.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleGenerateMissing() {
+    setGenerating(true);
+    try {
+      await generateMissingPayments(players, payments, entryFee);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la génération des paiements.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  const missingCount = players.length - payments.length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatPill label="Payé" value={`${paidCount} / ${players.length}`} />
+        <StatPill label="Collecté" value={`${totalCollected}€`} tone="text-gold" />
+        <StatPill label="Attendu" value={`${totalExpected}€`} tone="text-sky-400" />
+        <StatPill label="Restant" value={`${Math.max(totalExpected - totalCollected, 0)}€`} tone="text-red-400" />
+      </div>
+
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+            <Wallet size={18} className="text-emerald-400" />
+            Paiements
+          </h2>
+          {missingCount > 0 && (
+            <PrimaryButton onClick={handleGenerateMissing} disabled={generating}>
+              {generating ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+              Générer {missingCount} paiement{missingCount > 1 ? "s" : ""} manquant{missingCount > 1 ? "s" : ""}
+            </PrimaryButton>
+          )}
         </div>
 
-        {activeTab === "finances" && (
-          <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 space-y-6 animate-fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="font-mono text-[10px] uppercase text-blue-400">Trésorerie de la ligue</span>
-                <h2 className="font-display text-2xl text-white mt-0.5">Suivi des paiements & Cagnotte</h2>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-xs text-slate-400">Mise par joueur :</span>
-                <input
-                  type="number"
-                  value={entryFee}
-                  onChange={(e) => setEntryFee(Number(e.target.value))}
-                  className="w-20 rounded-xl border border-slate-700 bg-[#060b16] px-3 py-1.5 text-white font-mono text-sm text-center focus:outline-none"
-                />
-                <span className="font-mono text-xs text-slate-400">€</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-2xl border border-slate-800 bg-[#060b16] p-5">
-                <span className="block font-mono text-[10px] uppercase text-slate-500">Total collecté dans la caisse</span>
-                <strong className="font-display text-3xl text-emerald-400 mt-1 block">{totalCollected} €</strong>
-                <span className="text-xs text-slate-400 mt-1 block">Prêt pour la redistribution</span>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-[#060b16] p-5">
-                <span className="block font-mono text-[10px] uppercase text-slate-500">Total attendu (Cagnotte finale)</span>
-                <strong className="font-display text-3xl text-blue-400 mt-1 block">{totalExpected} €</strong>
-                <span className="text-xs text-slate-400 mt-1 block">{players.filter(p => p.hasPaid).length} sur {players.length} joueurs ont payé</span>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-2">
-              <h3 className="font-display text-lg text-white mb-2">État des versements par participant</h3>
-              {players.map((p) => (
-                <div key={p.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#060b16] p-4">
-                  <div className="flex items-center gap-4">
-                    <span className={`grid size-9 place-items-center rounded-xl font-display font-bold ${
-                      p.hasPaid ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
-                    }`}>
-                      {p.hasPaid ? <Check size={18} /> : <X size={18} />}
-                    </span>
-                    <div>
-                      <b className="font-display text-lg text-white">{p.name}</b>
-                      <small className="block text-xs text-slate-400 font-mono">
-                        {p.hasPaid ? `A versé ${p.amount} €` : "N'a pas encore payé"}
-                      </small>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className={`font-mono text-xs px-3 py-1 rounded-full border ${
-                      p.hasPaid 
-                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
-                        : "bg-red-500/10 text-red-400 border-red-500/20"
-                    }`}>
-                      {p.hasPaid ? "PAYÉ" : "EN ATTENTE"}
-                    </span>
-                    <button
-                      onClick={() => togglePayment(p.id)}
-                      className={`tap rounded-xl px-4 py-2 font-display text-xs font-bold transition-all ${
-                        p.hasPaid
-                          ? "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
-                          : "bg-emerald-500 hover:bg-emerald-600 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                      }`}
-                    >
-                      {p.hasPaid ? "Marquer non payé" : "Marquer comme payé"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+        {error && (
+          <div className="mb-4">
+            <ErrorBanner message={error} />
+          </div>
         )}
 
-        {activeTab === "calendrier" && (
-          <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-mono text-[10px] uppercase text-emerald-400">Module Matchs</span>
-                <h2 className="font-display text-2xl text-white mt-0.5">Calendrier & Résultats</h2>
-              </div>
-              <button className="tap rounded-xl bg-emerald-500 text-slate-950 font-display text-xs font-bold px-4 py-2.5">
-                + Ajouter un match
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {[
-                { match: "Toulouse FC vs Paris Saint-Germain", date: "21 Août 2026", status: "À venir" },
-                { match: "Olympique de Marseille vs AS Monaco", date: "22 Août 2026", status: "À venir" },
-                { match: "LOSC Lille vs Olympique Lyonnais", date: "22 Août 2026", status: "À venir" },
-              ].map((m, idx) => (
-                <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#060b16] p-4">
-                  <div>
-                    <span className="font-mono text-[10px] text-slate-500 block mb-1">{m.date}</span>
-                    <b className="font-display text-base text-white">{m.match}</b>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-xs px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      {m.status}
-                    </span>
-                    <button className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white font-mono hover:bg-slate-700">
-                      Éditer score
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+        {!error && payments.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-500">
+            Aucun paiement enregistré. Génère les paiements pour commencer.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  <th className="pb-2 pr-3">Joueur</th>
+                  <th className="pb-2 pr-3">Montant</th>
+                  <th className="pb-2 pr-3">Statut</th>
+                  <th className="pb-2 pr-0 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((payment) => {
+                  const player = playerById.get(payment.player_id);
+                  const editValue = editingAmount[payment.id];
+                  return (
+                    <tr key={payment.id} className="border-b border-slate-800/60 last:border-0">
+                      <td className="py-3 pr-3 font-semibold text-slate-100">
+                        {player?.pseudo ?? "Joueur inconnu"}
+                      </td>
+                      <td className="py-3 pr-3">
+                        <div className="flex items-center gap-2">
+                          <TextInput
+                            inputMode="decimal"
+                            className="!w-24 !py-1.5"
+                            value={editValue ?? String(payment.amount)}
+                            onChange={(e) =>
+                              setEditingAmount((prev) => ({ ...prev, [payment.id]: e.target.value }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveAmount(payment);
+                            }}
+                          />
+                          <span className="text-xs text-slate-500">€</span>
+                          {editValue !== undefined && editValue !== String(payment.amount) && (
+                            <GhostButton onClick={() => saveAmount(payment)} title="Enregistrer le montant">
+                              {busyId === payment.id ? (
+                                <RefreshCw size={12} className="animate-spin" />
+                              ) : (
+                                <Save size={12} />
+                              )}
+                            </GhostButton>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-3">
+                        {payment.paid ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-mint/30 bg-mint/10 px-2.5 py-1 font-mono text-[10px] font-bold text-mint">
+                            <CheckCircle2 size={11} />
+                            PAYÉ
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-red-400">
+                            EN ATTENTE
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-0 text-right">
+                        <GhostButton onClick={() => togglePaid(payment)}>
+                          {busyId === payment.id ? (
+                            <RefreshCw size={12} className="animate-spin" />
+                          ) : (
+                            <CheckCircle2 size={12} />
+                          )}
+                          {payment.paid ? "Marquer non payé" : "Marquer payé"}
+                        </GhostButton>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
+      </Card>
+    </div>
+  );
+}
 
-        {activeTab === "joueurs" && (
-          <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-mono text-[10px] uppercase text-purple-400">Module Participants</span>
-                <h2 className="font-display text-2xl text-white mt-0.5">Gestion des Joueurs</h2>
-              </div>
-              <span className="font-mono text-xs text-slate-400">{players.length} inscrits</span>
-            </div>
+// ============================================================
+// ⚽ ONGLET MATCHS
+// ============================================================
+const emptyMatchForm = {
+  matchday_id: "",
+  home_team_id: "",
+  away_team_id: "",
+  kickoff: "",
+  finished: false,
+};
 
-            <div className="space-y-3">
-              {players.map((p) => (
-                <div key={p.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-[#060b16] p-4">
-                  <div className="flex items-center gap-4">
-                    <span className="grid size-9 place-items-center rounded-xl bg-purple-500/10 text-purple-400 font-display font-bold">
-                      #{p.rank}
-                    </span>
-                    <div>
-                      <b className="font-display text-lg text-white">{p.name}</b>
-                      <small className="block text-xs text-slate-400 font-mono">{p.points} points</small>
-                    </div>
-                  </div>
+/** Statut d'affichage dérivé (il n'existe pas de colonne "status" en base). */
+function matchDisplayStatus(match: Pick<Match, "finished" | "kickoff">): "scheduled" | "live" | "finished" {
+  if (match.finished) return "finished";
+  if (match.kickoff && new Date(match.kickoff).getTime() <= Date.now()) return "live";
+  return "scheduled";
+}
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setPlayers(prev => prev.map(x => x.id === p.id ? { ...x, points: x.points + 3 } : x))}
-                      className="tap rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-mono text-emerald-400 hover:bg-slate-700"
-                    >
-                      +3 pts
-                    </button>
-                    <button
-                      onClick={() => handleDeletePlayer(p.id, p.name)}
-                      className="tap flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-mono text-red-400 hover:bg-red-500/20 transition-colors"
-                    >
-                      <Trash2 size={13} />
-                      Supprimer
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+function matchdayLabel(md: Matchday | null | undefined) {
+  if (!md) return "—";
+  return `J${md.number}`;
+}
 
-        {activeTab === "reglages" && (
-          <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 space-y-6 animate-fade-in">
-            <div>
-              <span className="font-mono text-[10px] uppercase text-amber-400">Configuration</span>
-              <h2 className="font-display text-2xl text-white mt-0.5">Réglages Supabase & Application</h2>
-            </div>
+function MatchesTab({
+  matches,
+  matchdays,
+  teams,
+  error,
+  onChanged,
+}: {
+  matches: Match[];
+  matchdays: Matchday[];
+  teams: Team[];
+  error?: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Match | null>(null);
+  const [form, setForm] = useState(emptyMatchForm);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Match | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-mono text-slate-400 mb-2">URL SUPABASE</label>
-                <input
-                  type="text"
-                  readOnly
-                  value="https://azgksiwcgvbertzzzhvq.supabase.co"
-                  className="w-full rounded-2xl border border-slate-800 bg-[#060b16] px-4 py-3 text-slate-300 font-mono text-xs focus:outline-none"
-                />
-              </div>
+  const matchdaysById = useMemo(() => new Map(matchdays.map((md) => [md.id, md])), [matchdays]);
 
-              <div>
-                <label className="block text-xs font-mono text-slate-400 mb-2">CLÉ API PUBLIQUE (SUPABASE)</label>
-                <input
-                  type="password"
-                  readOnly
-                  value="sb_publishable_NwALJ8h6gzAlC-GgiqnFow_Ol45BzTj"
-                  className="w-full rounded-2xl border border-slate-800 bg-[#060b16] px-4 py-3 text-slate-300 font-mono text-xs focus:outline-none"
-                />
-              </div>
+  function openCreate() {
+    setEditing(null);
+    setForm(emptyMatchForm);
+    setFormOpen(true);
+  }
 
-              <div className="pt-2">
-                <button className="tap flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-600 px-6 py-3.5 font-display text-sm font-bold text-slate-950 transition-all shadow-[0_0_20px_rgba(245,158,11,0.3)]">
-                  <Save size={16} /> Enregistrer les configurations
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
+  function openEdit(match: Match) {
+    setEditing(match);
+    setForm({
+      matchday_id: match.matchday_id ?? "",
+      home_team_id: match.home_team_id,
+      away_team_id: match.away_team_id,
+      kickoff: match.kickoff ? match.kickoff.slice(0, 16) : "",
+      finished: match.finished,
+    });
+    setFormOpen(true);
+  }
 
+  async function submitForm() {
+    if (!form.home_team_id || !form.away_team_id || !form.kickoff) {
+      alert("Renseigne les deux équipes et la date/heure du match.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        matchday_id: form.matchday_id || null,
+        home_team_id: form.home_team_id,
+        away_team_id: form.away_team_id,
+        kickoff: new Date(form.kickoff).toISOString(),
+        finished: form.finished,
+        home_score: editing?.home_score ?? null,
+        away_score: editing?.away_score ?? null,
+      };
+
+      if (editing) {
+        await updateMatch(editing.id, payload);
+      } else {
+        await createMatch(payload);
+      }
+
+      setFormOpen(false);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de l'enregistrement du match.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function confirmAndDelete() {
+    if (!confirmDelete) return;
+    setBusyId(confirmDelete.id);
+    try {
+      await apiDeleteMatch(confirmDelete.id);
+      setConfirmDelete(null);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la suppression.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Calendar size={18} className="text-emerald-400" />
+          Matchs ({matches.length})
+        </h2>
+        <PrimaryButton onClick={openCreate}>
+          <Plus size={14} />
+          Ajouter un match
+        </PrimaryButton>
       </div>
-    </AppShell>
+
+      {error && (
+        <div className="mb-4">
+          <ErrorBanner message={error} />
+        </div>
+      )}
+
+      {!error && matches.length === 0 ? (
+        <p className="py-10 text-center text-sm text-slate-500">Aucun match enregistré pour le moment.</p>
+      ) : (
+        <div className="space-y-2">
+          {matches.map((match) => (
+            <div
+              key={match.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3"
+            >
+              <div className="flex items-center gap-4">
+                <span className="rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 font-mono text-[10px] font-bold text-slate-400">
+                  {matchdayLabel(matchdaysById.get(match.matchday_id ?? ""))}
+                </span>
+                <div className="flex items-center gap-2">
+                  <TeamBadge teams={teams} teamId={match.home_team_id} />
+                  <span className="text-slate-600">vs</span>
+                  <TeamBadge teams={teams} teamId={match.away_team_id} />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-slate-400">
+                  {match.kickoff ? new Date(match.kickoff).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                </span>
+                <StatusBadge status={matchDisplayStatus(match)} />
+                {match.home_score !== null && match.away_score !== null && (
+                  <span className="font-mono text-xs font-bold text-slate-200">
+                    {match.home_score} - {match.away_score}
+                  </span>
+                )}
+                <GhostButton onClick={() => openEdit(match)} title="Modifier">
+                  <Pencil size={12} />
+                </GhostButton>
+                <GhostButton danger onClick={() => setConfirmDelete(match)} title="Supprimer">
+                  {busyId === match.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                </GhostButton>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {formOpen && (
+        <Modal title={editing ? "Modifier le match" : "Ajouter un match"} onClose={() => setFormOpen(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                Journée
+              </label>
+              <select
+                value={form.matchday_id}
+                onChange={(e) => setForm((f) => ({ ...f, matchday_id: e.target.value }))}
+                className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+              >
+                <option value="">— Aucune —</option>
+                {matchdays.map((md) => (
+                  <option key={md.id} value={md.id}>
+                    {matchdayLabel(md)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Équipe à domicile
+                </label>
+                <select
+                  value={form.home_team_id}
+                  onChange={(e) => setForm((f) => ({ ...f, home_team_id: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+                >
+                  <option value="">Choisir…</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Équipe à l'extérieur
+                </label>
+                <select
+                  value={form.away_team_id}
+                  onChange={(e) => setForm((f) => ({ ...f, away_team_id: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+                >
+                  <option value="">Choisir…</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Date et heure
+                </label>
+                <TextInput
+                  type="datetime-local"
+                  value={form.kickoff}
+                  onChange={(e) => setForm((f) => ({ ...f, kickoff: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Statut
+                </label>
+                <select
+                  value={form.finished ? "finished" : "scheduled"}
+                  onChange={(e) => setForm((f) => ({ ...f, finished: e.target.value === "finished" }))}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+                >
+                  <option value="scheduled">À venir / en cours</option>
+                  <option value="finished">Terminé</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <GhostButton onClick={() => setFormOpen(false)}>Annuler</GhostButton>
+              <PrimaryButton onClick={submitForm} disabled={saving}>
+                {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                {editing ? "Enregistrer" : "Ajouter"}
+              </PrimaryButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Supprimer ce match ?"
+          description={`Le match ${teamOf(teams, confirmDelete.home_team_id)?.name ?? "?"} vs ${
+            teamOf(teams, confirmDelete.away_team_id)?.name ?? "?"
+          } sera définitivement supprimé.`}
+          confirmLabel="Supprimer"
+          busy={busyId === confirmDelete.id}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={confirmAndDelete}
+        />
+      )}
+    </Card>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; className: string }> = {
+    scheduled: { label: "À venir", className: "border-sky-500/30 bg-sky-500/10 text-sky-400" },
+    live: { label: "En direct", className: "border-red-500/30 bg-red-500/10 text-red-400 animate-pulse" },
+    finished: { label: "Terminé", className: "border-slate-700 bg-slate-800/60 text-slate-400" },
+  };
+  const conf = map[status] ?? map.scheduled;
+  return (
+    <span className={`rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold ${conf.className}`}>
+      {conf.label.toUpperCase()}
+    </span>
+  );
+}
+
+// ============================================================
+// 📅 ONGLET JOURNÉES
+// ============================================================
+function MatchdaysTab({
+  matchdays,
+  matches,
+  seasons,
+  competitions,
+  error,
+  onChanged,
+}: {
+  matchdays: Matchday[];
+  matches: Match[];
+  seasons: Season[];
+  competitions: Competition[];
+  error?: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [number, setNumber] = useState("");
+  const [seasonId, setSeasonId] = useState("");
+  const [competitionId, setCompetitionId] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Matchday | null>(null);
+  const [editing, setEditing] = useState<Matchday | null>(null);
+  const [editForm, setEditForm] = useState({ number: "", seasonId: "", competitionId: "", deadline: "" });
+  const [saving, setSaving] = useState(false);
+
+  const seasonsById = useMemo(() => new Map(seasons.map((s) => [s.id, s])), [seasons]);
+  const competitionsById = useMemo(() => new Map(competitions.map((c) => [c.id, c])), [competitions]);
+
+  function openEdit(md: Matchday) {
+    setEditing(md);
+    setEditForm({
+      number: String(md.number),
+      seasonId: md.season_id,
+      competitionId: md.competition_id,
+      deadline: md.deadline ? md.deadline.slice(0, 16) : "",
+    });
+  }
+
+  async function submitEdit() {
+    if (!editing) return;
+    const parsedNumber = parseInt(editForm.number, 10);
+    if (Number.isNaN(parsedNumber)) {
+      alert("Le numéro de la journée doit être un nombre.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateMatchday(editing.id, {
+        number: parsedNumber,
+        season_id: editForm.seasonId || editing.season_id,
+        competition_id: editForm.competitionId || editing.competition_id,
+        deadline: editForm.deadline ? new Date(editForm.deadline).toISOString() : null,
+      });
+      setEditing(null);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la modification de la journée.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const matchCountByMatchdayId = useMemo(() => {
+    const map = new Map<string, number>();
+    matches.forEach((m) => {
+      if (!m.matchday_id) return;
+      map.set(m.matchday_id, (map.get(m.matchday_id) ?? 0) + 1);
+    });
+    return map;
+  }, [matches]);
+
+  function suggestNextNumber() {
+    const numbers = matchdays.map((m) => m.number).filter((n) => !Number.isNaN(n));
+    const next = (numbers.length ? Math.max(...numbers) : 0) + 1;
+    setNumber(String(next));
+  }
+
+  async function handleCreate() {
+    const parsedNumber = parseInt(number, 10);
+    if (!number.trim() || Number.isNaN(parsedNumber)) {
+      alert("Le numéro de la journée est requis (ex: 1).");
+      return;
+    }
+    if (!seasonId || !competitionId) {
+      alert("Choisis une saison et une compétition.");
+      return;
+    }
+    setCreating(true);
+    try {
+      await createMatchday(
+        seasonId,
+        competitionId,
+        parsedNumber,
+        deadline ? new Date(deadline).toISOString() : null,
+      );
+      setNumber("");
+      setDeadline("");
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la création de la journée.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function toggleFinished(md: Matchday) {
+    setBusyId(md.id);
+    try {
+      await setMatchdayFinished(md.id, !md.is_finished);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la mise à jour.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function confirmAndDelete() {
+    if (!confirmDelete) return;
+    setBusyId(confirmDelete.id);
+    try {
+      await apiDeleteMatchday(confirmDelete.id);
+      setConfirmDelete(null);
+      await onChanged();
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de la suppression.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Plus size={18} className="text-emerald-400" />
+          Créer une journée
+        </h2>
+
+        {error && (
+          <div className="mb-4">
+            <ErrorBanner message={error} />
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[110px_1fr_1fr_1fr]">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Numéro
+            </label>
+            <TextInput placeholder="1" value={number} onChange={(e) => setNumber(e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Compétition
+            </label>
+            <select
+              value={competitionId}
+              onChange={(e) => setCompetitionId(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+            >
+              <option value="">Choisir…</option>
+              {competitions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Saison
+            </label>
+            <select
+              value={seasonId}
+              onChange={(e) => setSeasonId(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+            >
+              <option value="">Choisir…</option>
+              {seasons.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Date limite pronos
+            </label>
+            <TextInput type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          </div>
+        </div>
+        <div className="mt-3 flex justify-end gap-2">
+          <GhostButton onClick={suggestNextNumber}>Numéro suivant</GhostButton>
+          <PrimaryButton onClick={handleCreate} disabled={creating}>
+            {creating ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+            Créer
+          </PrimaryButton>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Calendar size={18} className="text-emerald-400" />
+          Journées ({matchdays.length})
+        </h2>
+
+        {!error && matchdays.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-500">Aucune journée créée pour le moment.</p>
+        ) : (
+          <div className="space-y-2">
+            {matchdays.map((md) => (
+              <div
+                key={md.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-display text-sm font-black text-white">
+                    J{md.number}
+                  </span>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-100">
+                      {competitionsById.get(md.competition_id)?.name ?? "Compétition inconnue"}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-slate-500">
+                      <span>
+                        {matchCountByMatchdayId.get(md.id) ?? 0} match(s) · saison{" "}
+                        {seasonsById.get(md.season_id)?.name ?? "?"}
+                      </span>
+                      {md.deadline && (
+                        <span className="inline-flex items-center gap-1 text-amber-400/80">
+                          <CalendarClock size={11} />
+                          Limite : {new Date(md.deadline).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {!md.is_finished ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-mint/30 bg-mint/10 px-2.5 py-1 font-mono text-[10px] font-bold text-mint">
+                      <Unlock size={11} />
+                      EN COURS
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-mono text-[10px] font-bold text-slate-400">
+                      <Lock size={11} />
+                      TERMINÉE
+                    </span>
+                  )}
+                  <GhostButton onClick={() => toggleFinished(md)}>
+                    {busyId === md.id ? (
+                      <RefreshCw size={12} className="animate-spin" />
+                    ) : md.is_finished ? (
+                      <Unlock size={12} />
+                    ) : (
+                      <Lock size={12} />
+                    )}
+                    {md.is_finished ? "Rouvrir" : "Clôturer"}
+                  </GhostButton>
+                  <GhostButton onClick={() => openEdit(md)} title="Modifier">
+                    <Pencil size={12} />
+                  </GhostButton>
+                  <GhostButton danger onClick={() => setConfirmDelete(md)} title="Supprimer">
+                    <Trash2 size={12} />
+                  </GhostButton>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {editing && (
+        <Modal title={`Modifier J${editing.number}`} onClose={() => setEditing(null)}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Numéro
+                </label>
+                <TextInput value={editForm.number} onChange={(e) => setEditForm((f) => ({ ...f, number: e.target.value }))} />
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Compétition
+                </label>
+                <select
+                  value={editForm.competitionId}
+                  onChange={(e) => setEditForm((f) => ({ ...f, competitionId: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+                >
+                  {competitions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Saison
+                </label>
+                <select
+                  value={editForm.seasonId}
+                  onChange={(e) => setEditForm((f) => ({ ...f, seasonId: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+                >
+                  {seasons.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                  Date limite
+                </label>
+                <TextInput
+                  type="datetime-local"
+                  value={editForm.deadline}
+                  onChange={(e) => setEditForm((f) => ({ ...f, deadline: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <GhostButton onClick={() => setEditing(null)}>Annuler</GhostButton>
+              <PrimaryButton onClick={submitEdit} disabled={saving}>
+                {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                Enregistrer
+              </PrimaryButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Supprimer cette journée ?"
+          description={`La journée J${confirmDelete.number} sera supprimée. Les matchs déjà rattachés perdront leur journée.`}
+          confirmLabel="Supprimer"
+          busy={busyId === confirmDelete.id}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={confirmAndDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// ⚙️ ONGLET RÉGLAGES (Intégration Phase 2 : Date limite & Verrouillage auto)
+// ============================================================
+function SettingsTab({
+  settings,
+  error,
+  onChanged,
+}: {
+  settings: AppSettings | null;
+  error?: string;
+  onChanged: () => Promise<void>;
+}) {
+  const [season, setSeason] = useState(settings?.season ?? "2026-2027");
+  const [entryFee, setEntryFee] = useState(String(settings?.entry_fee ?? 10));
+  const [bonus, setBonus] = useState(String(settings?.bonus_exact_score ?? 5));
+  const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 0));
+  
+  // Phase 2 : Nouveaux états pour l'équipe favorite
+  const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState("2026-08-15T20:00");
+  const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(true);
+
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setSeason(settings.season);
+      setEntryFee(String(settings.entry_fee));
+      setBonus(String(settings.bonus_exact_score));
+      setClosingDelay(String(settings.closing_delay_minutes));
+    }
+  }, [settings]);
+
+  // Phase 2 : Charger les paramètres de l'équipe favorite depuis app_settings
+  useEffect(() => {
+    async function loadFavoriteTeamSettings() {
+      try {
+        const { getSettings: getAppSettings } = await import("@/services/adminService");
+        // On peut récupérer les clés spécifiques si stockées dans une table ou via getSettings si géré globalement
+        // Ici on utilise la table app_settings via supabase directement si nécessaire ou via la fonction existante
+        const { supabase } = await import("@/lib/supabase");
+        const { data } = await supabase.from("app_settings").select("*");
+        if (data) {
+          const d = data.find((s: any) => s.key === "favorite_team_deadline");
+          const l = data.find((s: any) => s.key === "favorite_team_auto_lock");
+          if (d) setFavoriteTeamDeadline(d.value.slice(0, 16));
+          if (l) setFavoriteTeamAutoLock(l.value === "true");
+        }
+      } catch (e) {
+        console.warn("Impossible de charger les réglages équipe favorite:", e);
+      }
+    }
+    loadFavoriteTeamSettings();
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateSettings({
+        season,
+        entry_fee: Number(entryFee.replace(",", ".")) || 0,
+        bonus_exact_score: Number(bonus.replace(",", ".")) || 0,
+        closing_delay_minutes: Number(closingDelay) || 0,
+      });
+
+      // Phase 2 : Sauvegarde des paramètres d'équipe favorite dans app_settings
+      const { supabase } = await import("@/lib/supabase");
+      const favoriteUpdates = [
+        { key: "favorite_team_deadline", value: new Date(favoriteTeamDeadline).toISOString() },
+        { key: "favorite_team_auto_lock", value: favoriteTeamAutoLock ? "true" : "false" },
+      ];
+      await supabase.from("app_settings").upsert(favoriteUpdates, { onConflict: "key" });
+
+      await onChanged();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) {
+      alert(e.message ?? "Erreur lors de l'enregistrement des réglages.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleResync() {
+    setSyncing(true);
+    await onChanged();
+    setSyncing(false);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Phase 2 : Section Équipe favorite */}
+      <Card className="p-5 md:p-6 border-amber-500/30 bg-[#0d1322]">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="grid size-10 place-items-center rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30">
+            ⭐
+          </span>
+          <div>
+            <h2 className="font-display text-xl font-bold uppercase tracking-wide text-white">Équipe favorite</h2>
+            <p className="text-xs text-slate-400">Paramétrez la date limite et le verrouillage automatique des choix d'équipe.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+              <Calendar size={14} className="text-emerald-400" /> Date limite
+            </label>
+            <input
+              type="datetime-local"
+              value={favoriteTeamDeadline}
+              onChange={(e) => setFavoriteTeamDeadline(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
+            />
+          </div>
+
+          <div className="flex flex-col justify-end">
+            <label className="flex items-center gap-3 cursor-pointer p-2.5 rounded-xl border border-slate-800 bg-[#060b16] hover:border-slate-700 transition-colors">
+              <input
+                type="checkbox"
+                checked={favoriteTeamAutoLock}
+                onChange={(e) => setFavoriteTeamAutoLock(e.target.checked)}
+                className="size-4 rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-0"
+              />
+              <span className="text-sm font-medium text-white flex items-center gap-1.5">
+                <Lock size={14} className="text-amber-400" /> Verrouillage automatique
+              </span>
+            </label>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <SettingsIcon size={18} className="text-emerald-400" />
+          Saison &amp; paramètres
+        </h2>
+
+        {error && (
+          <div className="mb-4">
+            <ErrorBanner message={error} />
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Saison en cours
+            </label>
+            <TextInput value={season} onChange={(e) => setSeason(e.target.value)} placeholder="2026-2027" />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Droit d'entrée (€ / joueur)
+            </label>
+            <TextInput inputMode="decimal" value={entryFee} onChange={(e) => setEntryFee(e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <Gift size={11} />
+              Bonus score exact (points)
+            </label>
+            <TextInput inputMode="decimal" value={bonus} onChange={(e) => setBonus(e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <Timer size={11} />
+              Fermeture des pronos (min avant coup d'envoi)
+            </label>
+            <TextInput inputMode="numeric" value={closingDelay} onChange={(e) => setClosingDelay(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end">
+          <PrimaryButton onClick={handleSave} disabled={saving}>
+            {saving ? (
+              <RefreshCw size={14} className="animate-spin" />
+            ) : saved ? (
+              <CheckCircle2 size={14} />
+            ) : (
+              <Save size={14} />
+            )}
+            {saved ? "Enregistré" : "Enregistrer"}
+          </PrimaryButton>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <RefreshCw size={18} className="text-emerald-400" />
+          Synchronisation
+        </h2>
+        <p className="mb-4 text-sm text-slate-400">
+          Recharge l'ensemble des données admin (joueurs, paiements, matchs, journées, réglages) depuis Supabase.
+        </p>
+        <GhostButton onClick={handleResync}>
+          <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
+          Resynchroniser maintenant
+        </GhostButton>
+      </Card>
+    </div>
+  );
+}
+
+// ============================================================
+// Composants génériques : Modal & confirmation
+// ============================================================
+function Modal({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0b1325] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="font-display text-lg font-bold uppercase tracking-wide text-white">{title}</h3>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white">
+            <X size={16} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  description,
+  confirmLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onCancel}>
+      <div
+        className="w-full max-w-sm rounded-2xl border border-red-500/20 bg-[#0b1325] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center gap-2 text-red-400">
+          <AlertTriangle size={18} />
+          <h3 className="font-display text-lg font-bold uppercase tracking-wide">{title}</h3>
+        </div>
+        <p className="mb-5 text-sm text-slate-400">{description}</p>
+        <div className="flex justify-end gap-2">
+          <GhostButton onClick={onCancel}>Annuler</GhostButton>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2 font-display text-xs font-bold uppercase tracking-wide text-white transition-all hover:bg-red-600 disabled:opacity-50"
+          >
+            {busy ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

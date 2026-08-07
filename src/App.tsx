@@ -1,34 +1,44 @@
-﻿import React, { useState } from 'react';
-import { SplashScreen } from './components/SplashScreen';
-import { Trophy } from 'lucide-react';
+﻿import React, { useState } from "react";
+import { SplashScreen } from "./components/prono/SplashScreen";
+import { Trophy } from "lucide-react";
 
 export function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   if (isLoading) {
-    return <SplashScreen onFinish={() => setIsLoading(false)} />;
+    return <SplashScreen onDone={() => setIsLoading(false)} />;
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6">
-      <header className="max-w-6xl mx-auto flex justify-between items-center py-4 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/30">
-            <Trophy className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-extrabold tracking-wider text-lg">PREMIUM PLAY STATS</span>
-        </div>
-      </header>
-      
-      <main className="max-w-6xl mx-auto mt-12 space-y-8">
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-8 shadow-xl">
-          <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-300 mb-4">
-            Tableau de bord des Pronostics
+    <div
+      className="min-h-screen"
+      style={{
+        backgroundImage:
+          "linear-gradient(rgba(7,12,22,.78), rgba(7,12,22,.88)), url('/background-l1.png')",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundAttachment: "fixed",
+        backgroundRepeat: "no-repeat",
+      }}
+    >
+      <main className="max-w-6xl mx-auto mt-12 space-y-8 p-6">
+        <header className="flex items-center gap-3">
+          <Trophy className="h-10 w-10 text-yellow-400" />
+          <h1 className="text-4xl font-bold text-white">
+            PREMIUM PLAY STATS
           </h1>
-          <p className="text-slate-400">
-            Bienvenue sur ton application de pronostics de Ligue 1. Le chargement s'est effectué avec succès !
+        </header>
+
+        <section className="rounded-2xl bg-black/40 backdrop-blur-md p-8 border border-white/10">
+          <h2 className="text-2xl font-bold text-white mb-4">
+            Tableau de bord des Pronostics
+          </h2>
+
+          <p className="text-gray-300">
+            Bienvenue sur ton application de pronostics de Ligue 1. Le
+            chargement s'est effectué avec succès !
           </p>
-        </div>
+        </section>
       </main>
     </div>
   );

@@ -1,0 +1,23 @@
+﻿.match-bonus-card {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    width: 250px;
+    display: flex;
+    flex-direction: column;
+}
+
+.btn-pronostiquer {
+    background-color: #0f172a;
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 10px;
+    margin-top: 15px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+.btn-pronostiquer:hover {
+    background-color: #1e293b;
+}
