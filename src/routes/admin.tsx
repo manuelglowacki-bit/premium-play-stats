@@ -3115,24 +3115,69 @@ function SettingsTab({
     setSyncing(false);
   }
 
+  async function handleTestApiConnection() {
+    setTestingApi(true);
+    try {
+      const list = await getAvailableCompetitions();
+      notify(`✅ Connexion football-data.org OK — ${list.length} championnat(s) disponible(s) sur ce compte.`);
+    } catch (e) {
+      notify(errorMessage(e, "❌ Connexion à football-data.org impossible."));
+    } finally {
+      setTestingApi(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      {/* Phase 2 : Section Équipe favorite */}
-      <Card className="p-5 md:p-6 border-amber-500/30 bg-[#0d1322]">
-        <div className="flex items-center gap-3 mb-4">
-          <span className="grid size-10 place-items-center rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30">
+      {error && <ErrorBanner message={error} />}
+
+      {/* ================= BARÈME DE POINTS ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Gift size={18} className="text-emerald-400" />
+          Barème de points
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Ces valeurs sont sauvegardées, mais aucun moteur de calcul de points n'existe encore dans le code ni en
+          base à ce jour (vérifié) — elles ne s'appliquent pas encore automatiquement aux pronostics.
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <NumberField label="Score exact (points)" value={scoreExact} onChange={setScoreExact} icon={CheckCircle2} />
+          <NumberField
+            label="Bon résultat 1N2 (points)"
+            value={correctResult}
+            onChange={setCorrectResult}
+            icon={Check}
+            hint="Bon sens du résultat, sans le score exact."
+          />
+          <NumberField
+            label="Bonus bon nombre de buts (points)"
+            value={goalDiffBonus}
+            onChange={setGoalDiffBonus}
+            icon={Plus}
+            hint="Nombre de buts d'une des deux équipes deviné juste."
+          />
+        </div>
+      </Card>
+
+      {/* ================= ÉQUIPE DE CŒUR ================= */}
+      <Card className="p-5 border-amber-500/30 bg-[#0d1322]">
+        <div className="mb-4 flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-amber-500/30 bg-amber-500/15 text-amber-400">
             ⭐
           </span>
           <div>
-            <h2 className="font-display text-xl font-bold uppercase tracking-wide text-white">Équipe favorite</h2>
-            <p className="text-xs text-slate-400">Paramétrez la date limite et le verrouillage automatique des choix d'équipe.</p>
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cœur</h2>
+            <p className="text-xs text-slate-400">
+              Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
+            </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-              <Calendar size={14} className="text-emerald-400" /> Date limite
+            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <Calendar size={11} className="text-emerald-400" /> Date limite de choix
             </label>
             <input
               type="datetime-local"
@@ -3141,34 +3186,109 @@ function SettingsTab({
               className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
             />
           </div>
-
+          <NumberField
+            label="Bonus points (matchs équipe de cœur)"
+            value={favoriteTeamBonusPoints}
+            onChange={setFavoriteTeamBonusPoints}
+            icon={Gift}
+            hint="0 = aucun bonus. Non appliqué automatiquement aujourd'hui (voir barème de points)."
+          />
           <div className="flex flex-col justify-end">
-            <label className="flex items-center gap-3 cursor-pointer p-2.5 rounded-xl border border-slate-800 bg-[#060b16] hover:border-slate-700 transition-colors">
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] p-2.5 transition-colors hover:border-slate-700">
               <input
                 type="checkbox"
                 checked={favoriteTeamAutoLock}
                 onChange={(e) => setFavoriteTeamAutoLock(e.target.checked)}
                 className="size-4 rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-0"
               />
-              <span className="text-sm font-medium text-white flex items-center gap-1.5">
-                <Lock size={14} className="text-amber-400" /> Verrouillage automatique
+              <span className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <Lock size={14} className="text-amber-400" /> Verrouillage automatique à la date limite
               </span>
             </label>
           </div>
         </div>
       </Card>
 
+      {/* ================= BONUS ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Gift size={18} className="text-emerald-400" />
+          Bonus
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Les championnats couverts se pilotent depuis l'onglet Bonus (activer/désactiver) — ici, la cadence des
+          tirages et un barème spécifique optionnel pour les matchs bonus.
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <NumberField
+            label="Tirages bonus par période"
+            value={bonusDrawsPerPeriod}
+            onChange={setBonusDrawsPerPeriod}
+            icon={RefreshCw}
+          />
+          <NumberField
+            label="Points pronostic bonus (si différent du barème standard)"
+            value={bonusMatchPoints}
+            onChange={setBonusMatchPoints}
+            icon={Gift}
+            hint="Laisser vide pour appliquer le barème standard ci-dessus."
+          />
+        </div>
+      </Card>
+
+      {/* ================= BLOCAGE DES PRONOSTICS ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Timer size={18} className="text-emerald-400" />
+          Blocage des pronostics
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Valeur par défaut utilisée par le verrouillage automatique « Auto −1 min » des journées (onglet Bonus).
+        </p>
+        <div className="max-w-xs">
+          <NumberField
+            label="Minutes avant le coup d'envoi"
+            value={closingDelay}
+            onChange={setClosingDelay}
+            icon={Lock}
+          />
+        </div>
+      </Card>
+
+      {/* ================= MODE MAINTENANCE ================= */}
+      <Card className={`p-5 ${maintenanceMode ? "border-red-500/40 bg-red-500/[0.03]" : ""}`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+            <AlertTriangle size={18} className={maintenanceMode ? "text-red-400" : "text-emerald-400"} />
+            Mode maintenance
+          </h2>
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] px-3 py-2 transition-colors hover:border-slate-700">
+            <input
+              type="checkbox"
+              checked={maintenanceMode}
+              onChange={(e) => setMaintenanceMode(e.target.checked)}
+              className="size-4 rounded border-slate-800 bg-slate-900 text-red-500 focus:ring-0"
+            />
+            <span className="text-sm font-medium text-white">Geler les pronostics</span>
+          </label>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Réglage sauvegardé — à brancher côté page Pronostics si tu veux qu'il bloque réellement les saisies (pas
+          encore lu par le code aujourd'hui).
+        </p>
+        <TextInput
+          value={maintenanceMessage}
+          onChange={(e) => setMaintenanceMessage(e.target.value)}
+          placeholder="Message affiché aux joueurs pendant la maintenance (optionnel)"
+        />
+      </Card>
+
+      {/* ================= SAISON & PARAMÈTRES GÉNÉRAUX ================= */}
       <Card className="p-5">
         <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
           <SettingsIcon size={18} className="text-emerald-400" />
-          Saison &amp; paramètres
+          Saison &amp; paramètres généraux
         </h2>
-
-        {error && (
-          <div className="mb-4">
-            <ErrorBanner message={error} />
-          </div>
-        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
@@ -3177,25 +3297,26 @@ function SettingsTab({
             </label>
             <TextInput value={season} onChange={(e) => setSeason(e.target.value)} placeholder="2026-2027" />
           </div>
+          <NumberField label="Droit d'entrée (€ / joueur)" value={entryFee} onChange={setEntryFee} />
           <div>
             <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Droit d'entrée (€ / joueur)
+              Fuseau horaire d'affichage
             </label>
-            <TextInput inputMode="decimal" value={entryFee} onChange={(e) => setEntryFee(e.target.value)} />
+            <TextInput value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="Europe/Paris" />
+            <p className="mt-1 text-[10px] text-slate-500">
+              Sauvegardé, non encore branché dans le formatage des heures ci-dessous (toujours navigateur local).
+            </p>
           </div>
           <div>
-            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              <Gift size={11} />
-              Bonus score exact (points)
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Date limite d'inscription / modification du profil
             </label>
-            <TextInput inputMode="decimal" value={bonus} onChange={(e) => setBonus(e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              <Timer size={11} />
-              Fermeture des pronos (min avant coup d'envoi)
-            </label>
-            <TextInput inputMode="numeric" value={closingDelay} onChange={(e) => setClosingDelay(e.target.value)} />
+            <input
+              type="datetime-local"
+              value={registrationDeadline}
+              onChange={(e) => setRegistrationDeadline(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
+            />
           </div>
         </div>
 
@@ -3213,13 +3334,29 @@ function SettingsTab({
         </div>
       </Card>
 
+      {/* ================= FOOTBALL-DATA.ORG ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Globe size={18} className="text-emerald-400" />
+          Intégration football-data.org
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Clé API stockée côté serveur (variable d'environnement <code className="text-slate-400">FOOTBALL_DATA_API_TOKEN</code>),
+          jamais exposée ici. Ce bouton vérifie juste que la connexion fonctionne.
+        </p>
+        <GhostButton onClick={handleTestApiConnection} disabled={testingApi}>
+          <RefreshCw size={12} className={testingApi ? "animate-spin" : ""} />
+          Tester la connexion
+        </GhostButton>
+      </Card>
+
       <Card className="p-5">
         <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
           <RefreshCw size={18} className="text-emerald-400" />
           Synchronisation
         </h2>
         <p className="mb-4 text-sm text-slate-400">
-          Recharge l'ensemble des données admin (joueurs, paiements, matchs, journées, réglages) depuis Supabase.
+          Recharge l'ensemble des données admin (joueurs, paiements, matchs, bonus, réglages) depuis Supabase.
         </p>
         <GhostButton onClick={handleResync}>
           <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
