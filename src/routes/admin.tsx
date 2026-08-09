@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import AdminRoute from "@/components/auth/AdminRoute";
 import {
@@ -10,6 +10,7 @@ import {
   type Team,
   type Season,
   type Competition,
+  type DiscoveredCompetition,
   type AppSettings,
   getPlayers,
   deletePlayer as apiDeletePlayer,
@@ -23,17 +24,30 @@ import {
   createMatch,
   updateMatch,
   deleteMatch as apiDeleteMatch,
+  syncLigue1Matches,
+  syncCompetitionMatches,
   getMatchdays,
   createMatchday,
   updateMatchday,
+  setMatchdayDeadline,
+  setMatchdayAutoMinusOne,
+  clearMatchdayDeadline,
   setMatchdayFinished,
   deleteMatchday as apiDeleteMatchday,
   getTeams,
   getSeasons,
   getCompetitions,
+  getAvailableCompetitions,
+  setCompetitionActive,
   getSettings,
   updateSettings,
 } from "@/services/adminService";
+import {
+  type BonusCandidate,
+  type BonusCompetitionCode,
+  normalizeCompetitionName,
+  selectBestBonusMatch,
+} from "@/services/bonusSelectionService";
 
 import {
   Users,
@@ -57,34 +71,60 @@ import {
   Timer,
   CalendarClock,
   Check,
+  Download,
+  Globe,
 } from "lucide-react";
+
+/** Onglets de l'espace admin, adressables via le search param `tab`
+ * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
+ * partageable/bookmarkable. */
+const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "reglages"] as const;
+export type AdminTab = (typeof ADMIN_TAB_VALUES)[number];
+
+function isAdminTab(value: unknown): value is AdminTab {
+  return typeof value === "string" && (ADMIN_TAB_VALUES as readonly string[]).includes(value);
+}
+
+type AdminSearch = { tab?: AdminTab };
+
+// L'onglet "Journées" a été fusionné dans "Bonus" (tirage bonus + gestion
+// des championnats européens) : un ancien lien/bookmark `?tab=journees`
+// doit continuer à pointer quelque part plutôt que de retomber sur l'onglet
+// par défaut.
+const LEGACY_TAB_REDIRECTS: Record<string, AdminTab> = { journees: "bonus" };
 
 export const Route = createFileRoute("/admin")({
   component: AdminPage,
+  validateSearch: (search: Record<string, unknown>): AdminSearch => {
+    if (typeof search.tab === "string" && search.tab in LEGACY_TAB_REDIRECTS) {
+      return { tab: LEGACY_TAB_REDIRECTS[search.tab] };
+    }
+    return { tab: isAdminTab(search.tab) ? search.tab : undefined };
+  },
 });
 
 // ============================================================
 // Données club (réutilisées de la page pronostics)
 // ============================================================
 const OFFICIAL_L1_CLUBS = [
-  { id: "angers", name: "Angers SCO", crestUrl: "/clubs/angers.png" },
-  { id: "monaco", name: "AS Monaco", crestUrl: "/clubs/monaco.png" },
-  { id: "auxerre", name: "AJ Auxerre", crestUrl: "/clubs/auxerre.png" },
-  { id: "brest", name: "Stade Brestois 29", crestUrl: "/clubs/brest.png" },
-  { id: "lehavre", name: "Le Havre AC", crestUrl: "/clubs/lehavre.png" },
-  { id: "lemans", name: "Le Mans FC", crestUrl: "/clubs/lemans.png" },
-  { id: "lens", name: "RC Lens", crestUrl: "/clubs/lens.png" },
-  { id: "lorient", name: "FC Lorient", crestUrl: "/clubs/lorient.png" },
-  { id: "lille", name: "LOSC Lille", crestUrl: "/clubs/lille.png" },
-  { id: "ol", name: "Olympique Lyonnais", crestUrl: "/clubs/ol.png" },
-  { id: "om", name: "Olympique de Marseille", crestUrl: "/clubs/om.png" },
-  { id: "parisfc", name: "Paris FC", crestUrl: "/clubs/parisfc.png" },
-  { id: "psg", name: "Paris Saint-Germain", crestUrl: "/clubs/psg.png" },
-  { id: "rennes", name: "Stade Rennais FC", crestUrl: "/clubs/rennes.png" },
-  { id: "strasbourg", name: "RC Strasbourg Alsace", crestUrl: "/clubs/strasbourg.png" },
-  { id: "tfc", name: "Toulouse FC", crestUrl: "/clubs/tfc.png" },
-  { id: "troyes", name: "ESTAC Troyes", crestUrl: "/clubs/troyes.png" },
-  { id: "nice", name: "OGC Nice", crestUrl: "/clubs/nice.png" },
+  { id: "angers", name: "Angers SCO", crestUrl: "/logos/ligue1/angers.png" },
+  { id: "monaco", name: "AS Monaco", crestUrl: "/logos/ligue1/monaco.png" },
+  { id: "auxerre", name: "AJ Auxerre", crestUrl: "/logos/ligue1/auxerre.png" },
+  { id: "brest", name: "Stade Brestois 29", crestUrl: "/logos/ligue1/brest.png" },
+  { id: "lehavre", name: "Le Havre AC", crestUrl: "/logos/ligue1/lehavre.png" },
+  { id: "lemans", name: "Le Mans FC", crestUrl: "/logos/ligue1/lemans.png" },
+  { id: "lens", name: "RC Lens", crestUrl: "/logos/ligue1/lens.png" },
+  { id: "lorient", name: "FC Lorient", crestUrl: "/logos/ligue1/lorient.png" },
+  { id: "lille", name: "LOSC Lille", crestUrl: "/logos/ligue1/lille.png" },
+  { id: "ol", name: "Olympique Lyonnais", crestUrl: "/logos/ligue1/ol.png" },
+  { id: "om", name: "Olympique de Marseille", crestUrl: "/logos/ligue1/om.png" },
+  { id: "parisfc", name: "Paris FC", crestUrl: "/logos/ligue1/parisfc.png" },
+  { id: "psg", name: "Paris Saint-Germain", crestUrl: "/logos/ligue1/psg.png" },
+  { id: "rennes", name: "Stade Rennais FC", crestUrl: "/logos/ligue1/rennes.png" },
+  { id: "strasbourg", name: "RC Strasbourg Alsace", crestUrl: "/logos/ligue1/strasbourg.png" },
+  { id: "tfc", name: "Toulouse FC", crestUrl: "/logos/ligue1/tfc.png" },
+  { id: "troyes", name: "ESTAC Troyes", crestUrl: "/logos/ligue1/troyes.png" },
+  { id: "nice", name: "OGC Nice", crestUrl: "/logos/ligue1/nice.png" },
 ];
 
 function clubOf(key: string | null | undefined) {
@@ -102,64 +142,76 @@ function teamOf(teams: Team[], id: string | null | undefined) {
   return teams.find((t) => t.id === id) ?? null;
 }
 
-function TeamBadge({ teams, teamId, size = "size-6" }: { teams: Team[]; teamId: string | null; size?: string }) {
-  const team = teamOf(teams, teamId);
+/** Forme normalisée consommée par EntityBadge, qu'il s'agisse d'une
+ * équipe Supabase (`teams`) ou d'un club officiel L1 codé en dur. */
+type BadgeEntity = { name: string; shortName?: string | null; logoUrl?: string | null } | null;
+
+/** Badge générique logo + nom, avec repli sur les initiales si le logo
+ * est absent ou casse au chargement. Réutilisé par TeamBadge et ClubBadge
+ * ci-dessous, qui ne font plus qu'adapter leur source de données au
+ * format BadgeEntity attendu ici. */
+function EntityBadge({
+  entity,
+  fallbackLabel = "—",
+  size = "size-6",
+  imgClassName = "",
+}: {
+  entity: BadgeEntity;
+  fallbackLabel?: string;
+  size?: string;
+  imgClassName?: string;
+}) {
   const [broken, setBroken] = useState(false);
 
-  if (!team) {
+  if (!entity) {
     return (
       <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
         <span className={`${size} rounded-md bg-slate-800 border border-slate-700`} />
-        —
+        {fallbackLabel}
       </span>
     );
   }
 
+  const label = entity.shortName || entity.name;
+
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={`relative ${size} shrink-0 rounded-md overflow-hidden bg-white/5 border border-slate-800 flex items-center justify-center`}>
-        {broken || !team.logo_url ? (
-          <span className="font-mono text-[8px] font-bold text-slate-300">
-            {(team.short_name || team.name).slice(0, 2).toUpperCase()}
-          </span>
+        {broken || !entity.logoUrl ? (
+          <span className="font-mono text-[8px] font-bold text-slate-300">{label.slice(0, 2).toUpperCase()}</span>
         ) : (
           <img
-            src={team.logo_url}
-            alt={team.name}
-            className="size-full object-contain"
+            src={entity.logoUrl}
+            alt={entity.name}
+            className={`size-full object-contain ${imgClassName}`}
             onError={() => setBroken(true)}
           />
         )}
       </span>
-      <span className="text-xs font-semibold text-slate-200">{team.short_name || team.name}</span>
+      <span className="text-xs font-semibold text-slate-200">{label}</span>
     </span>
+  );
+}
+
+function TeamBadge({ teams, teamId, size = "size-6" }: { teams: Team[]; teamId: string | null; size?: string }) {
+  const team = teamOf(teams, teamId);
+  return (
+    <EntityBadge
+      entity={team ? { name: team.name, shortName: team.short_name, logoUrl: team.logo_url } : null}
+      size={size}
+    />
   );
 }
 
 function ClubBadge({ value, size = "size-6" }: { value: string | null; size?: string }) {
   const club = clubOf(value);
-  const [broken, setBroken] = useState(false);
-
-  if (!club) {
-    return (
-      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
-        <span className={`${size} rounded-md bg-slate-800 border border-slate-700`} />
-        {value || "—"}
-      </span>
-    );
-  }
-
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={`relative ${size} shrink-0 rounded-md overflow-hidden bg-white/5 border border-slate-800 flex items-center justify-center`}>
-        {broken ? (
-          <span className="font-mono text-[8px] font-bold text-slate-300">{club.name.slice(0, 2).toUpperCase()}</span>
-        ) : (
-          <img src={club.crestUrl} alt={club.name} className="size-full object-contain p-0.5" onError={() => setBroken(true)} />
-        )}
-      </span>
-      <span className="text-xs font-semibold text-slate-200">{club.name}</span>
-    </span>
+    <EntityBadge
+      entity={club ? { name: club.name, logoUrl: club.crestUrl } : null}
+      fallbackLabel={value || "—"}
+      size={size}
+      imgClassName="p-0.5"
+    />
   );
 }
 
@@ -214,19 +266,28 @@ function GhostButton({
   className = "",
   danger = false,
   title,
+  ariaLabel,
+  disabled = false,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   className?: string;
   danger?: boolean;
   title?: string;
+  /** Libellé accessible explicite — indispensable quand le bouton n'affiche
+   * qu'une icône (ex. GhostButton danger de suppression). Vient s'ajouter
+   * au `title` (info-bulle), il ne le remplace pas. */
+  ariaLabel?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       title={title}
+      aria-label={ariaLabel ?? title}
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-mono text-[11px] font-bold transition-all ${
+      disabled={disabled}
+      className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 font-mono text-[11px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
         danger
           ? "border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white"
           : "border-slate-700 bg-slate-800/50 text-slate-300 hover:bg-slate-700 hover:text-white"
@@ -256,24 +317,98 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
+type ToastMessage = { id: number; message: string };
+
+/** Pile de notifications non bloquantes, en bas d'écran, qui reprend le
+ * style d'ErrorBanner. Remplace les alert() natifs du navigateur : chaque
+ * toast disparaît de lui-même après quelques secondes ou peut être fermé
+ * manuellement. */
+function ToastStack({ toasts, onDismiss }: { toasts: ToastMessage[]; onDismiss: (id: number) => void }) {
+  if (toasts.length === 0) return null;
+
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[200] flex flex-col items-center gap-2 px-4 sm:bottom-6">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          role="alert"
+          className="pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-xl border border-amber-500/30 bg-[#0b1325]/95 px-4 py-3 text-xs font-semibold text-amber-300 shadow-2xl backdrop-blur-md"
+        >
+          <AlertTriangle size={16} className="shrink-0" />
+          <span className="flex-1">{toast.message}</span>
+          <button
+            type="button"
+            onClick={() => onDismiss(toast.id)}
+            aria-label="Fermer la notification"
+            className="shrink-0 rounded-lg p-1 text-amber-300/70 transition-colors hover:bg-amber-500/10 hover:text-amber-200"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const TABLE_MISSING_HINT =
   "Table introuvable dans Supabase. Exécutez le script SQL fourni (supabase_admin_schema.sql) puis synchronisez.";
+
+/** Extrait un message lisible d'une erreur `catch` typée `unknown` (pas de
+ * `any`) — utilisé par les handlers ajoutés ci-dessous (score inline,
+ * onglet Bonus, Réglages) ; le reste du fichier utilise encore
+ * `catch (e: any)`, une convention préexistante non touchée ici. */
+function errorMessage(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback;
+}
+
+/** Enregistre une erreur de chargement sous `key` sans écraser un message
+ * déjà présent pour la même clé : les messages distincts se combinent, les
+ * doublons ne sont pas répétés. Évite qu'une source fasse disparaître
+ * l'erreur d'une autre source rattachée au même onglet. */
+function addError(bag: Record<string, string>, key: string, message: string) {
+  const previous = bag[key];
+  if (!previous) {
+    bag[key] = message;
+  } else if (!previous.includes(message)) {
+    bag[key] = `${previous} ${message}`;
+  }
+}
 
 // ============================================================
 // PAGE ADMIN
 // ============================================================
-type AdminTab = "joueurs" | "paiements" | "matchs" | "journees" | "reglages";
+// AdminTab est défini plus haut, à côté de la Route.
 
 const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
   { id: "joueurs", label: "Joueurs", icon: Users },
   { id: "paiements", label: "Paiements", icon: Wallet },
   { id: "matchs", label: "Matchs", icon: Calendar },
-  { id: "journees", label: "Journées", icon: Calendar },
+  { id: "bonus", label: "Bonus", icon: Gift },
   { id: "reglages", label: "Réglages", icon: SettingsIcon },
 ];
 
 function AdminPage() {
-  const [activeTab, setActiveTab] = useState<AdminTab>("joueurs");
+  // L'onglet actif vit dans l'URL (?tab=...) plutôt que dans un simple
+  // useState, pour rester adressable (lien partagé, retour arrière, etc.).
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const activeTab = search.tab ?? "joueurs";
+  function setActiveTab(tab: AdminTab) {
+    navigate({ search: (prev: AdminSearch) => ({ ...prev, tab }) });
+  }
+
+  // Nettoie l'URL d'un ancien lien/bookmark `?tab=journees` (onglet fusionné
+  // dans Bonus) vers `?tab=bonus`, une fois le routeur monté. validateSearch
+  // fait déjà pointer `activeTab` sur "bonus" immédiatement ; ceci ne fait
+  // que corriger la barre d'adresse pour ne pas perpétuer l'ancien lien.
+  useEffect(() => {
+    const rawTab = new URLSearchParams(window.location.search).get("tab");
+    if (rawTab && rawTab in LEGACY_TAB_REDIRECTS) {
+      navigate({ search: (prev: AdminSearch) => ({ ...prev, tab: LEGACY_TAB_REDIRECTS[rawTab] }), replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
@@ -289,6 +424,30 @@ function AdminPage() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Notifications non bloquantes (remplace les alert() natifs) — voir ToastStack.
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const toastIdRef = useRef(0);
+
+  function notify(message: string) {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 5000);
+  }
+
+  function dismissToast(id: number) {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  function clearErrors(keys: string[]) {
+    setErrors((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => delete next[key]);
+      return next;
+    });
+  }
+
   useEffect(() => {
     initialize();
   }, []);
@@ -302,60 +461,88 @@ function AdminPage() {
   async function loadAll() {
     const nextErrors: Record<string, string> = {};
 
-    try {
-      setPlayers(await getPlayers());
-    } catch (e) {
-      console.error(e);
-      nextErrors.joueurs = "Impossible de charger les joueurs.";
+    // Les 8 sources sont indépendantes : on les charge en parallèle plutôt
+    // qu'en série pour diviser le temps de chargement par ~8, et on garde
+    // Promise.allSettled pour qu'un échec isolé (ex. table manquante)
+    // n'empêche pas les autres sources de s'afficher.
+    const [
+      playersResult,
+      paymentsResult,
+      matchesResult,
+      matchdaysResult,
+      teamsResult,
+      seasonsResult,
+      competitionsResult,
+      settingsResult,
+    ] = await Promise.allSettled([
+      getPlayers(),
+      getPayments(),
+      getMatches(),
+      getMatchdays(),
+      getTeams(),
+      getSeasons(),
+      getCompetitions(),
+      getSettings(),
+    ]);
+
+    if (playersResult.status === "fulfilled") {
+      setPlayers(playersResult.value);
+    } else {
+      console.error(playersResult.reason);
+      addError(nextErrors, "joueurs", "Impossible de charger les joueurs.");
     }
 
-    try {
-      setPayments(await getPayments());
-    } catch (e) {
-      console.warn("payments:", e);
-      nextErrors.paiements = TABLE_MISSING_HINT;
+    if (paymentsResult.status === "fulfilled") {
+      setPayments(paymentsResult.value);
+    } else {
+      console.warn("payments:", paymentsResult.reason);
+      addError(nextErrors, "paiements", TABLE_MISSING_HINT);
     }
 
-    try {
-      setMatches(await getMatches());
-    } catch (e) {
-      console.warn("matches:", e);
-      nextErrors.matchs = TABLE_MISSING_HINT;
+    if (matchesResult.status === "fulfilled") {
+      setMatches(matchesResult.value);
+    } else {
+      console.warn("matches:", matchesResult.reason);
+      addError(nextErrors, "matchs", TABLE_MISSING_HINT);
     }
 
-    try {
-      setMatchdays(await getMatchdays());
-    } catch (e) {
-      console.warn("matchdays:", e);
-      nextErrors.journees = TABLE_MISSING_HINT;
+    if (matchdaysResult.status === "fulfilled") {
+      setMatchdays(matchdaysResult.value);
+    } else {
+      console.warn("matchdays:", matchdaysResult.reason);
+      addError(nextErrors, "bonus", TABLE_MISSING_HINT);
     }
 
-    try {
-      setTeams(await getTeams());
-    } catch (e) {
-      console.warn("teams:", e);
-      nextErrors.matchs = TABLE_MISSING_HINT;
+    if (teamsResult.status === "fulfilled") {
+      setTeams(teamsResult.value);
+    } else {
+      console.warn("teams:", teamsResult.reason);
+      // Clé distincte de "matchs" : les équipes ne sont qu'un référentiel
+      // utilisé par le formulaire de l'onglet Matchs, pas l'onglet lui-même.
+      // Les confondre affichait par le passé le badge d'erreur sur le
+      // mauvais onglet.
+      addError(nextErrors, "equipes", TABLE_MISSING_HINT);
     }
 
-    try {
-      setSeasons(await getSeasons());
-    } catch (e) {
-      console.warn("seasons:", e);
-      nextErrors.journees = TABLE_MISSING_HINT;
+    if (seasonsResult.status === "fulfilled") {
+      setSeasons(seasonsResult.value);
+    } else {
+      console.warn("seasons:", seasonsResult.reason);
+      addError(nextErrors, "bonus", TABLE_MISSING_HINT);
     }
 
-    try {
-      setCompetitions(await getCompetitions());
-    } catch (e) {
-      console.warn("competitions:", e);
-      nextErrors.journees = TABLE_MISSING_HINT;
+    if (competitionsResult.status === "fulfilled") {
+      setCompetitions(competitionsResult.value);
+    } else {
+      console.warn("competitions:", competitionsResult.reason);
+      addError(nextErrors, "bonus", TABLE_MISSING_HINT);
     }
 
-    try {
-      setSettings(await getSettings());
-    } catch (e) {
-      console.warn("app_settings:", e);
-      nextErrors.reglages = TABLE_MISSING_HINT;
+    if (settingsResult.status === "fulfilled") {
+      setSettings(settingsResult.value);
+    } else {
+      console.warn("app_settings:", settingsResult.reason);
+      addError(nextErrors, "reglages", TABLE_MISSING_HINT);
     }
 
     setErrors(nextErrors);
@@ -469,8 +656,10 @@ function AdminPage() {
           {activeTab === "joueurs" && (
             <PlayersTab
               players={players}
+              setPlayers={setPlayers}
               error={errors.joueurs}
               onChanged={async () => setPlayers(await getPlayers())}
+              notify={notify}
             />
           )}
 
@@ -478,33 +667,49 @@ function AdminPage() {
             <PaymentsTab
               players={players}
               payments={payments}
+              setPayments={setPayments}
               entryFee={entryFee}
               paidCount={paidCount}
               totalCollected={totalCollected}
               totalExpected={totalExpected}
               error={errors.paiements}
               onChanged={async () => setPayments(await getPayments())}
+              notify={notify}
             />
           )}
 
           {activeTab === "matchs" && (
             <MatchesTab
               matches={matches}
+              setMatches={setMatches}
               matchdays={matchdays}
               teams={teams}
               error={errors.matchs}
+              teamsError={errors.equipes}
+              clearErrors={clearErrors}
               onChanged={async () => setMatches(await getMatches())}
+              refreshMatchdays={async () => setMatchdays(await getMatchdays())}
+              notify={notify}
             />
           )}
 
-          {activeTab === "journees" && (
-            <MatchdaysTab
+          {activeTab === "bonus" && (
+            <BonusTab
               matchdays={matchdays}
+              setMatchdays={setMatchdays}
               matches={matches}
+              teams={teams}
               seasons={seasons}
               competitions={competitions}
-              error={errors.journees}
-              onChanged={async () => setMatchdays(await getMatchdays())}
+              settings={settings}
+              error={errors.bonus}
+              onChanged={async () => {
+                setMatchdays(await getMatchdays());
+                setMatches(await getMatches());
+              }}
+              onCompetitionsChanged={async () => setCompetitions(await getCompetitions())}
+              onSettingsChanged={async () => setSettings(await getSettings())}
+              notify={notify}
             />
           )}
 
@@ -513,9 +718,12 @@ function AdminPage() {
               settings={settings}
               error={errors.reglages}
               onChanged={async () => setSettings(await getSettings())}
+              notify={notify}
             />
           )}
         </div>
+
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </AppShell>
     </AdminRoute>
   );
@@ -526,12 +734,16 @@ function AdminPage() {
 // ============================================================
 function PlayersTab({
   players,
+  setPlayers,
   error,
   onChanged,
+  notify,
 }: {
   players: Player[];
+  setPlayers: React.Dispatch<React.SetStateAction<Player[]>>;
   error?: string;
   onChanged: () => Promise<void>;
+  notify: (message: string) => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Player | null>(null);
@@ -556,33 +768,42 @@ function PlayersTab({
       setEditing(null);
       await onChanged();
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la modification du joueur.");
+      notify(e.message ?? "Erreur lors de la modification du joueur.");
     } finally {
       setSaving(false);
     }
   }
 
+  // Mise à jour optimiste : le rôle change à l'écran immédiatement, sans
+  // attendre Supabase. On ne resynchronise (refetch complet) qu'en cas
+  // d'erreur, pour revenir à un état garanti cohérent.
   async function toggleAdmin(player: Player) {
     setBusyId(player.id);
+    const nextIsAdmin = !player.is_admin;
+    setPlayers((prev) => prev.map((p) => (p.id === player.id ? { ...p, is_admin: nextIsAdmin } : p)));
     try {
-      await setPlayerAdmin(player.id, !player.is_admin);
-      await onChanged();
+      await setPlayerAdmin(player.id, nextIsAdmin);
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la mise à jour.");
+      notify(e.message ?? "Erreur lors de la mise à jour.");
+      await onChanged();
     } finally {
       setBusyId(null);
     }
   }
 
+  // Idem : le joueur disparaît du tableau tout de suite. En cas d'échec de
+  // la suppression côté Supabase, on resynchronise pour le faire réapparaître.
   async function confirmAndDelete() {
     if (!confirmDelete) return;
-    setBusyId(confirmDelete.id);
+    const target = confirmDelete;
+    setBusyId(target.id);
+    setPlayers((prev) => prev.filter((p) => p.id !== target.id));
+    setConfirmDelete(null);
     try {
-      await apiDeletePlayer(confirmDelete.id);
-      setConfirmDelete(null);
-      await onChanged();
+      await apiDeletePlayer(target.id);
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la suppression.");
+      notify(e.message ?? "Erreur lors de la suppression.");
+      await onChanged();
     } finally {
       setBusyId(null);
     }
@@ -679,7 +900,12 @@ function PlayersTab({
                         )}
                         {player.is_admin ? "Rétrograder" : "Promouvoir"}
                       </GhostButton>
-                      <GhostButton danger onClick={() => setConfirmDelete(player)} title="Supprimer">
+                      <GhostButton
+                        danger
+                        onClick={() => setConfirmDelete(player)}
+                        title="Supprimer"
+                        ariaLabel={`Supprimer le joueur ${player.pseudo ?? player.id}`}
+                      >
                         <Trash2 size={12} />
                       </GhostButton>
                     </div>
@@ -721,6 +947,7 @@ function PlayersTab({
                 ))}
               </select>
             </div>
+
             <div className="flex justify-end gap-2 pt-2">
               <GhostButton onClick={() => setEditing(null)}>Annuler</GhostButton>
               <PrimaryButton onClick={submitEdit} disabled={saving}>
@@ -752,25 +979,31 @@ function PlayersTab({
 function PaymentsTab({
   players,
   payments,
+  setPayments,
   entryFee,
   paidCount,
   totalCollected,
   totalExpected,
   error,
   onChanged,
+  notify,
 }: {
   players: Player[];
   payments: Payment[];
+  setPayments: React.Dispatch<React.SetStateAction<Payment[]>>;
   entryFee: number;
   paidCount: number;
   totalCollected: number;
   totalExpected: number;
   error?: string;
   onChanged: () => Promise<void>;
+  notify: (message: string) => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingAmount, setEditingAmount] = useState<Record<string, string>>({});
   const [generating, setGenerating] = useState(false);
+  const [confirmGenerate, setConfirmGenerate] = useState(false);
+  const [search, setSearch] = useState("");
 
   const playerById = useMemo(() => {
     const map = new Map<string, Player>();
@@ -1817,7 +2050,11 @@ function Modal({
       >
         <div className="mb-5 flex items-center justify-between">
           <h3 className="font-display text-lg font-bold uppercase tracking-wide text-white">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white">
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white"
+          >
             <X size={16} />
           </button>
         </div>
@@ -1834,6 +2071,7 @@ function ConfirmDialog({
   busy,
   onCancel,
   onConfirm,
+  tone = "danger",
 }: {
   title: string;
   description: string;
@@ -1841,14 +2079,21 @@ function ConfirmDialog({
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  /** "danger" (défaut, inchangé) pour les suppressions ; "primary" pour une
+   * confirmation d'action non destructive (ex. génération en masse), qui
+   * reprend alors le vert émeraude du reste de l'app au lieu du rouge. */
+  tone?: "danger" | "primary";
 }) {
+  const isDanger = tone === "danger";
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onCancel}>
       <div
-        className="w-full max-w-sm rounded-2xl border border-red-500/20 bg-[#0b1325] p-6 shadow-2xl"
+        className={`w-full max-w-sm rounded-2xl border bg-[#0b1325] p-6 shadow-2xl ${
+          isDanger ? "border-red-500/20" : "border-emerald-500/20"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center gap-2 text-red-400">
+        <div className={`mb-3 flex items-center gap-2 ${isDanger ? "text-red-400" : "text-emerald-400"}`}>
           <AlertTriangle size={18} />
           <h3 className="font-display text-lg font-bold uppercase tracking-wide">{title}</h3>
         </div>
@@ -1858,9 +2103,19 @@ function ConfirmDialog({
           <button
             onClick={onConfirm}
             disabled={busy}
-            className="inline-flex items-center gap-2 rounded-xl bg-red-500 px-4 py-2 font-display text-xs font-bold uppercase tracking-wide text-white transition-all hover:bg-red-600 disabled:opacity-50"
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 font-display text-xs font-bold uppercase tracking-wide transition-all disabled:opacity-50 ${
+              isDanger
+                ? "bg-red-500 text-white hover:bg-red-600"
+                : "bg-emerald-500 text-slate-950 hover:bg-emerald-400"
+            }`}
           >
-            {busy ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            {busy ? (
+              <RefreshCw size={14} className="animate-spin" />
+            ) : isDanger ? (
+              <Trash2 size={14} />
+            ) : (
+              <Check size={14} />
+            )}
             {confirmLabel}
           </button>
         </div>
