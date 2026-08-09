@@ -1,10 +1,28 @@
 ﻿import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = 'https://azgksiwcgvbertzzzhvq.supabase.co';
-const SUPABASE_SERVICE_KEY = 'sb_publishable_NwALJ8h6gzAlC-GgiqnFow_Ol45BzTj';
-const API_FOOTBALL_KEY = 'REDACTED_FOOTBALL_DATA_TOKEN';
+// Charge .env si présent (Node >= 20.6). Ignoré silencieusement si absent :
+// le script marche aussi si les variables sont déjà exportées dans le shell.
+try {
+  process.loadEnvFile();
+} catch {
+  // pas de .env à charger, ou API non disponible sur cette version de Node
+}
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+// Note : ce script appelle v3.football.api-sports.io (x-apisports-key), pas
+// football-data.org — mais réutilise la même variable d'environnement que le
+// reste du projet pour rester cohérent avec un seul token configuré.
+const API_FOOTBALL_KEY = process.env.FOOTBALL_DATA_API_TOKEN;
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !API_FOOTBALL_KEY) {
+  console.error(
+    "Variables manquantes : vérifie VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY et FOOTBALL_DATA_API_TOKEN dans .env.",
+  );
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const teamNameMapping = {
   "Lens": "RCL",
