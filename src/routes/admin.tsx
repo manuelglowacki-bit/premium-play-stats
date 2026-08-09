@@ -1249,18 +1249,75 @@ function matchdayLabel(md: Matchday | null | undefined) {
   return `J${md.number}`;
 }
 
+/** Détermine la journée à afficher par défaut à l'ouverture de l'onglet :
+ * la journée "en cours" (aujourd'hui tombe dans sa plage de coups d'envoi,
+ * + 3h de tolérance pour couvrir un match encore en jeu), sinon la
+ * prochaine journée à venir, sinon la dernière journée jouée, sinon la
+ * première journée connue. */
+function computeDefaultMatchdayId(matchdays: Matchday[], matches: Match[]): string | null {
+  const sorted = [...matchdays].sort((a, b) => a.number - b.number);
+  if (sorted.length === 0) return null;
+
+  const rangeByMatchday = new Map<string, { min: number; max: number }>();
+  matches.forEach((m) => {
+    if (!m.matchday_id || !m.kickoff) return;
+    const t = new Date(m.kickoff).getTime();
+    if (Number.isNaN(t)) return;
+    const range = rangeByMatchday.get(m.matchday_id);
+    if (range) {
+      range.min = Math.min(range.min, t);
+      range.max = Math.max(range.max, t);
+    } else {
+      rangeByMatchday.set(m.matchday_id, { min: t, max: t });
+    }
+  });
+
+  const now = Date.now();
+  const THREE_HOURS = 3 * 60 * 60 * 1000;
+
+  const ongoing = sorted.find((md) => {
+    const range = rangeByMatchday.get(md.id);
+    return range && now >= range.min && now <= range.max + THREE_HOURS;
+  });
+  if (ongoing) return ongoing.id;
+
+  let next: Matchday | null = null;
+  for (const md of sorted) {
+    const range = rangeByMatchday.get(md.id);
+    if (range && range.min > now) {
+      if (!next || range.min < rangeByMatchday.get(next.id)!.min) next = md;
+    }
+  }
+  if (next) return next.id;
+
+  const withMatches = sorted.filter((md) => rangeByMatchday.has(md.id));
+  if (withMatches.length > 0) return withMatches[withMatches.length - 1].id;
+
+  return sorted[0].id;
+}
+
 function MatchesTab({
   matches,
+  setMatches,
   matchdays,
   teams,
   error,
+  teamsError,
   onChanged,
+  refreshMatchdays,
+  notify,
+  clearErrors,
 }: {
   matches: Match[];
+  setMatches: React.Dispatch<React.SetStateAction<Match[]>>;
   matchdays: Matchday[];
   teams: Team[];
   error?: string;
+  teamsError?: string;
   onChanged: () => Promise<void>;
+  refreshMatchdays: () => Promise<void>;
+  notify: (message: string) => void;
+  clearErrors: (keys: string[]) => void;
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Match | null>(null);
@@ -1268,8 +1325,94 @@ function MatchesTab({
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Match | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [syncingApi, setSyncingApi] = useState(false);
+
+  // Sélecteur de journée : "all" affiche tout, sinon l'id de la journée
+  // choisie. `null` = pas encore initialisé (le premier effet ci-dessous
+  // pose la journée courante/prochaine dès que les données sont là), pour
+  // ne pas écraser un choix déjà fait par l'admin lors d'un simple refetch.
+  const [selectedMatchdayId, setSelectedMatchdayId] = useState<string | "all" | null>(null);
+  const [scoreDrafts, setScoreDrafts] = useState<Record<string, { home: string; away: string }>>({});
+  const [savingScoreId, setSavingScoreId] = useState<string | null>(null);
 
   const matchdaysById = useMemo(() => new Map(matchdays.map((md) => [md.id, md])), [matchdays]);
+
+  // Cet onglet ne montre que la Ligue 1 : les autres championnats européens
+  // (synchronisés depuis l'onglet Bonus) portent un match_type distinct de
+  // "LIGUE1" et vivent dans leur propre liste là-bas.
+  const ligue1Matches = useMemo(
+    () => matches.filter((m) => (m.match_type ?? "LIGUE1") === "LIGUE1"),
+    [matches],
+  );
+  const ligue1MatchdayIds = useMemo(
+    () => new Set(ligue1Matches.map((m) => m.matchday_id).filter((id): id is string => !!id)),
+    [ligue1Matches],
+  );
+  const sortedMatchdays = useMemo(
+    () => matchdays.filter((md) => ligue1MatchdayIds.has(md.id)).sort((a, b) => a.number - b.number),
+    [matchdays, ligue1MatchdayIds],
+  );
+
+  useEffect(() => {
+    if (selectedMatchdayId !== null || sortedMatchdays.length === 0) return;
+    setSelectedMatchdayId(computeDefaultMatchdayId(sortedMatchdays, ligue1Matches) ?? "all");
+  }, [sortedMatchdays, ligue1Matches, selectedMatchdayId]);
+
+  const visibleMatches = useMemo(() => {
+    if (selectedMatchdayId === null || selectedMatchdayId === "all") return ligue1Matches;
+    return ligue1Matches.filter((m) => m.matchday_id === selectedMatchdayId);
+  }, [ligue1Matches, selectedMatchdayId]);
+
+  function scoreDraftFor(match: Match) {
+    return (
+      scoreDrafts[match.id] ?? {
+        home: match.home_score === null || match.home_score === undefined ? "" : String(match.home_score),
+        away: match.away_score === null || match.away_score === undefined ? "" : String(match.away_score),
+      }
+    );
+  }
+
+  function setScoreDraft(match: Match, patch: Partial<{ home: string; away: string }>) {
+    setScoreDrafts((prev) => ({ ...prev, [match.id]: { ...scoreDraftFor(match), ...patch } }));
+  }
+
+  // Sauvegarde manuelle du score, y compris sur un match "à venir" : les
+  // deux champs présents et numériques font basculer `finished` à true
+  // automatiquement (seul signal de statut porté par le modèle actuel,
+  // voir matchDisplayStatus) ; un score partiel n'y touche pas.
+  async function saveScore(match: Match) {
+    const draft = scoreDraftFor(match);
+    const homeRaw = draft.home.trim();
+    const awayRaw = draft.away.trim();
+    const home = homeRaw === "" ? null : Number(homeRaw);
+    const away = awayRaw === "" ? null : Number(awayRaw);
+    if ((home !== null && Number.isNaN(home)) || (away !== null && Number.isNaN(away))) {
+      notify("Le score doit être un nombre.");
+      return;
+    }
+    if (home !== null && home < 0) return notify("Le score domicile ne peut pas être négatif.");
+    if (away !== null && away < 0) return notify("Le score extérieur ne peut pas être négatif.");
+
+    setSavingScoreId(match.id);
+    try {
+      const bothPresent = home !== null && away !== null;
+      await updateMatch(match.id, {
+        home_score: home,
+        away_score: away,
+        finished: bothPresent ? true : match.finished,
+      });
+      setScoreDrafts((prev) => {
+        const next = { ...prev };
+        delete next[match.id];
+        return next;
+      });
+      await onChanged();
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement du score."));
+    } finally {
+      setSavingScoreId(null);
+    }
+  }
 
   function openCreate() {
     setEditing(null);
@@ -1281,8 +1424,8 @@ function MatchesTab({
     setEditing(match);
     setForm({
       matchday_id: match.matchday_id ?? "",
-      home_team_id: match.home_team_id,
-      away_team_id: match.away_team_id,
+      home_team_id: match.home_team_id ?? "",
+      away_team_id: match.away_team_id ?? "",
       kickoff: match.kickoff ? match.kickoff.slice(0, 16) : "",
       finished: match.finished,
     });
@@ -1291,7 +1434,7 @@ function MatchesTab({
 
   async function submitForm() {
     if (!form.home_team_id || !form.away_team_id || !form.kickoff) {
-      alert("Renseigne les deux équipes et la date/heure du match.");
+      notify("Renseigne les deux équipes et la date/heure du match.");
       return;
     }
     setSaving(true);
@@ -1315,23 +1458,60 @@ function MatchesTab({
       setFormOpen(false);
       await onChanged();
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de l'enregistrement du match.");
+      notify(e.message ?? "Erreur lors de l'enregistrement du match.");
     } finally {
       setSaving(false);
     }
   }
 
+  // Optimiste : le match quitte la liste immédiatement : on ne resynchronise
+  // depuis Supabase que si la suppression échoue réellement côté serveur.
   async function confirmAndDelete() {
     if (!confirmDelete) return;
-    setBusyId(confirmDelete.id);
+    const target = confirmDelete;
+    setBusyId(target.id);
+    setMatches((prev) => prev.filter((m) => m.id !== target.id));
+    setConfirmDelete(null);
     try {
-      await apiDeleteMatch(confirmDelete.id);
-      setConfirmDelete(null);
-      await onChanged();
+      await apiDeleteMatch(target.id);
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la suppression.");
+      notify(e.message ?? "Erreur lors de la suppression.");
+      await onChanged();
     } finally {
       setBusyId(null);
+    }
+  }
+
+  // Synchronise via l'API Vercel /api/ligue1/matchs, puis rafraîchit les
+  // matchs et journées. Aucune Edge Function Supabase n'est utilisée ici.
+  async function handleSyncFromApi() {
+    setSyncingApi(true);
+    try {
+      const summary = await syncLigue1Matches();
+      await Promise.all([onChanged(), refreshMatchdays()]);
+      // Une ancienne erreur de chargement ne doit pas rester affichée après
+      // une synchronisation réussie.
+      clearErrors(["matchs", "bonus", "equipes"]);
+
+      const parts = [`${summary.created} créé(s)`, `${summary.updated} mis à jour`];
+      if (summary.skipped > 0) parts.push(`${summary.skipped} ignoré(s)`);
+      if (summary.matchdaysCreated > 0) parts.push(`${summary.matchdaysCreated} journée(s) créée(s)`);
+      notify(`Synchronisation terminée : ${parts.join(", ")}.`);
+
+      if (summary.warnings.length > 0) {
+        summary.warnings.forEach((w) => console.warn("[sync-ligue1-matches]", w));
+        notify(
+          `${summary.warnings.length} équipe(s)/match(s) ignoré(s) faute de correspondance dans team_api_mapping (détail dans la console).`,
+        );
+      }
+      if (summary.errors.length > 0) {
+        summary.errors.forEach((err) => console.error("[sync-ligue1-matches]", err));
+        notify(`${summary.errors.length} erreur(s) pendant la synchronisation (détail dans la console).`);
+      }
+    } catch (e: any) {
+      notify(e.message ?? "Erreur lors de la synchronisation football-data.org.");
+    } finally {
+      setSyncingApi(false);
     }
   }
 
@@ -1340,12 +1520,22 @@ function MatchesTab({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
           <Calendar size={18} className="text-emerald-400" />
-          Matchs ({matches.length})
+          Matchs Ligue 1 ({visibleMatches.length}/{ligue1Matches.length})
         </h2>
-        <PrimaryButton onClick={openCreate}>
-          <Plus size={14} />
-          Ajouter un match
-        </PrimaryButton>
+        <div className="flex flex-wrap items-center gap-2">
+          <GhostButton
+            onClick={handleSyncFromApi}
+            disabled={syncingApi}
+            ariaLabel="Synchroniser les matchs depuis football-data.org"
+          >
+            {syncingApi ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />}
+            {syncingApi ? "Synchronisation…" : "Synchroniser depuis football-data.org"}
+          </GhostButton>
+          <PrimaryButton onClick={openCreate}>
+            <Plus size={14} />
+            Ajouter un match
+          </PrimaryButton>
+        </div>
       </div>
 
       {error && (
@@ -1354,11 +1544,54 @@ function MatchesTab({
         </div>
       )}
 
-      {!error && matches.length === 0 ? (
-        <p className="py-10 text-center text-sm text-slate-500">Aucun match enregistré pour le moment.</p>
+      {/* Erreur distincte : les équipes ne se chargent pas forcément en
+          même temps que les matchs (bug corrigé — voir addError côté page). */}
+      {teamsError && (
+        <div className="mb-4">
+          <ErrorBanner message={teamsError} />
+        </div>
+      )}
+
+      {sortedMatchdays.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-1.5 overflow-x-auto rounded-2xl border border-slate-800 bg-[#0d1322]/90 p-1.5">
+          <button
+            type="button"
+            onClick={() => setSelectedMatchdayId("all")}
+            className={`shrink-0 rounded-xl px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide transition-all ${
+              selectedMatchdayId === "all"
+                ? "bg-emerald-500 text-slate-950"
+                : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
+            }`}
+          >
+            Toutes
+          </button>
+          {sortedMatchdays.map((md) => (
+            <button
+              key={md.id}
+              type="button"
+              onClick={() => setSelectedMatchdayId(md.id)}
+              className={`shrink-0 rounded-xl px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide transition-all ${
+                selectedMatchdayId === md.id
+                  ? "bg-emerald-500 text-slate-950"
+                  : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
+              }`}
+            >
+              J{md.number}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!error && visibleMatches.length === 0 ? (
+        <p className="py-10 text-center text-sm text-slate-500">
+          {ligue1Matches.length === 0 ? "Aucun match enregistré pour le moment." : "Aucun match pour cette journée."}
+        </p>
       ) : (
         <div className="space-y-2">
-          {matches.map((match) => (
+          {visibleMatches.map((match) => {
+            const draft = scoreDraftFor(match);
+            const hasDraftEdit = scoreDrafts[match.id] !== undefined;
+            return (
             <div
               key={match.id}
               className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3"
@@ -1379,20 +1612,74 @@ function MatchesTab({
                   {match.kickoff ? new Date(match.kickoff).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—"}
                 </span>
                 <StatusBadge status={matchDisplayStatus(match)} />
-                {match.home_score !== null && match.away_score !== null && (
-                  <span className="font-mono text-xs font-bold text-slate-200">
-                    {match.home_score} - {match.away_score}
-                  </span>
-                )}
-                <GhostButton onClick={() => openEdit(match)} title="Modifier">
+
+                {/* Score inline : éditable même sur un match "à venir" — la
+                    sauvegarde bascule automatiquement `finished` à true dès
+                    que les deux scores sont renseignés (voir saveScore). */}
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={draft.home}
+                    onChange={(e) => setScoreDraft(match, { home: e.target.value })}
+                    onBlur={() => hasDraftEdit && saveScore(match)}
+                    onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
+                    aria-label={`Score domicile ${teamOf(teams, match.home_team_id)?.name ?? "?"}`}
+                    className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+                  />
+                  <span className="text-slate-600">-</span>
+                  <input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={draft.away}
+                    onChange={(e) => setScoreDraft(match, { away: e.target.value })}
+                    onBlur={() => hasDraftEdit && saveScore(match)}
+                    onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
+                    aria-label={`Score extérieur ${teamOf(teams, match.away_team_id)?.name ?? "?"}`}
+                    className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+                  />
+                  {hasDraftEdit && (
+                    <GhostButton
+                      onClick={() => saveScore(match)}
+                      title="Enregistrer le score"
+                      ariaLabel={`Enregistrer le score de ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                        teamOf(teams, match.away_team_id)?.name ?? "?"
+                      }`}
+                    >
+                      {savingScoreId === match.id ? (
+                        <RefreshCw size={12} className="animate-spin" />
+                      ) : (
+                        <Save size={12} />
+                      )}
+                    </GhostButton>
+                  )}
+                </div>
+
+                <GhostButton
+                  onClick={() => openEdit(match)}
+                  title="Modifier"
+                  ariaLabel={`Modifier le match ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                    teamOf(teams, match.away_team_id)?.name ?? "?"
+                  }`}
+                >
                   <Pencil size={12} />
                 </GhostButton>
-                <GhostButton danger onClick={() => setConfirmDelete(match)} title="Supprimer">
+                <GhostButton
+                  danger
+                  onClick={() => setConfirmDelete(match)}
+                  title="Supprimer"
+                  ariaLabel={`Supprimer le match ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                    teamOf(teams, match.away_team_id)?.name ?? "?"
+                  }`}
+                >
                   {busyId === match.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
                 </GhostButton>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1522,22 +1809,41 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // ============================================================
-// 📅 ONGLET JOURNÉES
+// 🎁 ONGLET BONUS
 // ============================================================
-function MatchdaysTab({
+// Remplace l'ancien onglet "Journées" : point d'entrée unique pour tout ce
+// qui touche au bonus (tirage de la sélection premium) et aux championnats
+// hors Ligue 1 (activation, synchronisation football-data.org). La gestion
+// des journées elle-même (création, verrouillage) vit ici aussi, reprise
+// telle quelle — les journées sont une notion transverse à tous les
+// championnats, pas seulement à la Ligue 1 (voir l'onglet Matchs, scopé
+// Ligue 1 uniquement).
+function BonusTab({
   matchdays,
+  setMatchdays,
   matches,
+  teams,
   seasons,
   competitions,
+  settings,
   error,
   onChanged,
+  onCompetitionsChanged,
+  onSettingsChanged,
+  notify,
 }: {
   matchdays: Matchday[];
+  setMatchdays: React.Dispatch<React.SetStateAction<Matchday[]>>;
   matches: Match[];
+  teams: Team[];
   seasons: Season[];
   competitions: Competition[];
+  settings: AppSettings | null;
   error?: string;
   onChanged: () => Promise<void>;
+  onCompetitionsChanged: () => Promise<void>;
+  onSettingsChanged: () => Promise<void>;
+  notify: (message: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [number, setNumber] = useState("");
