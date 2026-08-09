@@ -1851,10 +1851,135 @@ function BonusTab({
   const [competitionId, setCompetitionId] = useState("");
   const [deadline, setDeadline] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [lockBusyId, setLockBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Matchday | null>(null);
   const [editing, setEditing] = useState<Matchday | null>(null);
-  const [editForm, setEditForm] = useState({ number: "", seasonId: "", competitionId: "", deadline: "" });
+  const [editForm, setEditForm] = useState({ number: "", seasonId: "", competitionId: "", deadline: "", deadlineMode: "manual" as "manual" | "auto_minus_1" });
   const [saving, setSaving] = useState(false);
+
+  // Sélection bonus : état local pour cette première étape.
+  // La persistance Supabase sera branchée dans adminService après validation de l'UI.
+  const [bonusSelections, setBonusSelections] = useState<Record<string, Partial<Record<BonusCompetitionCode, BonusCandidate>>>>({});
+  const [generatingBonus, setGeneratingBonus] = useState(false);
+  const [replacingBonus, setReplacingBonus] = useState<BonusCompetitionCode | null>(null);
+
+  // Championnats (grandes ligues européennes hors Ligue 1) : la liste
+  // disponible vient de football-data.org, pas d'une constante codée en dur.
+  const [availableCompetitions, setAvailableCompetitions] = useState<DiscoveredCompetition[]>([]);
+  const [competitionsLoaded, setCompetitionsLoaded] = useState(false);
+  const [loadingCompetitions, setLoadingCompetitions] = useState(false);
+  const [togglingCode, setTogglingCode] = useState<string | null>(null);
+  const [syncingCode, setSyncingCode] = useState<string | null>(null);
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+
+  // Période d'éligibilité des matchs au tirage bonus (app_settings —
+  // persistée pour survivre entre sessions, voir generateBonusForDay).
+  const [periodStart, setPeriodStart] = useState(settings?.bonus_period_start?.slice(0, 16) ?? "");
+  const [periodEnd, setPeriodEnd] = useState(settings?.bonus_period_end?.slice(0, 16) ?? "");
+  const [savingPeriod, setSavingPeriod] = useState(false);
+  const [periodSaved, setPeriodSaved] = useState(false);
+
+  useEffect(() => {
+    setPeriodStart(settings?.bonus_period_start?.slice(0, 16) ?? "");
+    setPeriodEnd(settings?.bonus_period_end?.slice(0, 16) ?? "");
+  }, [settings]);
+
+  async function handleSavePeriod() {
+    if (periodStart && periodEnd && new Date(periodStart) >= new Date(periodEnd)) {
+      notify("La fin de la période doit être après le début.");
+      return;
+    }
+    setSavingPeriod(true);
+    try {
+      await updateSettings({
+        bonus_period_start: periodStart ? new Date(periodStart).toISOString() : null,
+        bonus_period_end: periodEnd ? new Date(periodEnd).toISOString() : null,
+      });
+      await onSettingsChanged();
+      setPeriodSaved(true);
+      setTimeout(() => setPeriodSaved(false), 2500);
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement de la période."));
+    } finally {
+      setSavingPeriod(false);
+    }
+  }
+
+  /** Un match est éligible au tirage s'il n'y a pas de période définie, ou
+   * si son coup d'envoi tombe dedans (bornes incluses). Pas de coup
+   * d'envoi connu = exclu dès qu'une période est active (on ne peut pas
+   * vérifier). */
+  function isWithinBonusPeriod(match: Match): boolean {
+    if (!periodStart && !periodEnd) return true;
+    if (!match.kickoff) return false;
+    const kickoff = new Date(match.kickoff).getTime();
+    if (Number.isNaN(kickoff)) return false;
+    if (periodStart && kickoff < new Date(periodStart).getTime()) return false;
+    if (periodEnd && kickoff > new Date(periodEnd).getTime()) return false;
+    return true;
+  }
+
+  async function loadAvailableCompetitions() {
+    setLoadingCompetitions(true);
+    try {
+      const list = await getAvailableCompetitions();
+      setAvailableCompetitions(list);
+      setCompetitionsLoaded(true);
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors du chargement des championnats football-data.org."));
+    } finally {
+      setLoadingCompetitions(false);
+    }
+  }
+
+  function competitionRowFor(code: string): Competition | null {
+    return competitions.find((c) => c.external_code === code || c.code === code) ?? null;
+  }
+
+  async function toggleCompetitionActive(discovered: DiscoveredCompetition) {
+    const row = competitionRowFor(discovered.code);
+    const nextActive = !(row?.is_active ?? false);
+    setTogglingCode(discovered.code);
+    try {
+      await setCompetitionActive(discovered, row?.id ?? null, nextActive);
+      await onCompetitionsChanged();
+      notify(`${discovered.name} ${nextActive ? "activé" : "désactivé"}.`);
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'activation du championnat."));
+    } finally {
+      setTogglingCode(null);
+    }
+  }
+
+  async function handleSyncCompetition(discovered: DiscoveredCompetition) {
+    setSyncingCode(discovered.code);
+    try {
+      const summary = await syncCompetitionMatches(discovered.code);
+      await Promise.all([onChanged(), onCompetitionsChanged()]);
+      const parts = [`${summary.created} créé(s)`, `${summary.updated} mis à jour`];
+      if (summary.skipped > 0) parts.push(`${summary.skipped} ignoré(s)`);
+      if (summary.matchdaysCreated > 0) parts.push(`${summary.matchdaysCreated} journée(s) créée(s)`);
+      notify(`${discovered.name} : ${parts.join(", ")}.`);
+      if (summary.errors.length > 0) {
+        summary.errors.forEach((err) => console.error(`[sync-${discovered.code}]`, err));
+        notify(`${summary.errors.length} erreur(s) pendant la synchronisation de ${discovered.name} (détail dans la console).`);
+      }
+    } catch (e) {
+      notify(errorMessage(e, `Erreur lors de la synchronisation de ${discovered.name}.`));
+    } finally {
+      setSyncingCode(null);
+    }
+  }
+
+  const matchCountByCompetitionCode = useMemo(() => {
+    const map = new Map<string, number>();
+    matches.forEach((m) => {
+      const code = m.match_type ?? "LIGUE1";
+      if (code === "LIGUE1") return;
+      map.set(code, (map.get(code) ?? 0) + 1);
+    });
+    return map;
+  }, [matches]);
 
   const seasonsById = useMemo(() => new Map(seasons.map((s) => [s.id, s])), [seasons]);
   const competitionsById = useMemo(() => new Map(competitions.map((c) => [c.id, c])), [competitions]);
@@ -1863,9 +1988,10 @@ function BonusTab({
     setEditing(md);
     setEditForm({
       number: String(md.number),
-      seasonId: md.season_id,
-      competitionId: md.competition_id,
+      seasonId: md.season_id ?? "",
+      competitionId: md.competition_id ?? "",
       deadline: md.deadline ? md.deadline.slice(0, 16) : "",
+      deadlineMode: md.deadline_mode ?? "manual",
     });
   }
 
@@ -1873,7 +1999,7 @@ function BonusTab({
     if (!editing) return;
     const parsedNumber = parseInt(editForm.number, 10);
     if (Number.isNaN(parsedNumber)) {
-      alert("Le numéro de la journée doit être un nombre.");
+      notify("Le numéro de la journée doit être un nombre.");
       return;
     }
     setSaving(true);
@@ -1883,14 +2009,162 @@ function BonusTab({
         season_id: editForm.seasonId || editing.season_id,
         competition_id: editForm.competitionId || editing.competition_id,
         deadline: editForm.deadline ? new Date(editForm.deadline).toISOString() : null,
+        deadline_mode: editForm.deadlineMode,
       });
       setEditing(null);
       await onChanged();
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la modification de la journée.");
+      notify(e.message ?? "Erreur lors de la modification de la journée.");
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleManualLock(md: Matchday) {
+    const value = window.prompt(
+      `Date/heure limite pour J${md.number} (format : 2026-08-22T18:59)`,
+      md.deadline ? md.deadline.slice(0, 16) : "",
+    );
+    if (value === null) return;
+
+    if (!value.trim()) {
+      notify("Date/heure invalide.");
+      return;
+    }
+
+    setLockBusyId(md.id);
+    try {
+      await setMatchdayDeadline(md.id, new Date(value).toISOString());
+      await onChanged();
+      notify(`🔐 J${md.number} verrouillée en mode manuel.`);
+    } catch (e: any) {
+      notify(e.message ?? "Erreur lors du verrouillage manuel.");
+    } finally {
+      setLockBusyId(null);
+    }
+  }
+
+  async function handleAutoMinusOne(md: Matchday) {
+    setLockBusyId(md.id);
+    try {
+      await setMatchdayAutoMinusOne(md.id);
+      await onChanged();
+      notify(`⚡ J${md.number} : verrouillage automatique -1 min activé.`);
+    } catch (e: any) {
+      notify(e.message ?? "Erreur lors de l'activation du verrouillage automatique.");
+    } finally {
+      setLockBusyId(null);
+    }
+  }
+
+  async function handleClearLock(md: Matchday) {
+    setLockBusyId(md.id);
+    try {
+      await clearMatchdayDeadline(md.id);
+      await onChanged();
+      notify(`🔓 Verrouillage retiré pour J${md.number}.`);
+    } catch (e: any) {
+      notify(e.message ?? "Erreur lors du retrait du verrouillage.");
+    } finally {
+      setLockBusyId(null);
+    }
+  }
+
+  const competitionCodeById = useMemo(() => {
+    const map = new Map<string, BonusCompetitionCode | null>();
+    competitions.forEach((competition) => {
+      map.set(competition.id, normalizeCompetitionName(competition.name));
+    });
+    return map;
+  }, [competitions]);
+
+  const matchesByMatchdayId = useMemo(() => {
+    const map = new Map<string, Match[]>();
+    matches.forEach((match) => {
+      if (!match.matchday_id) return;
+      const list = map.get(match.matchday_id) ?? [];
+      list.push(match);
+      map.set(match.matchday_id, list);
+    });
+    return map;
+  }, [matches]);
+
+  function bonusMatchesForDay(md: Matchday, code: BonusCompetitionCode): Match[] {
+    return matchdays
+      .filter(
+        (candidateDay) =>
+          candidateDay.number === md.number &&
+          candidateDay.season_id === md.season_id &&
+          candidateDay.competition_id != null &&
+          competitionCodeById.get(candidateDay.competition_id) === code,
+      )
+      .flatMap((candidateDay) => matchesByMatchdayId.get(candidateDay.id) ?? []);
+  }
+
+  function toBonusMatch(match: Match): Match {
+    const home = teams.find((team) => team.id === match.home_team_id)?.name ?? "";
+    const away = teams.find((team) => team.id === match.away_team_id)?.name ?? "";
+    return { ...match, home_team: home, away_team: away };
+  }
+
+  function generateBonusForDay(md: Matchday) {
+    setGeneratingBonus(true);
+    try {
+      const key = `${md.season_id}:${md.number}`;
+      const next: Partial<Record<BonusCompetitionCode, BonusCandidate>> = {};
+
+      (["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).forEach((code) => {
+        const candidates = bonusMatchesForDay(md, code).filter(isWithinBonusPeriod).map(toBonusMatch);
+        const best = selectBestBonusMatch(candidates, code);
+        if (best) next[code] = best;
+      });
+
+      if (Object.keys(next).length === 0) {
+        notify(
+          periodStart || periodEnd
+            ? `Aucun match des 4 championnats trouvé pour J${md.number} dans la période choisie.`
+            : `Aucun match des 4 championnats trouvé pour J${md.number}.`,
+        );
+        return;
+      }
+
+      setBonusSelections((prev) => ({ ...prev, [key]: next }));
+      setReplacingBonus(null);
+      notify(`${Object.keys(next).length}/4 Matchs bonus sélectionnés pour J${md.number}.`);
+    } finally {
+      setGeneratingBonus(false);
+    }
+  }
+
+  function replaceBonusForDay(md: Matchday, code: BonusCompetitionCode, match: Match) {
+    const candidate = scoreBonusCandidateForAdmin(match, code);
+    if (!candidate) return;
+
+    const key = `${md.season_id}:${md.number}`;
+    setBonusSelections((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? {}), [code]: candidate },
+    }));
+    setReplacingBonus(null);
+  }
+
+  function removeBonusDraw(md: Matchday) {
+    const key = `${md.season_id}:${md.number}`;
+    setBonusSelections((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setReplacingBonus(null);
+    notify(`Tirage bonus de J${md.number} retiré.`);
+  }
+
+  function scoreCandidateForMatch(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
+    return scoreBonusCandidateForAdmin(match, code);
+  }
+
+  function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
+    return selectBestBonusMatch([toBonusMatch(match)], code);
   }
 
   const matchCountByMatchdayId = useMemo(() => {
@@ -1911,11 +2185,11 @@ function BonusTab({
   async function handleCreate() {
     const parsedNumber = parseInt(number, 10);
     if (!number.trim() || Number.isNaN(parsedNumber)) {
-      alert("Le numéro de la journée est requis (ex: 1).");
+      notify("Le numéro de la journée est requis (ex: 1).");
       return;
     }
     if (!seasonId || !competitionId) {
-      alert("Choisis une saison et une compétition.");
+      notify("Choisis une saison et une compétition.");
       return;
     }
     setCreating(true);
@@ -1930,33 +2204,41 @@ function BonusTab({
       setDeadline("");
       await onChanged();
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la création de la journée.");
+      notify(e.message ?? "Erreur lors de la création de la journée.");
     } finally {
       setCreating(false);
     }
   }
 
+  // Optimiste comme les autres bascules de statut (toggleAdmin, togglePaid) :
+  // le badge EN COURS/TERMINÉE change tout de suite.
   async function toggleFinished(md: Matchday) {
     setBusyId(md.id);
+    const nextFinished = !md.is_finished;
+    setMatchdays((prev) => prev.map((m) => (m.id === md.id ? { ...m, is_finished: nextFinished } : m)));
     try {
-      await setMatchdayFinished(md.id, !md.is_finished);
-      await onChanged();
+      await setMatchdayFinished(md.id, nextFinished);
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la mise à jour.");
+      notify(e.message ?? "Erreur lors de la mise à jour.");
+      await onChanged();
     } finally {
       setBusyId(null);
     }
   }
 
+  // Optimiste : la journée disparaît de la liste immédiatement, on ne
+  // resynchronise que si Supabase renvoie une erreur.
   async function confirmAndDelete() {
     if (!confirmDelete) return;
-    setBusyId(confirmDelete.id);
+    const target = confirmDelete;
+    setBusyId(target.id);
+    setMatchdays((prev) => prev.filter((m) => m.id !== target.id));
+    setConfirmDelete(null);
     try {
-      await apiDeleteMatchday(confirmDelete.id);
-      setConfirmDelete(null);
-      await onChanged();
+      await apiDeleteMatchday(target.id);
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la suppression.");
+      notify(e.message ?? "Erreur lors de la suppression.");
+      await onChanged();
     } finally {
       setBusyId(null);
     }
@@ -1964,6 +2246,283 @@ function BonusTab({
 
   return (
     <div className="space-y-4">
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+              <Globe size={18} className="text-emerald-400" />
+              Championnats
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Championnats disponibles sur ton compte football-data.org — active ceux à synchroniser pour la sélection bonus.
+            </p>
+          </div>
+          <GhostButton onClick={loadAvailableCompetitions} disabled={loadingCompetitions}>
+            <RefreshCw size={12} className={loadingCompetitions ? "animate-spin" : ""} />
+            {competitionsLoaded ? "Actualiser la liste" : "Charger les championnats"}
+          </GhostButton>
+        </div>
+
+        {!competitionsLoaded && !loadingCompetitions && (
+          <p className="py-6 text-center text-sm text-slate-500">
+            Charge la liste pour voir les championnats disponibles et les activer.
+          </p>
+        )}
+
+        {competitionsLoaded && availableCompetitions.length === 0 && (
+          <p className="py-6 text-center text-sm text-slate-500">Aucun championnat renvoyé par football-data.org.</p>
+        )}
+
+        <div className="space-y-2">
+          {availableCompetitions.map((discovered) => {
+            const row = competitionRowFor(discovered.code);
+            const isActive = row?.is_active ?? false;
+            const count = matchCountByCompetitionCode.get(discovered.code) ?? 0;
+            const expanded = expandedCode === discovered.code;
+            return (
+              <div key={discovered.code} className="rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {discovered.emblem ? (
+                      <img src={discovered.emblem} alt="" className="size-6 shrink-0 object-contain" />
+                    ) : (
+                      <span className="size-6 shrink-0 rounded-md border border-slate-700 bg-slate-800" />
+                    )}
+                    <div>
+                      <div className="text-sm font-semibold text-slate-100">{discovered.name}</div>
+                      <div className="font-mono text-[10px] text-slate-500">
+                        {discovered.code}
+                        {discovered.area ? ` · ${discovered.area}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-mono text-[10px] font-bold text-slate-300">
+                      {count} match{count > 1 ? "s" : ""} synchronisé{count > 1 ? "s" : ""}
+                    </span>
+                    <GhostButton
+                      onClick={() => toggleCompetitionActive(discovered)}
+                      disabled={togglingCode === discovered.code}
+                      title={isActive ? "Désactiver ce championnat" : "Activer ce championnat"}
+                    >
+                      {togglingCode === discovered.code ? (
+                        <RefreshCw size={12} className="animate-spin" />
+                      ) : isActive ? (
+                        <CheckCircle2 size={12} className="text-emerald-400" />
+                      ) : (
+                        <X size={12} />
+                      )}
+                      {isActive ? "Activé" : "Désactivé"}
+                    </GhostButton>
+                    <GhostButton
+                      onClick={() => handleSyncCompetition(discovered)}
+                      disabled={!isActive || syncingCode === discovered.code}
+                      title={isActive ? "Synchroniser depuis football-data.org" : "Active le championnat pour pouvoir synchroniser"}
+                    >
+                      {syncingCode === discovered.code ? (
+                        <RefreshCw size={12} className="animate-spin" />
+                      ) : (
+                        <Download size={12} />
+                      )}
+                      Synchroniser
+                    </GhostButton>
+                    {count > 0 && (
+                      <GhostButton onClick={() => setExpandedCode(expanded ? null : discovered.code)}>
+                        {expanded ? "Masquer" : "Voir les matchs"}
+                      </GhostButton>
+                    )}
+                  </div>
+                </div>
+
+                {expanded && (
+                  <div className="mt-3 border-t border-slate-800 pt-3">
+                    <CompetitionMatchesList
+                      matches={matches.filter((m) => (m.match_type ?? "LIGUE1") === discovered.code)}
+                      matchdays={row ? matchdays.filter((md) => md.competition_id === row.id) : []}
+                      onChanged={onChanged}
+                      notify={notify}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card className="p-5 border-emerald-500/20">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+              <Gift size={18} className="text-emerald-400" />
+              Match bonus
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              1 grosse affiche par championnat · Prestige 40 % · Équilibre 30 % · Rivalité 20 % · Horaire 10 %.
+            </p>
+          </div>
+        </div>
+
+        <div className="mb-4 rounded-xl border border-slate-800 bg-[#0d1322] p-4">
+          <div className="mb-3 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+            <CalendarClock size={11} className="text-emerald-400" />
+            Période d'éligibilité des matchs au tirage
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+            <div>
+              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                Début de la période
+              </label>
+              <input
+                type="datetime-local"
+                value={periodStart}
+                onChange={(e) => setPeriodStart(e.target.value)}
+                className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                Fin de la période
+              </label>
+              <input
+                type="datetime-local"
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+                className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
+              />
+            </div>
+            <PrimaryButton onClick={handleSavePeriod} disabled={savingPeriod}>
+              {savingPeriod ? (
+                <RefreshCw size={14} className="animate-spin" />
+              ) : periodSaved ? (
+                <CheckCircle2 size={14} />
+              ) : (
+                <Save size={14} />
+              )}
+              {periodSaved ? "Enregistré" : "Enregistrer"}
+            </PrimaryButton>
+          </div>
+          <p className="mt-2 text-[10px] text-slate-500">
+            Seuls les matchs dont le coup d'envoi tombe dans cette fenêtre sont proposés au tirage. Laisse les deux
+            champs vides pour ne filtrer sur rien (comportement historique).
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {matchdays
+            .slice()
+            .sort((a, b) => a.number - b.number)
+            .map((md) => {
+              const key = `${md.season_id}:${md.number}`;
+              const selection = bonusSelections[key] ?? {};
+              const codes: BonusCompetitionCode[] = ["PL", "PD", "SA", "BL1"];
+              const labels: Record<BonusCompetitionCode, string> = {
+                PL: "Premier League",
+                PD: "Liga",
+                SA: "Serie A",
+                BL1: "Bundesliga",
+              };
+
+              return (
+                <div key={`bonus-${md.id}`} className="rounded-2xl border border-slate-800 bg-[#0d1322] p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-lg bg-emerald-500/10 px-2.5 py-1 font-display text-sm font-black text-emerald-400">
+                        J{md.number}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {codes.filter((code) => selection[code]).length}/4 sélectionnés
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <PrimaryButton onClick={() => generateBonusForDay(md)} disabled={generatingBonus}>
+                        {generatingBonus ? <RefreshCw size={13} className="animate-spin" /> : <Gift size={13} />}
+                        Générer la sélection bonus
+                      </PrimaryButton>
+                      {Object.keys(selection).length > 0 && (
+                        <GhostButton danger onClick={() => removeBonusDraw(md)} ariaLabel={`Retirer le tirage bonus J${md.number}`}>
+                          <Trash2 size={12} />
+                          Retirer le tirage
+                        </GhostButton>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {codes.map((code) => {
+                      const candidate = selection[code];
+                      const alternatives = bonusMatchesForDay(md, code).filter(isWithinBonusPeriod);
+
+                      return (
+                        <div key={code} className="rounded-xl border border-slate-800 bg-[#0b1325] p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              {labels[code]}
+                            </span>
+                            {candidate && (
+                              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400">
+                                {candidate.score.total}/100
+                              </span>
+                            )}
+                          </div>
+
+                          {candidate ? (
+                            <>
+                              <div className="text-sm font-bold text-white">
+                                {candidate.match.home_team} <span className="text-slate-600">—</span> {candidate.match.away_team}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                {candidate.reasons.length ? candidate.reasons.join(" · ") : "Affiche retenue automatiquement"}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-xs text-slate-500">
+                              Aucun candidat trouvé.
+                            </div>
+                          )}
+
+                          {alternatives.length > 0 && (
+                            <div className="mt-3">
+                              <GhostButton onClick={() => setReplacingBonus(replacingBonus === code ? null : code)}>
+                                <Pencil size={11} />
+                                {replacingBonus === code ? "Fermer" : "Remplacer"}
+                              </GhostButton>
+
+                              {replacingBonus === code && (
+                                <div className="mt-2 space-y-1.5">
+                                  {alternatives.map((match) => {
+                                    const scored = scoreCandidateForMatch(match, code);
+                                    if (!scored) return null;
+                                    return (
+                                      <button
+                                        key={match.id}
+                                        type="button"
+                                        onClick={() => replaceBonusForDay(md, code, match)}
+                                        className="flex w-full items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-left hover:border-emerald-500/40 hover:bg-emerald-500/5"
+                                      >
+                                        <span className="text-xs font-semibold text-slate-200">
+                                          {scored.match.home_team} — {scored.match.away_team}
+                                        </span>
+                                        <span className="font-mono text-[10px] font-bold text-emerald-400">
+                                          {scored.score.total}/100
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </Card>
+
       <Card className="p-5">
         <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
           <Plus size={18} className="text-emerald-400" />
@@ -2054,24 +2613,67 @@ function BonusTab({
                   </span>
                   <div>
                     <div className="text-sm font-semibold text-slate-100">
-                      {competitionsById.get(md.competition_id)?.name ?? "Compétition inconnue"}
+                      {(md.competition_id ? competitionsById.get(md.competition_id) : undefined)?.name ?? "Compétition inconnue"}
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-slate-500">
                       <span>
                         {matchCountByMatchdayId.get(md.id) ?? 0} match(s) · saison{" "}
-                        {seasonsById.get(md.season_id)?.name ?? "?"}
+                        {(md.season_id ? seasonsById.get(md.season_id) : undefined)?.name ?? "?"}
                       </span>
-                      {md.deadline && (
+                      {md.deadline_mode === "auto_minus_1" ? (
+                        <span className="inline-flex items-center gap-1 text-cyan-300">
+                          <Timer size={11} />
+                          Auto -1 min
+                        </span>
+                      ) : md.deadline ? (
                         <span className="inline-flex items-center gap-1 text-amber-400/80">
                           <CalendarClock size={11} />
                           Limite : {new Date(md.deadline).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-slate-600">
+                          <Unlock size={11} />
+                          Sans verrouillage
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <GhostButton
+                    onClick={() => handleManualLock(md)}
+                    disabled={lockBusyId === md.id}
+                    title="Définir une date/heure limite"
+                    ariaLabel={`Définir une limite manuelle pour J${md.number}`}
+                  >
+                    {lockBusyId === md.id ? "…" : "🔐"}
+                    Manuel
+                  </GhostButton>
+
+                  <GhostButton
+                    onClick={() => handleAutoMinusOne(md)}
+                    disabled={lockBusyId === md.id}
+                    title="Verrouiller chaque match 1 minute avant son coup d'envoi"
+                    ariaLabel={`Activer le verrouillage automatique moins une minute pour J${md.number}`}
+                  >
+                    <Timer size={12} />
+                    Auto -1 min
+                  </GhostButton>
+
+                  {(md.deadline || md.deadline_mode === "auto_minus_1") && (
+                    <GhostButton
+                      danger
+                      onClick={() => handleClearLock(md)}
+                      disabled={lockBusyId === md.id}
+                      title="Retirer le verrouillage"
+                      ariaLabel={`Retirer le verrouillage de J${md.number}`}
+                    >
+                      <Unlock size={12} />
+                      Retirer
+                    </GhostButton>
+                  )}
+
                   {!md.is_finished ? (
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-mint/30 bg-mint/10 px-2.5 py-1 font-mono text-[10px] font-bold text-mint">
                       <Unlock size={11} />
@@ -2093,10 +2695,15 @@ function BonusTab({
                     )}
                     {md.is_finished ? "Rouvrir" : "Clôturer"}
                   </GhostButton>
-                  <GhostButton onClick={() => openEdit(md)} title="Modifier">
+                  <GhostButton onClick={() => openEdit(md)} title="Modifier" ariaLabel={`Modifier la journée J${md.number}`}>
                     <Pencil size={12} />
                   </GhostButton>
-                  <GhostButton danger onClick={() => setConfirmDelete(md)} title="Supprimer">
+                  <GhostButton
+                    danger
+                    onClick={() => setConfirmDelete(md)}
+                    title="Supprimer"
+                    ariaLabel={`Supprimer la journée J${md.number}`}
+                  >
                     <Trash2 size={12} />
                   </GhostButton>
                 </div>
@@ -2186,85 +2793,317 @@ function BonusTab({
   );
 }
 
+/** Liste compacte, triée par journée, des matchs synchronisés pour un
+ * championnat de l'onglet Bonus — équivalent allégé du tableau de l'onglet
+ * Matchs (mêmes scores éditables inline), sans création/suppression : ces
+ * matchs n'existent que via la synchronisation football-data.org. Pas de
+ * badge logo (aucune équipe hors Ligue 1 n'est en base, voir
+ * syncCompetitionMatches) : le nom brut renvoyé par l'API suffit ici. */
+function CompetitionMatchesList({
+  matches,
+  matchdays,
+  onChanged,
+  notify,
+}: {
+  matches: Match[];
+  matchdays: Matchday[];
+  onChanged: () => Promise<void>;
+  notify: (message: string) => void;
+}) {
+  const [scoreDrafts, setScoreDrafts] = useState<Record<string, { home: string; away: string }>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const matchdaysById = useMemo(() => new Map(matchdays.map((md) => [md.id, md])), [matchdays]);
+
+  // Sélecteur de journée scopé à ce championnat (pas de J1-J34 fixe : le
+  // numéro vient tel quel du champ `matchday` renvoyé par football-data.org
+  // pour CE championnat, voir syncCompetitionMatches). Si plusieurs
+  // championnats sont développés en même temps dans l'onglet Bonus, chaque
+  // instance de CompetitionMatchesList a son propre state — le filtre ne
+  // s'applique donc qu'au championnat affiché ici, jamais globalement.
+  const sortedMatchdays = useMemo(() => [...matchdays].sort((a, b) => a.number - b.number), [matchdays]);
+  const [selectedMatchdayId, setSelectedMatchdayId] = useState<string | "all" | null>(null);
+
+  useEffect(() => {
+    if (selectedMatchdayId !== null || sortedMatchdays.length === 0) return;
+    setSelectedMatchdayId(computeDefaultMatchdayId(sortedMatchdays, matches) ?? "all");
+  }, [sortedMatchdays, matches, selectedMatchdayId]);
+
+  function draftFor(match: Match) {
+    return (
+      scoreDrafts[match.id] ?? {
+        home: match.home_score === null || match.home_score === undefined ? "" : String(match.home_score),
+        away: match.away_score === null || match.away_score === undefined ? "" : String(match.away_score),
+      }
+    );
+  }
+
+  async function saveScore(match: Match) {
+    const draft = draftFor(match);
+    const homeRaw = draft.home.trim();
+    const awayRaw = draft.away.trim();
+    const home = homeRaw === "" ? null : Number(homeRaw);
+    const away = awayRaw === "" ? null : Number(awayRaw);
+    if ((home !== null && Number.isNaN(home)) || (away !== null && Number.isNaN(away))) {
+      notify("Le score doit être un nombre.");
+      return;
+    }
+    setSavingId(match.id);
+    try {
+      await updateMatch(match.id, {
+        home_score: home,
+        away_score: away,
+        finished: home !== null && away !== null ? true : match.finished,
+      });
+      setScoreDrafts((prev) => {
+        const next = { ...prev };
+        delete next[match.id];
+        return next;
+      });
+      await onChanged();
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement du score."));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  const sorted = useMemo(
+    () =>
+      [...matches].sort((a, b) => {
+        const an = matchdaysById.get(a.matchday_id ?? "")?.number ?? 0;
+        const bn = matchdaysById.get(b.matchday_id ?? "")?.number ?? 0;
+        if (an !== bn) return an - bn;
+        return (a.kickoff ?? "").localeCompare(b.kickoff ?? "");
+      }),
+    [matches, matchdaysById],
+  );
+
+  const visible = useMemo(() => {
+    if (selectedMatchdayId === null || selectedMatchdayId === "all") return sorted;
+    return sorted.filter((m) => m.matchday_id === selectedMatchdayId);
+  }, [sorted, selectedMatchdayId]);
+
+  if (sorted.length === 0) {
+    return <p className="py-4 text-center text-xs text-slate-500">Aucun match synchronisé pour ce championnat.</p>;
+  }
+
+  return (
+    <div>
+      {sortedMatchdays.length > 1 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setSelectedMatchdayId("all")}
+            className={`shrink-0 rounded-lg px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide transition-all ${
+              selectedMatchdayId === "all"
+                ? "bg-emerald-500 text-slate-950"
+                : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
+            }`}
+          >
+            Toutes
+          </button>
+          {sortedMatchdays.map((md) => (
+            <button
+              key={md.id}
+              type="button"
+              onClick={() => setSelectedMatchdayId(md.id)}
+              className={`shrink-0 rounded-lg px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide transition-all ${
+                selectedMatchdayId === md.id
+                  ? "bg-emerald-500 text-slate-950"
+                  : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
+              }`}
+            >
+              {matchdayLabel(md)}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+      {visible.map((match) => {
+        const draft = draftFor(match);
+        const hasDraftEdit = scoreDrafts[match.id] !== undefined;
+        const md = matchdaysById.get(match.matchday_id ?? "");
+        return (
+          <div
+            key={match.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-[#060b16] px-3 py-2"
+          >
+            <div className="flex items-center gap-2 text-xs">
+              <span className="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">
+                {md ? `J${md.number}` : "—"}
+              </span>
+              <span className="font-semibold text-slate-200">{match.home_team || "?"}</span>
+              <span className="text-slate-600">vs</span>
+              <span className="font-semibold text-slate-200">{match.away_team || "?"}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] text-slate-500">
+                {match.kickoff ? new Date(match.kickoff).toLocaleDateString("fr-FR", { dateStyle: "short" }) : "—"}
+              </span>
+              <StatusBadge status={matchDisplayStatus(match)} />
+              <input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={draft.home}
+                onChange={(e) => setScoreDrafts((prev) => ({ ...prev, [match.id]: { ...draftFor(match), home: e.target.value } }))}
+                onBlur={() => hasDraftEdit && saveScore(match)}
+                onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
+                aria-label={`Score domicile ${match.home_team ?? "?"}`}
+                className="w-10 rounded border border-slate-700 bg-[#0d1322] px-1 py-0.5 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+              />
+              <span className="text-slate-600">-</span>
+              <input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={draft.away}
+                onChange={(e) => setScoreDrafts((prev) => ({ ...prev, [match.id]: { ...draftFor(match), away: e.target.value } }))}
+                onBlur={() => hasDraftEdit && saveScore(match)}
+                onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
+                aria-label={`Score extérieur ${match.away_team ?? "?"}`}
+                className="w-10 rounded border border-slate-700 bg-[#0d1322] px-1 py-0.5 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+              />
+              {hasDraftEdit && (
+                <GhostButton onClick={() => saveScore(match)} title="Enregistrer le score">
+                  {savingId === match.id ? <RefreshCw size={11} className="animate-spin" /> : <Save size={11} />}
+                </GhostButton>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================
-// ⚙️ ONGLET RÉGLAGES (Intégration Phase 2 : Date limite & Verrouillage auto)
+// ⚙️ ONGLET RÉGLAGES
 // ============================================================
+/** Champ numérique générique : on garde la saisie en texte tant que le
+ * champ est édité (comme le reste de l'admin — voir montant de paiement,
+ * score de match) pour ne pas gêner la frappe d'un nombre décimal ou d'un
+ * champ vidé temporairement ; la conversion en nombre a lieu à
+ * l'enregistrement. */
+function NumberField({
+  label,
+  value,
+  onChange,
+  icon: Icon,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  icon?: typeof Users;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+        {Icon && <Icon size={11} />}
+        {label}
+      </label>
+      <TextInput inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} />
+      {hint && <p className="mt-1 text-[10px] text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+function toNumber(raw: string, fallback = 0): number {
+  const n = Number(raw.replace(",", "."));
+  return Number.isNaN(n) ? fallback : n;
+}
+
 function SettingsTab({
   settings,
   error,
   onChanged,
+  notify,
 }: {
   settings: AppSettings | null;
   error?: string;
   onChanged: () => Promise<void>;
+  notify: (message: string) => void;
 }) {
+  // Général
   const [season, setSeason] = useState(settings?.season ?? "2026-2027");
   const [entryFee, setEntryFee] = useState(String(settings?.entry_fee ?? 10));
-  const [bonus, setBonus] = useState(String(settings?.bonus_exact_score ?? 5));
+  const [timezone, setTimezone] = useState(settings?.timezone ?? "Europe/Paris");
+  const [registrationDeadline, setRegistrationDeadline] = useState(settings?.registration_deadline?.slice(0, 16) ?? "");
+
+  // Barème de points
+  const [scoreExact, setScoreExact] = useState(String(settings?.bonus_exact_score ?? 5));
+  const [correctResult, setCorrectResult] = useState(String(settings?.points_correct_result ?? 1));
+  const [goalDiffBonus, setGoalDiffBonus] = useState(String(settings?.points_goal_diff_bonus ?? 0));
+
+  // Blocage des pronostics
   const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 0));
-  
-  // Phase 2 : Nouveaux états pour l'équipe favorite
-  const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState("2026-08-15T20:00");
-  const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(true);
+
+  // Équipe de cœur
+  const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState(settings?.favorite_team_deadline?.slice(0, 16) ?? "");
+  const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(settings?.favorite_team_auto_lock ?? true);
+  const [favoriteTeamBonusPoints, setFavoriteTeamBonusPoints] = useState(String(settings?.favorite_team_bonus_points ?? 0));
+
+  // Bonus
+  const [bonusDrawsPerPeriod, setBonusDrawsPerPeriod] = useState(String(settings?.bonus_draws_per_period ?? 1));
+  const [bonusMatchPoints, setBonusMatchPoints] = useState(settings?.bonus_match_points != null ? String(settings.bonus_match_points) : "");
+
+  // Mode maintenance
+  const [maintenanceMode, setMaintenanceMode] = useState(settings?.maintenance_mode ?? false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState(settings?.maintenance_message ?? "");
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [testingApi, setTestingApi] = useState(false);
 
   useEffect(() => {
-    if (settings) {
-      setSeason(settings.season);
-      setEntryFee(String(settings.entry_fee));
-      setBonus(String(settings.bonus_exact_score));
-      setClosingDelay(String(settings.closing_delay_minutes));
-    }
+    if (!settings) return;
+    setSeason(settings.season);
+    setEntryFee(String(settings.entry_fee));
+    setTimezone(settings.timezone);
+    setRegistrationDeadline(settings.registration_deadline?.slice(0, 16) ?? "");
+    setScoreExact(String(settings.bonus_exact_score));
+    setCorrectResult(String(settings.points_correct_result));
+    setGoalDiffBonus(String(settings.points_goal_diff_bonus));
+    setClosingDelay(String(settings.closing_delay_minutes));
+    setFavoriteTeamDeadline(settings.favorite_team_deadline?.slice(0, 16) ?? "");
+    setFavoriteTeamAutoLock(settings.favorite_team_auto_lock);
+    setFavoriteTeamBonusPoints(String(settings.favorite_team_bonus_points));
+    setBonusDrawsPerPeriod(String(settings.bonus_draws_per_period));
+    setBonusMatchPoints(settings.bonus_match_points != null ? String(settings.bonus_match_points) : "");
+    setMaintenanceMode(settings.maintenance_mode);
+    setMaintenanceMessage(settings.maintenance_message ?? "");
   }, [settings]);
-
-  // Phase 2 : Charger les paramètres de l'équipe favorite depuis app_settings
-  useEffect(() => {
-    async function loadFavoriteTeamSettings() {
-      try {
-        const { getSettings: getAppSettings } = await import("@/services/adminService");
-        // On peut récupérer les clés spécifiques si stockées dans une table ou via getSettings si géré globalement
-        // Ici on utilise la table app_settings via supabase directement si nécessaire ou via la fonction existante
-        const { supabase } = await import("@/lib/supabase");
-        const { data } = await supabase.from("app_settings").select("*");
-        if (data) {
-          const d = data.find((s: any) => s.key === "favorite_team_deadline");
-          const l = data.find((s: any) => s.key === "favorite_team_auto_lock");
-          if (d) setFavoriteTeamDeadline(d.value.slice(0, 16));
-          if (l) setFavoriteTeamAutoLock(l.value === "true");
-        }
-      } catch (e) {
-        console.warn("Impossible de charger les réglages équipe favorite:", e);
-      }
-    }
-    loadFavoriteTeamSettings();
-  }, []);
 
   async function handleSave() {
     setSaving(true);
     try {
       await updateSettings({
         season,
-        entry_fee: Number(entryFee.replace(",", ".")) || 0,
-        bonus_exact_score: Number(bonus.replace(",", ".")) || 0,
-        closing_delay_minutes: Number(closingDelay) || 0,
+        entry_fee: toNumber(entryFee, 0),
+        timezone: timezone.trim() || "Europe/Paris",
+        registration_deadline: registrationDeadline ? new Date(registrationDeadline).toISOString() : null,
+        bonus_exact_score: toNumber(scoreExact, 0),
+        points_correct_result: toNumber(correctResult, 0),
+        points_goal_diff_bonus: toNumber(goalDiffBonus, 0),
+        closing_delay_minutes: Math.max(0, Math.round(toNumber(closingDelay, 0))),
+        favorite_team_deadline: favoriteTeamDeadline ? new Date(favoriteTeamDeadline).toISOString() : null,
+        favorite_team_auto_lock: favoriteTeamAutoLock,
+        favorite_team_bonus_points: toNumber(favoriteTeamBonusPoints, 0),
+        bonus_draws_per_period: Math.max(0, Math.round(toNumber(bonusDrawsPerPeriod, 1))),
+        bonus_match_points: bonusMatchPoints.trim() === "" ? null : toNumber(bonusMatchPoints, 0),
+        maintenance_mode: maintenanceMode,
+        maintenance_message: maintenanceMessage.trim() || null,
       });
-
-      // Phase 2 : Sauvegarde des paramètres d'équipe favorite dans app_settings
-      const { supabase } = await import("@/lib/supabase");
-      const favoriteUpdates = [
-        { key: "favorite_team_deadline", value: new Date(favoriteTeamDeadline).toISOString() },
-        { key: "favorite_team_auto_lock", value: favoriteTeamAutoLock ? "true" : "false" },
-      ];
-      await supabase.from("app_settings").upsert(favoriteUpdates, { onConflict: "key" });
-
       await onChanged();
       setSaved(true);
+      notify("Réglages enregistrés.");
       setTimeout(() => setSaved(false), 2500);
-    } catch (e: any) {
-      alert(e.message ?? "Erreur lors de l'enregistrement des réglages.");
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement des réglages."));
     } finally {
       setSaving(false);
     }
