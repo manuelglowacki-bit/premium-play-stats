@@ -1011,13 +1011,26 @@ function PaymentsTab({
     return map;
   }, [players]);
 
+  const filteredPayments = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return payments;
+    return payments.filter((payment) => {
+      const pseudo = playerById.get(payment.user_id)?.pseudo ?? "";
+      return pseudo.toLowerCase().includes(query);
+    });
+  }, [payments, playerById, search]);
+
+  // Mise à jour optimiste : le badge de statut change immédiatement, on ne
+  // resynchronise depuis Supabase qu'en cas d'échec de la requête.
   async function togglePaid(payment: Payment) {
     setBusyId(payment.id);
+    const nextPaid = !payment.paid;
+    setPayments((prev) => prev.map((p) => (p.id === payment.id ? { ...p, paid: nextPaid } : p)));
     try {
-      await setPaymentPaid(payment.id, !payment.paid);
-      await onChanged();
+      await setPaymentPaid(payment.id, nextPaid);
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la mise à jour.");
+      notify(e.message ?? "Erreur lors de la mise à jour.");
+      await onChanged();
     } finally {
       setBusyId(null);
     }
@@ -1039,7 +1052,7 @@ function PaymentsTab({
         return next;
       });
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la mise à jour du montant.");
+      notify(e.message ?? "Erreur lors de la mise à jour du montant.");
     } finally {
       setBusyId(null);
     }
@@ -1051,9 +1064,10 @@ function PaymentsTab({
       await generateMissingPayments(players, payments, entryFee);
       await onChanged();
     } catch (e: any) {
-      alert(e.message ?? "Erreur lors de la génération des paiements.");
+      notify(e.message ?? "Erreur lors de la génération des paiements.");
     } finally {
       setGenerating(false);
+      setConfirmGenerate(false);
     }
   }
 
@@ -1073,9 +1087,12 @@ function PaymentsTab({
           <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
             <Wallet size={18} className="text-emerald-400" />
             Paiements
+            <span className="ml-1 rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-0.5 font-mono text-[11px] font-bold text-slate-300">
+              {paidCount} payé{paidCount > 1 ? "s" : ""} / {players.length} inscrit{players.length > 1 ? "s" : ""}
+            </span>
           </h2>
           {missingCount > 0 && (
-            <PrimaryButton onClick={handleGenerateMissing} disabled={generating}>
+            <PrimaryButton onClick={() => setConfirmGenerate(true)} disabled={generating}>
               {generating ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
               Générer {missingCount} paiement{missingCount > 1 ? "s" : ""} manquant{missingCount > 1 ? "s" : ""}
             </PrimaryButton>
@@ -1088,24 +1105,38 @@ function PaymentsTab({
           </div>
         )}
 
+        {!error && payments.length > 0 && (
+          <div className="mb-4">
+            <TextInput
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher un joueur…"
+              className="!max-w-xs"
+            />
+          </div>
+        )}
+
         {!error && payments.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500">
             Aucun paiement enregistré. Génère les paiements pour commencer.
           </p>
+        ) : !error && filteredPayments.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-500">Aucun joueur ne correspond à « {search} ».</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] border-collapse">
+            <table className="w-full min-w-[640px] border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 text-left font-mono text-[10px] uppercase tracking-widest text-slate-500">
                   <th className="pb-2 pr-3">Joueur</th>
                   <th className="pb-2 pr-3">Montant</th>
                   <th className="pb-2 pr-3">Statut</th>
+                  <th className="pb-2 pr-3">Date de paiement</th>
                   <th className="pb-2 pr-0 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {payments.map((payment) => {
-                  const player = playerById.get(payment.player_id);
+                {filteredPayments.map((payment) => {
+                  const player = playerById.get(payment.user_id);
                   const editValue = editingAmount[payment.id];
                   return (
                     <tr key={payment.id} className="border-b border-slate-800/60 last:border-0">
@@ -1127,7 +1158,11 @@ function PaymentsTab({
                           />
                           <span className="text-xs text-slate-500">€</span>
                           {editValue !== undefined && editValue !== String(payment.amount) && (
-                            <GhostButton onClick={() => saveAmount(payment)} title="Enregistrer le montant">
+                            <GhostButton
+                              onClick={() => saveAmount(payment)}
+                              title="Enregistrer le montant"
+                              ariaLabel={`Enregistrer le montant de ${player?.pseudo ?? "ce joueur"}`}
+                            >
                               {busyId === payment.id ? (
                                 <RefreshCw size={12} className="animate-spin" />
                               ) : (
@@ -1145,9 +1180,15 @@ function PaymentsTab({
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-red-400">
-                            EN ATTENTE
+                            <AlertTriangle size={11} />
+                            NON PAYÉ
                           </span>
                         )}
+                      </td>
+                      <td className="py-3 pr-3 font-mono text-xs text-slate-400">
+                        {payment.payment_date
+                          ? new Date(payment.payment_date).toLocaleDateString("fr-FR", { dateStyle: "medium" })
+                          : "—"}
                       </td>
                       <td className="py-3 pr-0 text-right">
                         <GhostButton onClick={() => togglePaid(payment)}>
@@ -1167,6 +1208,20 @@ function PaymentsTab({
           </div>
         )}
       </Card>
+
+      {confirmGenerate && (
+        <ConfirmDialog
+          title="Générer les paiements manquants ?"
+          description={`${missingCount} paiement${missingCount > 1 ? "s" : ""} de ${entryFee}€ ${
+            missingCount > 1 ? "seront créés" : "sera créé"
+          } pour les joueurs qui n'en ont pas encore.`}
+          confirmLabel="Générer"
+          tone="primary"
+          busy={generating}
+          onCancel={() => setConfirmGenerate(false)}
+          onConfirm={handleGenerateMissing}
+        />
+      )}
     </div>
   );
 }
