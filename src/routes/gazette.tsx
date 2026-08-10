@@ -319,11 +319,7 @@ function calculatePlayer(
     if (isLast) lastPoints += dayPoints;
   });
 
-  const name =
-    profile.pseudo ||
-    profile.player_name ||
-    profile.email?.split("@")[0] ||
-    "Joueur";
+  const name = profile.pseudo || "Joueur";
 
   return {
     id: profile.id,

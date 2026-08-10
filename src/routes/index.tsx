@@ -136,7 +136,7 @@ function IndexPage() {
               total_points: rankingMap.get(uid) || 0,
               exact_scores: exactMap.get(uid) || 0,
               predictions_count: countMap.get(uid) || 0,
-              name: p.pseudo || p.username || p.player_name || "Joueur",
+              name: p.pseudo || "Joueur",
               avatar_url: p.avatar_url || "",
               favorite_team: team?.name || "",
               favorite_logo: team?.logo_url || "",
@@ -420,7 +420,7 @@ function IndexPage() {
                           className="size-full object-cover"
                         />
                       ) : (
-                        <span className="font-display text-3xl md:text-4xl font-extrabold text-red-500 tracking-wider">{(profile?.pseudo || profile?.username || "JO").slice(0, 2).toUpperCase()}</span>
+                        <span className="font-display text-3xl md:text-4xl font-extrabold text-red-500 tracking-wider">{(profile?.pseudo || user?.email?.split("@")[0] || "JO").slice(0, 2).toUpperCase()}</span>
                       )}
                     </div>
                   </div>
@@ -446,7 +446,7 @@ function IndexPage() {
                   <span className="inline-flex items-center gap-1 mb-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[10px] font-bold tracking-widest">
                     <Star size={10} className="fill-amber-400" /> NIVEAU 12
                   </span>
-                  <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight truncate">{profile?.pseudo || profile?.username || "Joueur"}</h3>
+                  <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight truncate">{profile?.pseudo || user?.email?.split("@")[0] || "Joueur"}</h3>
 
                   <div className="flex flex-wrap items-center gap-3 mt-4">
                     <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-sm font-bold">
