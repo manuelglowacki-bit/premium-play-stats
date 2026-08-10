@@ -612,21 +612,13 @@ function GazettePage() {
     setError("");
 
     try {
-      let calendar = parseJson<any[]>(
+      // Le calendrier admin n'est stocké que côté client (localStorage) :
+      // app_settings n'est pas une table clé-valeur et n'a pas de colonne
+      // pour ces données, donc aucun fallback Supabase n'est possible ici.
+      const calendar = parseJson<any[]>(
         localStorage.getItem(CALENDAR_KEY),
         []
       );
-
-      if (!calendar.length) {
-        const { data, error: calendarError } = await supabase
-          .from("app_settings")
-          .select("setting_value")
-          .eq("setting_key", CALENDAR_KEY)
-          .maybeSingle();
-
-        if (calendarError) throw calendarError;
-        calendar = parseJson<any[]>(data?.setting_value, []);
-      }
 
       const [
         { data: profileData, error: profileError },
@@ -1443,7 +1435,16 @@ function GazettePage() {
           </section>
 
           {/* SELECTEUR */}
-          {journees.length > 0 && (
+          {journees.length === 0 && !loading ? (
+            <section className="relative mt-5 overflow-hidden rounded-[28px] border border-white/10 bg-[#07111e] px-4 py-8 text-center md:px-7">
+              <p className="font-mono text-[11px] font-bold tracking-[.14em] text-slate-400">
+                Aucun calendrier disponible pour le moment.
+              </p>
+              <p className="mt-1 text-xs text-slate-600">
+                Reviens un peu plus tard, la Gazette se met à jour dès que les journées sont publiées.
+              </p>
+            </section>
+          ) : journees.length > 0 && (
             <section
               className="relative mt-5 overflow-hidden rounded-[28px] border border-white/10 bg-[#07111e]"
               style={{
