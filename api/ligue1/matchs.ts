@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
+type CompetitionCode = "FL1" | "PL" | "PD" | "SA" | "BL1";
+
 type FootballDataMatch = {
   id: number;
   utcDate: string;
@@ -15,12 +17,7 @@ type FootballDataMatch = {
   };
 };
 
-// Noms connus, uniquement pour l'affichage (compétition legacy "matchs"
-// historique) — la validité d'un code n'est PAS limitée à cette liste :
-// l'onglet Bonus peut activer n'importe quel championnat renvoyé par
-// /api/competitions (voir isCompetitionCode ci-dessous), pas seulement
-// ces 5-là codés en dur.
-const KNOWN_COMPETITION_NAMES: Record<string, string> = {
+const COMPETITIONS: Record<CompetitionCode, string> = {
   FL1: "Ligue 1",
   PL: "Premier League",
   PD: "Liga",
@@ -28,61 +25,75 @@ const KNOWN_COMPETITION_NAMES: Record<string, string> = {
   BL1: "Bundesliga",
 };
 
-type CompetitionCode = string;
-
 function send(res: VercelResponse, status: number, body: unknown) {
-  res.status(status).setHeader("Cache-Control", "no-store").json(body);
-}
-
-// Codes football-data.org : 2 à 6 lettres/chiffres majuscules (FL1, PL,
-// BL1, DED, PPL...). On ne fige pas la liste ici, /api/competitions fait
-// déjà ce filtrage en amont (championnats réellement dispos sur le plan).
-function isCompetitionCode(value: unknown): value is CompetitionCode {
-  return typeof value === "string" && /^[A-Z0-9]{2,6}$/.test(value.toUpperCase());
+  return res
+    .status(status)
+    .setHeader("Cache-Control", "no-store")
+    .json(body);
 }
 
 function normalizeCompetition(value: unknown): CompetitionCode | "ALL" {
-  if (typeof value !== "string") return "ALL";
-  const normalized = value.toUpperCase();
-  if (normalized === "ALL") return "ALL";
-  return isCompetitionCode(normalized) ? normalized : "ALL";
+  const v = String(value ?? "ALL").trim().toUpperCase();
+  if (v === "FL1" || v === "PL" || v === "PD" || v === "SA" || v === "BL1") {
+    return v;
+  }
+  return "ALL";
+}
+
+function validDate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 async function fetchCompetition(
   code: CompetitionCode,
   season: string,
   token: string,
-): Promise<any[]> {
-  const url =
-    `https://api.football-data.org/v4/competitions/${code}/matches` +
-    `?season=${encodeURIComponent(season)}`;
+  dateFrom?: string,
+  dateTo?: string,
+) {
+  const params = new URLSearchParams({ season });
 
-  const upstream = await fetch(url, {
+  if (dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+    params.set("dateFrom", dateFrom);
+  }
+  if (dateTo && /^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+    params.set("dateTo", dateTo);
+  }
+
+  const url =
+    `https://api.football-data.org/v4/competitions/${code}/matches?${params.toString()}`;
+
+  const response = await fetch(url, {
     headers: {
       "X-Auth-Token": token,
       Accept: "application/json",
     },
   });
 
-  const text = await upstream.text();
+  const text = await response.text();
 
   let data: any = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(
-      `football-data.org a renvoyé une réponse non JSON pour ${code} (${upstream.status}).`,
+    const error: any = new Error(
+      `football-data.org a renvoyé une réponse non JSON pour ${code} (${response.status}).`,
     );
+    error.upstreamStatus = response.status;
+    error.upstream = text?.slice(0, 500);
+    throw error;
   }
 
-  if (!upstream.ok) {
-    const error = new Error(
+  if (!response.ok) {
+    const error: any = new Error(
       data?.message ||
         data?.error ||
-        `football-data.org a renvoyé HTTP ${upstream.status} pour ${code}.`,
+        `football-data.org a renvoyé HTTP ${response.status} pour ${code}.`,
     );
-    (error as any).upstreamStatus = upstream.status;
-    (error as any).upstream = data;
+    error.upstreamStatus = response.status;
+    error.upstream = data;
     throw error;
   }
 
@@ -91,33 +102,27 @@ async function fetchCompetition(
     : [];
 
   return sourceMatches
-    .filter((match) => match?.id != null)
-    .map((match) => {
-      const utc = new Date(match.utcDate);
-      const validDate = !Number.isNaN(utc.getTime());
+    .filter((m) => m?.id != null && m?.utcDate)
+    .map((m) => {
+      const utc = validDate(m.utcDate);
 
       return {
-        id: `fd-${match.id}`,
-        apiFixtureId: Number(match.id),
+        id: `fd-${m.id}`,
+        apiFixtureId: Number(m.id),
         competitionCode: code,
-        competition: KNOWN_COMPETITION_NAMES[code] ?? code,
-        journee: Number(match.matchday ?? 0),
-        domicile: match.homeTeam?.name ?? "",
-        exterieur: match.awayTeam?.name ?? "",
-        date: validDate ? utc.toISOString().slice(0, 10) : "",
-        heure: validDate ? utc.toISOString().slice(11, 16) : "",
-        statut: match.status ?? "SCHEDULED",
-        scoreDomicile: match.score?.fullTime?.home ?? null,
-        scoreExterieur: match.score?.fullTime?.away ?? null,
+        competition: COMPETITIONS[code],
+        journee: Number(m.matchday ?? 0),
+        domicile: m.homeTeam?.name ?? "",
+        exterieur: m.awayTeam?.name ?? "",
+        date: utc ? utc.slice(0, 10) : "",
+        heure: utc ? utc.slice(11, 16) : "",
+        kickoff: utc,
+        statut: m.status ?? "SCHEDULED",
+        scoreDomicile: m.score?.fullTime?.home ?? null,
+        scoreExterieur: m.score?.fullTime?.away ?? null,
       };
     })
-    .filter(
-      (match) =>
-        match.domicile &&
-        match.exterieur &&
-        Number.isFinite(match.journee) &&
-        match.journee > 0,
-    );
+    .filter((m) => m.domicile && m.exterieur && m.kickoff);
 }
 
 export default async function handler(
@@ -134,18 +139,14 @@ export default async function handler(
 
   const token =
     process.env.FOOTBALL_DATA_API_TOKEN ||
-    process.env.FOOTBALL_DATA_TOKEN;
+    process.env.FOOTBALL_DATA_TOKEN ||
+    process.env.FOOTBALL_DATA_KEY;
 
   if (!token) {
     return send(res, 500, {
       ok: false,
       message:
-        "Variable Vercel FOOTBALL_DATA_API_TOKEN manquante. Ajoute ton token football-data.org dans les variables d'environnement.",
-      debugEnvKeys: Object.keys(process.env).filter((k) =>
-        k.includes("FOOTBALL"),
-      ),
-      debugTotalKeys: Object.keys(process.env).length,
-      debugAllKeys: Object.keys(process.env).sort(),
+        "Token football-data.org absent. Vérifie FOOTBALL_DATA_API_TOKEN dans Vercel.",
     });
   }
 
@@ -154,99 +155,92 @@ export default async function handler(
       ? req.query.season
       : "2026";
 
-  // ?competition=PL
-  // ?competition=PD
-  // ?competition=SA
-  // ?competition=BL1
-  // ?competition=FL1
-  // ?competition=ALL (ou aucun paramètre) => les 5 compétitions
-  const requestedCompetition = normalizeCompetition(req.query.competition);
+  const requested = normalizeCompetition(req.query.competition);
 
+  const dateFrom =
+    typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined;
+
+  const dateTo =
+    typeof req.query.dateTo === "string" ? req.query.dateTo : undefined;
+
+  // Pour ALL, les appels sont faits séparément et les erreurs sont tolérées.
+  // Ainsi un championnat indisponible ne bloque pas les autres.
   const codes: CompetitionCode[] =
-    requestedCompetition === "ALL"
+    requested === "ALL"
       ? ["FL1", "PL", "PD", "SA", "BL1"]
-      : [requestedCompetition];
+      : [requested];
 
-  try {
-    const results = await Promise.allSettled(
-      codes.map((code) => fetchCompetition(code, season, token)),
-    );
+  const competitions: Record<string, any[]> = {};
+  const errors: Array<{
+    code: string;
+    name: string;
+    status?: number;
+    message: string;
+  }> = [];
 
-    const competitions: Record<string, any[]> = {};
-    const errors: string[] = [];
-
-    results.forEach((result, index) => {
-      const code = codes[index];
-
-      if (result.status === "fulfilled") {
-        competitions[code] = result.value;
-      } else {
-        const error: any = result.reason;
-        errors.push(
-          `${code} (${KNOWN_COMPETITION_NAMES[code] ?? code}) : ${
-            error?.message || "Erreur inconnue"
-          }`,
-        );
-      }
-    });
-
-    // On conserve le format historique "matchs" pour FL1 afin de ne pas
-    // casser les anciennes versions du frontend.
-    const matchs =
-      requestedCompetition === "ALL"
-        ? competitions.FL1 ?? []
-        : competitions[codes[0]] ?? [];
-
-    const allMatches = Object.values(competitions).flat();
-
-    // Si une seule compétition est demandée et qu'elle échoue, on retourne
-    // l'erreur comme avant. Pour ALL, les autres compétitions restent utiles.
-    if (
-      requestedCompetition !== "ALL" &&
-      !competitions[codes[0]]
-    ) {
-      return send(res, 502, {
-        ok: false,
-        message: errors[0] || "Impossible de récupérer la compétition.",
-        competition: codes[0],
+  // Séquentiel volontaire : évite de déclencher plusieurs appels
+  // football-data.org simultanément.
+  for (const code of codes) {
+    try {
+      competitions[code] = await fetchCompetition(
+        code,
         season,
-        errors,
+        token,
+        dateFrom,
+        dateTo,
+      );
+    } catch (error: any) {
+      errors.push({
+        code,
+        name: COMPETITIONS[code],
+        status: error?.upstreamStatus,
+        message: error?.message || "Erreur inconnue",
       });
+
+      competitions[code] = [];
     }
+  }
 
-    return send(res, 200, {
-      ok: true,
-      success: true,
+  const allMatches = Object.values(competitions).flat();
 
-      // Compatibilité ancienne API
-      competition:
-        requestedCompetition === "ALL"
-          ? "ALL"
-          : requestedCompetition,
-      season,
-      count: matchs.length,
-      matchs,
-      matches: matchs,
-      data: matchs,
-
-      // Nouveau format multi-championnats
-      competitions,
-      allMatches,
-      allCount: allMatches.length,
-      competitionCodes: codes,
-
-      // Les erreurs partielles sont exposées à l'admin sans bloquer
-      // les compétitions qui ont correctement répondu.
-      partialErrors: errors,
-    });
-  } catch (error: any) {
+  // Une compétition demandée seule doit quand même signaler son échec.
+  if (requested !== "ALL" && errors.length > 0) {
     return send(res, 502, {
       ok: false,
-      message:
-        error?.message ||
-        "Impossible de contacter football-data.org depuis Vercel.",
-      upstreamStatus: error?.upstreamStatus,
-      upstream: error?.upstream,
+      success: false,
+      message: errors[0].message,
+      competition: requested,
+      season,
+      dateFrom: dateFrom ?? null,
+      dateTo: dateTo ?? null,
+      errors,
     });
   }
+
+  const matchs =
+    requested === "ALL" ? competitions.FL1 ?? [] : competitions[requested] ?? [];
+
+  return send(res, 200, {
+    ok: true,
+    success: true,
+    competition: requested,
+    season,
+    dateFrom: dateFrom ?? null,
+    dateTo: dateTo ?? null,
+
+    // Ancien format conservé pour la Ligue 1.
+    count: matchs.length,
+    matchs,
+    matches: matchs,
+    data: matchs,
+
+    // Nouveau format multi-championnats.
+    competitions,
+    allMatches,
+    allCount: allMatches.length,
+    competitionCodes: codes,
+
+    // Une erreur partielle ne fait plus échouer ALL.
+    partialErrors: errors,
+  });
 }

@@ -16,11 +16,11 @@ export interface Player {
 
 export interface Payment {
   id: string;
-  // La table `payments` en base utilise la colonne `user_id` (FK vers
-  // `profiles.id`), pas `player_id` — voir diagnostic du bug "Could not
-  // find the 'player_id' column of 'payments' in the schema cache" :
-  // la colonne `player_id` n'a jamais existé côté Supabase, seul le code
-  // s'attendait à ce nom.
+  // La table `payments` en base utilise `user_id` (FK profiles.id), pas
+  // `player_id` (jamais existé côté Supabase — cause de l'erreur "Could
+  // not find the 'player_id' column of 'payments' in the schema cache"),
+  // et `payment_date`/`notes`, pas `updated_at` (colonne absente elle
+  // aussi) — vérifié directement en base.
   user_id: string;
   amount: number;
   paid: boolean;
@@ -46,24 +46,17 @@ export interface Competition {
   id: string;
   name: string;
   code?: string | null;
-  /** Code football-data.org (ex: "PL", "FL1") — clé de rapprochement pour
-   * la synchronisation, distincte de `code` (champ libre plus ancien). */
   external_code?: string | null;
-  /** Piloté depuis l'onglet Bonus : le championnat est-il proposé à la
-   * synchronisation ? Ligue 1 est active par défaut (comportement Matchs
-   * inchangé) ; les autres championnats sont opt-in. */
   is_active?: boolean;
   created_at?: string;
 }
 
-/** Championnat tel que renvoyé par l'API football-data.org (source de
- * vérité pour la liste des championnats disponibles — voir /api/competitions),
- * pas encore forcément lié à une ligne `competitions` en base. */
 export interface DiscoveredCompetition {
   code: string;
   name: string;
-  area?: string | null;
+  country?: string | null;
   emblem?: string | null;
+  available?: boolean;
 }
 
 export interface Matchday {
@@ -106,32 +99,24 @@ export interface AppSettings {
   season: string;
   entry_fee: number;
 
-  // Barème de points. Note importante : aucun moteur de calcul de points
-  // n'existe aujourd'hui côté code ni côté base (vérifié : aucune
-  // fonction/trigger Supabase ne les consomme, `user_journey_points` est
-  // une simple table alimentée à part) — ces valeurs sont éditables et
-  // persistées, prêtes pour le jour où ce moteur sera écrit.
-  bonus_exact_score: number; // points pour un score exact
-  points_correct_result: number; // points pour un bon résultat (1N2) sans le score exact
-  points_goal_diff_bonus: number; // bonus si le nombre de buts d'une équipe est deviné juste
+  // Barème de points. Aucun moteur de calcul de points n'existe encore
+  // côté code ni base — ces valeurs sont éditables/persistées, prêtes
+  // pour le jour où ce moteur sera écrit.
+  bonus_exact_score: number;
+  points_correct_result: number;
+  points_goal_diff_bonus: number;
 
-  // Blocage des pronostics.
   closing_delay_minutes: number;
 
-  // Équipe de cœur (favorite_team par joueur, voir onglet Joueurs).
   favorite_team_deadline: string | null;
   favorite_team_auto_lock: boolean;
   favorite_team_bonus_points: number;
 
-  // Bonus (sélection premium, voir onglet Bonus).
   bonus_draws_per_period: number;
-  bonus_match_points: number | null; // null = barème standard (bonus_exact_score / points_correct_result)
-  // Fenêtre temporelle d'éligibilité des matchs au tirage bonus. NULL = pas
-  // de filtre (comportement historique, tous les matchs sont éligibles).
-  bonus_period_start: string | null;
-  bonus_period_end: string | null;
+  bonus_match_points: number | null;
+  bonus_period_start?: string | null;
+  bonus_period_end?: string | null;
 
-  // Autres réglages.
   registration_deadline: string | null;
   timezone: string;
   maintenance_mode: boolean;
@@ -210,9 +195,6 @@ export async function getPayments(): Promise<Payment[]> {
 }
 
 export async function setPaymentPaid(id: string, paid: boolean): Promise<void> {
-  // `payments` n'a pas de colonne `updated_at` — `payment_date` fait office
-  // de trace temporelle : posée au moment où le paiement est marqué payé,
-  // effacée si on revient en arrière.
   const { error } = await supabase
     .from("payments")
     .update({ paid, payment_date: paid ? new Date().toISOString() : null })
@@ -254,56 +236,6 @@ export async function getCompetitions(): Promise<Competition[]> {
   const { data, error } = await supabase.from("competitions").select("*").order("name");
   if (error) throw error;
   return (data ?? []) as Competition[];
-}
-
-/**
- * Liste des championnats réellement disponibles pour ce compte
- * football-data.org (endpoint `/api/competitions`, clé API côté serveur).
- * Remplace toute liste codée en dur : ce qu'on peut activer dans l'onglet
- * Bonus dépend du plan football-data.org, pas d'une constante front.
- */
-export async function getAvailableCompetitions(): Promise<DiscoveredCompetition[]> {
-  const response = await fetch("/api/competitions", { headers: { Accept: "application/json" } });
-  let payload: any = null;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new Error(`L'API des championnats a renvoyé une réponse invalide (${response.status}).`);
-  }
-  if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.message || `Erreur API championnats (${response.status}).`);
-  }
-  return Array.isArray(payload.competitions) ? payload.competitions : [];
-}
-
-/**
- * Active/désactive un championnat depuis l'onglet Bonus. Si `competitionId`
- * est absent (championnat découvert via football-data.org mais jamais
- * synchronisé chez nous), crée la ligne `competitions` correspondante.
- */
-export async function setCompetitionActive(
-  discovered: DiscoveredCompetition,
-  competitionId: string | null,
-  isActive: boolean,
-): Promise<Competition> {
-  if (competitionId) {
-    const { data, error } = await supabase
-      .from("competitions")
-      .update({ is_active: isActive, external_code: discovered.code })
-      .eq("id", competitionId)
-      .select("*")
-      .single();
-    if (error) throw error;
-    return data as Competition;
-  }
-
-  const { data, error } = await supabase
-    .from("competitions")
-    .insert([{ name: discovered.name, external_code: discovered.code, is_active: isActive }])
-    .select("*")
-    .single();
-  if (error) throw error;
-  return data as Competition;
 }
 
 // ============================================================
@@ -402,26 +334,10 @@ export interface SyncSummary {
   errors: string[];
 }
 
-/**
- * Synchronise les matchs d'un championnat football-data.org donné
- * (`FL1`, `PL`, `PD`, `SA`, `BL1`, ...) vers Supabase.
- *
- * Ligue 1 (FL1) est un cas particulier : les pronostics s'appuient sur
- * `home_team_id`/`away_team_id` (FK vers `teams`, pour badges/logos), donc
- * on résout et exige une correspondance d'équipe connue — comportement
- * historique inchangé, un match sans équipe reconnue est ignoré.
- *
- * Les autres championnats (onglet Bonus) n'ont pas d'équipes en base
- * (`teams` ne contient que les 18 clubs de Ligue 1) : la sélection bonus
- * n'a de toute façon besoin que des noms (`match.home_team`/`away_team`,
- * voir bonusSelectionService), donc `home_team_id`/`away_team_id` restent
- * `null` et aucune équipe n'est jamais "introuvable" pour ces championnats.
- */
-export async function syncCompetitionMatches(competitionCode: string): Promise<SyncSummary> {
+export async function syncLigue1Matches(): Promise<SyncSummary> {
   const summary: SyncSummary = { created: 0, updated: 0, skipped: 0, matchdaysCreated: 0, warnings: [], errors: [] };
-  const isLigue1 = competitionCode === "FL1";
 
-  const response = await fetch(`/api/ligue1/matchs?season=2026&competition=${encodeURIComponent(competitionCode)}`, {
+  const response = await fetch("/api/ligue1/matchs?season=2026", {
     method: "GET",
     headers: { Accept: "application/json" },
   });
@@ -430,11 +346,11 @@ export async function syncCompetitionMatches(competitionCode: string): Promise<S
   try {
     payload = await response.json();
   } catch {
-    throw new Error(`L'API football-data.org a renvoyé une réponse invalide (${response.status}).`);
+    throw new Error(`L'API Ligue 1 a renvoyé une réponse invalide (${response.status}).`);
   }
 
   if (!response.ok || !payload?.ok) {
-    throw new Error(payload?.message || `Erreur API football-data.org (${response.status}).`);
+    throw new Error(payload?.message || `Erreur API Ligue 1 (${response.status}).`);
   }
 
   const apiMatches = Array.isArray(payload.matchs) ? payload.matchs : [];
@@ -449,22 +365,11 @@ export async function syncCompetitionMatches(competitionCode: string): Promise<S
   ]);
 
   const season = seasons.find((s) => s.code === "2026-2027" || s.name === "2026-2027") || seasons[0];
-  const competition = competitions.find((c) => c.external_code === competitionCode || c.code === competitionCode);
+  const competition = competitions.find((c) => c.code === "FL1" || normalize(c.name) === "ligue1");
   if (!season) throw new Error("La saison 2026-2027 est introuvable dans Supabase.");
-  if (!competition) {
-    throw new Error(
-      `Le championnat ${competitionCode} n'a pas encore de ligne "competitions" en base — active-le depuis l'onglet Bonus avant de synchroniser.`,
-    );
-  }
+  if (!competition) throw new Error("La compétition Ligue 1 (FL1) est introuvable dans Supabase.");
 
-  // Scopé à ce championnat : deux championnats différents peuvent avoir
-  // chacun une "J1"/journée n°1, la clé de correspondance ne doit donc
-  // jamais mélanger leurs journées.
-  const matchdaysByCode = new Map(
-    existingMatchdays
-      .filter((m) => m.competition_id === competition.id)
-      .map((m) => [String(m.code || `J${m.number}`), m]),
-  );
+  const matchdaysByCode = new Map(existingMatchdays.map((m) => [String(m.code || `J${m.number}`), m]));
   const matchesByFixture = new Map(existingMatches.filter((m) => m.api_fixture_id != null).map((m) => [Number(m.api_fixture_id), m]));
 
   for (const apiMatch of apiMatches) {
@@ -476,18 +381,12 @@ export async function syncCompetitionMatches(competitionCode: string): Promise<S
         continue;
       }
 
-      let homeTeamId: string | null = null;
-      let awayTeamId: string | null = null;
-      if (isLigue1) {
-        const home = teams.find((t) => teamMatches(t, apiMatch.domicile));
-        const away = teams.find((t) => teamMatches(t, apiMatch.exterieur));
-        if (!home || !away) {
-          summary.skipped++;
-          summary.warnings.push(`Équipe introuvable : ${apiMatch.domicile} / ${apiMatch.exterieur}`);
-          continue;
-        }
-        homeTeamId = home.id;
-        awayTeamId = away.id;
+      const home = teams.find((t) => teamMatches(t, apiMatch.domicile));
+      const away = teams.find((t) => teamMatches(t, apiMatch.exterieur));
+      if (!home || !away) {
+        summary.skipped++;
+        summary.warnings.push(`Équipe introuvable : ${apiMatch.domicile} / ${apiMatch.exterieur}`);
+        continue;
       }
 
       const code = `J${number}`;
@@ -520,8 +419,8 @@ export async function syncCompetitionMatches(competitionCode: string): Promise<S
         matchday_code: code,
         matchday: code,
         match_day: number,
-        home_team_id: homeTeamId,
-        away_team_id: awayTeamId,
+        home_team_id: home.id,
+        away_team_id: away.id,
         home_team: apiMatch.domicile,
         away_team: apiMatch.exterieur,
         api_fixture_id: fixtureId,
@@ -531,7 +430,7 @@ export async function syncCompetitionMatches(competitionCode: string): Promise<S
         finished,
         home_score: apiMatch.scoreDomicile ?? null,
         away_score: apiMatch.scoreExterieur ?? null,
-        match_type: competitionCode === "FL1" ? "LIGUE1" : competitionCode,
+        match_type: "LIGUE1",
         is_bonus: false,
       };
 
@@ -554,53 +453,237 @@ export async function syncCompetitionMatches(competitionCode: string): Promise<S
   return summary;
 }
 
-/** Alias rétrocompatible : synchronisation Ligue 1 (utilisé par l'onglet Matchs). */
-export function syncLigue1Matches(): Promise<SyncSummary> {
-  return syncCompetitionMatches("FL1");
+
+// ============================================================
+// 8. CHAMPIONNATS BONUS — API football-data.org
+// ============================================================
+const BONUS_COMPETITIONS: Record<string, { name: string; country: string }> = {
+  PL: { name: "Premier League", country: "England" },
+  PD: { name: "Liga", country: "Spain" },
+  SA: { name: "Serie A", country: "Italy" },
+  BL1: { name: "Bundesliga", country: "Germany" },
+};
+
+export async function getAvailableCompetitions(): Promise<DiscoveredCompetition[]> {
+  const response = await fetch("/api/ligue1/matchs?season=2026&competition=ALL", {
+    headers: { Accept: "application/json" },
+  });
+
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(`L'API championnats a renvoyé une réponse invalide (${response.status}).`);
+  }
+
+  // Pour ALL, l'API accepte désormais les erreurs partielles : les championnats
+  // disponibles restent utilisables même si une ligue est temporairement indisponible.
+  if (!response.ok || !body?.ok) {
+    throw new Error(body?.message || `Erreur API championnats (${response.status}).`);
+  }
+
+  const returnedCodes = new Set<string>(
+    Object.keys(body?.competitions ?? {}).map((code) => code.toUpperCase()),
+  );
+
+  return Object.entries(BONUS_COMPETITIONS).map(([code, info]) => ({
+    code,
+    name: info.name,
+    country: info.country,
+    available: returnedCodes.has(code),
+  }));
 }
-/* ============================================================
-   VERROUILLAGE DES PRONOSTICS
-   ============================================================ */
 
-export async function setMatchdayDeadline(
-  matchdayId: string,
-  deadline: string | null,
+export async function setCompetitionActive(
+  discovered: DiscoveredCompetition,
+  existingId: string | null,
+  active: boolean,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("matchdays")
-    .update({
-      deadline,
-      deadline_mode: "manual",
-    })
-    .eq("id", matchdayId);
+  // On conserve les colonnes historiques `code`/`name` si elles existent.
+  // Si le schéma possède external_code/is_active, elles sont également écrites.
+  if (existingId) {
+    const { error } = await supabase
+      .from("competitions")
+      .update({
+        name: discovered.name,
+        code: discovered.code,
+        external_code: discovered.code,
+        is_active: active,
+      })
+      .eq("id", existingId);
+    if (!error) return;
 
+    // Compatibilité avec un ancien schéma sans external_code/is_active.
+    const fallback = await supabase
+      .from("competitions")
+      .update({ name: discovered.name, code: discovered.code })
+      .eq("id", existingId);
+    if (fallback.error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from("competitions").insert({
+    name: discovered.name,
+    code: discovered.code,
+    external_code: discovered.code,
+    is_active: active,
+  });
+  if (!error) return;
+
+  const fallback = await supabase.from("competitions").insert({
+    name: discovered.name,
+    code: discovered.code,
+  });
+  if (fallback.error) throw error;
+}
+
+export async function syncCompetitionMatches(code: string): Promise<SyncSummary> {
+  const normalizedCode = String(code ?? "").toUpperCase();
+  if (!BONUS_COMPETITIONS[normalizedCode]) {
+    throw new Error(`Championnat bonus inconnu : ${normalizedCode}`);
+  }
+
+  const response = await fetch(`/api/ligue1/matchs?season=2026&competition=${encodeURIComponent(normalizedCode)}`, {
+    headers: { Accept: "application/json" },
+  });
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(`L'API ${normalizedCode} a renvoyé une réponse invalide (${response.status}).`);
+  }
+  if (!response.ok || !body?.ok) {
+    throw new Error(body?.message || `Erreur API ${normalizedCode} (${response.status}).`);
+  }
+
+  const apiMatches = Array.isArray(body?.matchs) ? body.matchs : [];
+  const summary: SyncSummary = { created: 0, updated: 0, skipped: 0, matchdaysCreated: 0, warnings: [], errors: [] };
+  if (!apiMatches.length) return summary;
+
+  const [teams, seasons, competitions, existingMatchdays, existingMatches] = await Promise.all([
+    getTeams(), getSeasons(), getCompetitions(), getMatchdays(), getMatches(),
+  ]);
+  const season = seasons.find((s) => s.code === "2026-2027" || s.name === "2026-2027") || seasons[0];
+  if (!season) throw new Error("La saison 2026-2027 est introuvable dans Supabase.");
+
+  const competition = competitions.find((c) =>
+    String(c.code ?? c.external_code ?? "").toUpperCase() === normalizedCode ||
+    normalize(c.name) === normalize(BONUS_COMPETITIONS[normalizedCode].name),
+  );
+  if (!competition) {
+    throw new Error(`La compétition ${BONUS_COMPETITIONS[normalizedCode].name} (${normalizedCode}) est absente de Supabase.`);
+  }
+
+  const matchdaysByNumber = new Map<number, Matchday>();
+  existingMatchdays
+    .filter((m) => m.season_id === season.id && m.competition_id === competition.id)
+    .forEach((m) => matchdaysByNumber.set(Number(m.number), m));
+
+  const matchesByFixture = new Map<number, Match>();
+  existingMatches.filter((m) => m.api_fixture_id != null).forEach((m) => matchesByFixture.set(Number(m.api_fixture_id), m));
+
+  for (const apiMatch of apiMatches) {
+    try {
+      const number = Number(apiMatch.journee);
+      const fixtureId = Number(apiMatch.apiFixtureId ?? String(apiMatch.id ?? "").replace(/^fd-/, ""));
+      if (!Number.isFinite(number) || number < 1 || !Number.isFinite(fixtureId)) {
+        summary.skipped++;
+        summary.warnings.push(`Match bonus ignoré : ${apiMatch.domicile ?? "?"} - ${apiMatch.exterieur ?? "?"}.`);
+        continue;
+      }
+
+      const home = teams.find((t) => teamMatches(t, apiMatch.domicile));
+      const away = teams.find((t) => teamMatches(t, apiMatch.exterieur));
+      const existing = matchesByFixture.get(fixtureId);
+
+      // Les anciennes données bonus peuvent déjà exister sans que les équipes
+      // étrangères soient dans `teams`. Dans ce cas on met à jour l'existant,
+      // mais on ne fabrique jamais de faux team_id.
+      if (!existing && (!home || !away)) {
+        summary.skipped++;
+        summary.warnings.push(`Équipe bonus introuvable : ${apiMatch.domicile} - ${apiMatch.exterieur}.`);
+        continue;
+      }
+
+      let matchday = matchdaysByNumber.get(number);
+      if (!matchday) {
+        const { data, error } = await supabase.from("matchdays").insert({
+          code: `J${number}`,
+          label: `Journée ${number}`,
+          number,
+          season_id: season.id,
+          competition_id: competition.id,
+          season: season.name,
+          is_open: false,
+          is_finished: false,
+          deadline: null,
+          deadline_mode: "manual",
+        }).select("*").single();
+        if (error) throw error;
+        matchday = data as Matchday;
+        matchdaysByNumber.set(number, matchday);
+        summary.matchdaysCreated++;
+      }
+
+      const kickoff = apiMatch.date && apiMatch.heure ? `${apiMatch.date}T${apiMatch.heure}:00Z` : null;
+      const payload: any = {
+        matchday_id: matchday.id,
+        matchday_code: `J${number}`,
+        matchday: `J${number}`,
+        match_day: number,
+        api_fixture_id: fixtureId,
+        kickoff,
+        kickoff_time: kickoff,
+        status: String(apiMatch.statut || "SCHEDULED").toLowerCase(),
+        finished: String(apiMatch.statut || "").toUpperCase() === "FINISHED",
+        home_score: apiMatch.scoreDomicile ?? null,
+        away_score: apiMatch.scoreExterieur ?? null,
+        match_type: normalizedCode,
+        is_bonus: true,
+        home_team: apiMatch.domicile,
+        away_team: apiMatch.exterieur,
+      };
+      if (home) payload.home_team_id = home.id;
+      if (away) payload.away_team_id = away.id;
+
+      if (existing) {
+        const { error } = await supabase.from("matches").update(payload).eq("id", existing.id);
+        if (error) throw error;
+        summary.updated++;
+      } else {
+        const { data, error } = await supabase.from("matches").insert(payload).select("*").single();
+        if (error) throw error;
+        if (data?.api_fixture_id != null) matchesByFixture.set(fixtureId, data as Match);
+        summary.created++;
+      }
+    } catch (error: any) {
+      summary.errors.push(`${apiMatch.domicile ?? "?"} - ${apiMatch.exterieur ?? "?"} : ${error?.message || error}`);
+    }
+  }
+
+  return summary;
+}
+
+// ============================================================
+// 9. VERROUILLAGE DES JOURNÉES
+// ============================================================
+export async function setMatchdayDeadline(id: string, deadline: string | null): Promise<void> {
+  const { error } = await supabase.from("matchdays").update({ deadline, deadline_mode: "manual" }).eq("id", id);
   if (error) throw error;
 }
 
-export async function setMatchdayAutoMinusOne(
-  matchdayId: string,
-): Promise<void> {
-  const { error } = await supabase
-    .from("matchdays")
-    .update({
-      deadline: null,
-      deadline_mode: "auto_minus_1",
-    })
-    .eq("id", matchdayId);
-
+export async function setMatchdayAutoMinusOne(id: string): Promise<void> {
+  const { data: md, error } = await supabase.from("matchdays").select("id, competition_id, season_id, number").eq("id", id).single();
   if (error) throw error;
+  const { data: matches, error: matchError } = await supabase.from("matches").select("kickoff").eq("matchday_id", id).not("kickoff", "is", null).order("kickoff", { ascending: true }).limit(1);
+  if (matchError) throw matchError;
+  const kickoff = matches?.[0]?.kickoff;
+  const deadline = kickoff ? new Date(new Date(kickoff).getTime() - 60_000).toISOString() : null;
+  const { error: updateError } = await supabase.from("matchdays").update({ deadline, deadline_mode: "auto_minus_1" }).eq("id", md.id);
+  if (updateError) throw updateError;
 }
 
-export async function clearMatchdayDeadline(
-  matchdayId: string,
-): Promise<void> {
-  const { error } = await supabase
-    .from("matchdays")
-    .update({
-      deadline: null,
-      deadline_mode: "manual",
-    })
-    .eq("id", matchdayId);
-
+export async function clearMatchdayDeadline(id: string): Promise<void> {
+  const { error } = await supabase.from("matchdays").update({ deadline: null, deadline_mode: "manual" }).eq("id", id);
   if (error) throw error;
 }
