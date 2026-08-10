@@ -147,14 +147,22 @@ function IndexPage() {
             b.total_points - a.total_points ||
             b.exact_scores - a.exact_scores ||
             a.predictions_count - b.predictions_count
-          )
-          // On attribue un rang (1er ex-aequo garde le même rang)
-          .map((row, idx, arr) => ({
-            ...row,
-            rank: idx === 0 ? 1 : arr[idx - 1].total_points === row.total_points ? arr[idx - 1].rank : idx + 1,
-          }));
+          );
 
-        setLeaderboard(normalizedRankings);
+        // On attribue un rang (1er ex-aequo garde le même rang) via un
+        // compteur courant plutôt qu'en indexant le tableau en cours de
+        // construction (arr[idx-1].rank plantait le typage : `rank` n'existe
+        // pas encore sur les éléments de `arr` au moment de ce callback).
+        let previousPoints: number | null = null;
+        let currentRank = 0;
+
+        const rankedRankings = normalizedRankings.map((row, idx) => {
+          if (previousPoints !== row.total_points) currentRank = idx + 1;
+          previousPoints = row.total_points;
+          return { ...row, rank: currentRank };
+        });
+
+        setLeaderboard(rankedRankings);
 
         // -------- Journée la plus récente terminée --------
         const finished = (matches || []).filter((m: any) =>
@@ -177,7 +185,7 @@ function IndexPage() {
         // -------- Stats personnelles --------
         if (user?.id) {
           const mine = (predictions || []).filter((p: any) => p.user_id === user.id);
-          const meRanking = normalizedRankings.find((r: any) => r.user_id === user.id);
+          const meRanking = rankedRankings.find((r: any) => r.user_id === user.id);
           const matchById = new Map((matches || []).map((m: any) => [String(m.id), m]));
           const points = mine.reduce((sum: number, p: any) => sum + Number(p.points || 0), 0);
           const exacts = mine.reduce((sum: number, p: any) => sum + (p.exact_score ? 1 : 0), 0);

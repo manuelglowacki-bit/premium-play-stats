@@ -377,6 +377,11 @@ function StatsPage() {
     },
   ];
 
+  // `supporters` est trié par count décroissant (voir loadStats) : le
+  // premier élément porte donc le maximum, utilisé pour calibrer la largeur
+  // relative des barres de la section "Communauté".
+  const maxSupporter = supporters[0]?.count || 1;
+
   return (
     <AppShell>
       <div className="relative min-h-full overflow-hidden bg-[#020914]">
