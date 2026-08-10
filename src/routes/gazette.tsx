@@ -1,16 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
-import { 
-  Newspaper, 
-  Sparkles, 
-  Trophy, 
-  Flame, 
-  ArrowRight, 
-  ChevronLeft, 
-  ChevronRight, 
-  Target, 
-  MessageSquare 
+import {
+  ArrowRight,
+  BarChart3,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Crown,
+  Flame,
+  Lightbulb,
+  Target,
+  TrendingUp,
+  Trophy,
+  Users,
+  Zap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -18,259 +23,1779 @@ export const Route = createFileRoute("/gazette")({
   head: () => ({
     meta: [
       { title: "La Gazette — Prono Ligue 1" },
-      { name: "description", content: "Le journal de bord et les indiscrétions de notre ligue de pronostics." },
+      {
+        name: "description",
+        content: "La Gazette de votre championnat de pronostics.",
+      },
     ],
   }),
   component: GazettePage,
 });
 
-const matchdaysGazette = ["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10", "J11", "J12", "J13", "J14"];
+const CALENDAR_KEY = "admin_journees";
+const PRONOS_KEY = "prono_lm_clean_pronos";
+const BONUS_BY_JOURNEE_KEY = "prono_lm_bonus_selected_by_journee";
+const OLD_BONUS_KEY = "prono_lm_bonus_selected";
+const FAVORITE_TEAM_KEY = "favoriteTeam";
+
+type StorageRow = {
+  user_id: string;
+  storage_key: string;
+  storage_value: string | null;
+};
+
+type Profile = {
+  id: string;
+  email?: string | null;
+  player_name?: string | null;
+  pseudo?: string | null;
+  avatar_url?: string | null;
+  account_status?: string | null;
+};
+
+type Journee = {
+  id: string;
+  number: number | string;
+  title: string;
+  matches: any[];
+  bonus: any[];
+};
+
+type PlayerStats = {
+  id: string;
+  name: string;
+  avatar: string;
+  total: number;
+  favoritePoints: number;
+  bonusPoints: number;
+  normalPoints: number;
+  favoriteExacts: number;
+  bonusExacts: number;
+  exacts: number;
+  attempts: number;
+  corrects: number;
+  successRate: number;
+  lastPoints: number;
+  byJournee: { journee: number; points: number }[];
+  rank: number;
+  oldRank: number;
+  evolution: number;
+};
+
+type DayMatch = {
+  match: any;
+  journee: Journee;
+  isBonus: boolean;
+};
+
+function parseJson<T>(value: any, fallback: T): T {
+  try {
+    if (!value) return fallback;
+    return typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    return fallback;
+  }
+}
+
+function clean(value: any) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function sameClub(a: any, b: any) {
+  const ca = clean(a);
+  const cb = clean(b);
+  return Boolean(ca && cb && (ca === cb || ca.includes(cb) || cb.includes(ca)));
+}
+
+function getTeamHome(match: any) {
+  return (
+    match?.home ??
+    match?.domicile ??
+    match?.equipeDomicile ??
+    match?.homeTeam ??
+    match?.club1 ??
+    match?.equipe1 ??
+    ""
+  );
+}
+
+function getTeamAway(match: any) {
+  return (
+    match?.away ??
+    match?.exterieur ??
+    match?.equipeExterieur ??
+    match?.awayTeam ??
+    match?.club2 ??
+    match?.equipe2 ??
+    ""
+  );
+}
+
+function getScoreHome(match: any) {
+  return (
+    match?.homeScore ??
+    match?.scoreHome ??
+    match?.score_domicile ??
+    match?.domicileScore ??
+    match?.result?.home ??
+    match?.home_score ??
+    null
+  );
+}
+
+function getScoreAway(match: any) {
+  return (
+    match?.awayScore ??
+    match?.scoreAway ??
+    match?.score_exterieur ??
+    match?.exterieurScore ??
+    match?.result?.away ??
+    match?.away_score ??
+    null
+  );
+}
+
+function hasScore(match: any) {
+  const h = Number(getScoreHome(match));
+  const a = Number(getScoreAway(match));
+  return Number.isFinite(h) && Number.isFinite(a);
+}
+
+function getResult1N2(home: any, away: any): "1" | "N" | "2" | null {
+  const h = Number(home);
+  const a = Number(away);
+  if (!Number.isFinite(h) || !Number.isFinite(a)) return null;
+  if (h > a) return "1";
+  if (h < a) return "2";
+  return "N";
+}
+
+function get1N2Prono(prono: any) {
+  if (!prono) return "";
+  return String(
+    prono?.result ??
+      prono?.pick ??
+      prono?.prediction ??
+      prono?.choice ??
+      prono?.outcome ??
+      ""
+  ).toUpperCase();
+}
+
+function getScorePronoHome(prono: any) {
+  return (
+    prono?.homeScore ??
+    prono?.home ??
+    prono?.scoreHome ??
+    prono?.pronoHome ??
+    prono?.domicile ??
+    prono?.scoreDomicile ??
+    ""
+  );
+}
+
+function getScorePronoAway(prono: any) {
+  return (
+    prono?.awayScore ??
+    prono?.away ??
+    prono?.scoreAway ??
+    prono?.pronoAway ??
+    prono?.exterieur ??
+    prono?.scoreExterieur ??
+    ""
+  );
+}
+
+function isScorePronoFilled(prono: any) {
+  if (!prono) return false;
+  const h = Number(getScorePronoHome(prono));
+  const a = Number(getScorePronoAway(prono));
+  return Number.isFinite(h) && Number.isFinite(a);
+}
+
+function computeNormalPoints(match: any, prono: any) {
+  const pick = get1N2Prono(prono);
+  if (!pick || !hasScore(match)) return { points: 0, correct: false };
+  const real = getResult1N2(getScoreHome(match), getScoreAway(match));
+  const correct = pick === real;
+  return { points: correct ? 1 : 0, correct };
+}
+
+function computeExactModePoints(
+  match: any,
+  prono: any,
+  type: "favorite" | "bonus"
+) {
+  if (!prono || !hasScore(match)) {
+    return { points: 0, exact: false, correct: false };
+  }
+
+  const realHome = Number(getScoreHome(match));
+  const realAway = Number(getScoreAway(match));
+  const pronoHome = Number(getScorePronoHome(prono));
+  const pronoAway = Number(getScorePronoAway(prono));
+
+  if (
+    [realHome, realAway, pronoHome, pronoAway].some(
+      (value) => !Number.isFinite(value)
+    )
+  ) {
+    return { points: 0, exact: false, correct: false };
+  }
+
+  const exact = realHome === pronoHome && realAway === pronoAway;
+  const correct =
+    getResult1N2(realHome, realAway) === getResult1N2(pronoHome, pronoAway);
+
+  if (type === "bonus") {
+    if (exact) return { points: 3, exact: true, correct: true };
+    if (correct) return { points: 2, exact: false, correct: true };
+    return { points: 0, exact: false, correct: false };
+  }
+
+  if (exact) return { points: 2, exact: true, correct: true };
+  if (correct) return { points: 1, exact: false, correct: true };
+  return { points: 0, exact: false, correct: false };
+}
+
+function getFavoriteTeamValue(value: any) {
+  if (!value) return "Non choisi";
+
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object") {
+      return (
+        parsed.favoriteTeam ??
+        parsed.club ??
+        parsed.team ??
+        parsed.equipe ??
+        Object.values(parsed).find(Boolean) ??
+        "Non choisi"
+      );
+    }
+  } catch {
+    return String(value);
+  }
+
+  return String(value);
+}
+
+function isFavoriteMatch(match: any, favoriteTeam: string) {
+  if (!favoriteTeam || favoriteTeam === "Non choisi") return false;
+  return (
+    sameClub(getTeamHome(match), favoriteTeam) ||
+    sameClub(getTeamAway(match), favoriteTeam)
+  );
+}
+
+function normalizeJournees(data: any): Journee[] {
+  if (!Array.isArray(data)) return [];
+
+  return data.map((j: any, index: number) => ({
+    ...j,
+    id: j.id || `j${index + 1}`,
+    number: j.number ?? j.numero ?? index + 1,
+    title: j.title || `J${j.number ?? j.numero ?? index + 1}`,
+    matches: Array.isArray(j.matches)
+      ? j.matches
+      : Array.isArray(j.matchs)
+        ? j.matchs
+        : [],
+    bonus: Array.isArray(j.bonus) ? j.bonus : [],
+  }));
+}
+
+function getMatchKeyCandidates(match: any) {
+  const values = [
+    match?.id,
+    match?.matchId,
+    match?.fixtureId,
+    match?.api_fixture_id,
+    `${getTeamHome(match)}vs${getTeamAway(match)}`,
+    `${clean(getTeamHome(match))}vs${clean(getTeamAway(match))}`,
+  ]
+    .filter(Boolean)
+    .map(String);
+
+  return [...new Set(values)];
+}
+
+function getPronoForMatch(playerJourneePronos: any, match: any) {
+  if (!playerJourneePronos || typeof playerJourneePronos !== "object") {
+    return null;
+  }
+
+  for (const key of getMatchKeyCandidates(match)) {
+    if (playerJourneePronos[key]) return playerJourneePronos[key];
+  }
+
+  const home = clean(getTeamHome(match));
+  const away = clean(getTeamAway(match));
+
+  for (const [key, value] of Object.entries(playerJourneePronos)) {
+    const cleanedKey = clean(key);
+    if (home && away && cleanedKey.includes(home) && cleanedKey.includes(away)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function getJourneePronos(pronos: any, journee: Journee) {
+  if (!pronos || typeof pronos !== "object") return {};
+
+  const candidates = [
+    journee.id,
+    String(journee.number),
+    `J${journee.number}`,
+    journee.title,
+  ].filter(Boolean);
+
+  for (const key of candidates) {
+    if (pronos[key] && typeof pronos[key] === "object") {
+      return pronos[key];
+    }
+  }
+
+  for (const [key, value] of Object.entries(pronos)) {
+    const c = clean(key);
+    if (
+      c === clean(journee.id) ||
+      c === clean(journee.title) ||
+      c === clean(`J${journee.number}`) ||
+      c === clean(String(journee.number))
+    ) {
+      return value;
+    }
+  }
+
+  return {};
+}
+
+function normalizeBonusChoice(value: any) {
+  if (!value) return "";
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object") {
+      return (
+        parsed.matchId ??
+        parsed.id ??
+        parsed.match ??
+        parsed.fixtureId ??
+        Object.values(parsed).find(Boolean) ??
+        ""
+      );
+    }
+  } catch {
+    return String(value);
+  }
+  return String(value);
+}
+
+function isSelectedBonusMatch(
+  selectedBonusId: any,
+  match: any
+) {
+  const selected = clean(normalizeBonusChoice(selectedBonusId));
+  if (!selected) return false;
+
+  return getMatchKeyCandidates(match).some((key) => {
+    const cleaned = clean(key);
+    return (
+      cleaned === selected ||
+      cleaned.includes(selected) ||
+      selected.includes(cleaned)
+    );
+  });
+}
+
+function sortRanking(
+  a: Omit<PlayerStats, "rank" | "oldRank" | "evolution">,
+  b: Omit<PlayerStats, "rank" | "oldRank" | "evolution">
+) {
+  return (
+    b.total - a.total ||
+    b.exacts - a.exacts ||
+    b.attempts - a.attempts ||
+    a.name.localeCompare(b.name, "fr")
+  );
+}
+
+function calculatePlayer(
+  profile: Profile,
+  storage: Record<string, string | null>,
+  journees: Journee[],
+  scoredJournees: number[],
+  lastJournee: number,
+  onlyBeforeLast = false
+): Omit<PlayerStats, "rank" | "oldRank" | "evolution"> {
+  const pronos = parseJson(storage[PRONOS_KEY], {});
+  const bonusByJournee = parseJson<Record<string, any>>(
+    storage[BONUS_BY_JOURNEE_KEY],
+    {}
+  );
+  const oldBonus = storage[OLD_BONUS_KEY] || "";
+  const favoriteTeam = getFavoriteTeamValue(storage[FAVORITE_TEAM_KEY]);
+
+  let total = 0;
+  let favoritePoints = 0;
+  let bonusPoints = 0;
+  let normalPoints = 0;
+  let favoriteExacts = 0;
+  let bonusExacts = 0;
+  let attempts = 0;
+  let corrects = 0;
+  let lastPoints = 0;
+
+  const byJournee = scoredJournees.map((num) => ({
+    journee: num,
+    points: 0,
+  }));
+
+  journees.forEach((journee) => {
+    const isLast = Number(journee.number) === Number(lastJournee);
+    if (onlyBeforeLast && isLast) return;
+
+    const playerJourneePronos = getJourneePronos(pronos, journee);
+    let dayPoints = 0;
+
+    (journee.matches || []).forEach((match) => {
+      if (!hasScore(match)) return;
+
+      const prono = getPronoForMatch(playerJourneePronos, match);
+      if (!prono) return;
+
+      const favorite = isFavoriteMatch(match, favoriteTeam);
+      const storedPoints = Number(prono?.points);
+
+      if (Number.isFinite(storedPoints)) {
+        attempts += 1;
+        if (storedPoints > 0) corrects += 1;
+
+        const exact = Boolean(prono?.exact_score ?? prono?.exactScore);
+        if (favorite && exact) favoriteExacts += 1;
+
+        total += storedPoints;
+        if (favorite) favoritePoints += storedPoints;
+        else normalPoints += storedPoints;
+        dayPoints += storedPoints;
+        return;
+      }
+
+      if (favorite) {
+        if (!isScorePronoFilled(prono)) return;
+
+        const result = computeExactModePoints(match, prono, "favorite");
+        attempts += 1;
+        if (result.correct) corrects += 1;
+        if (result.exact) favoriteExacts += 1;
+
+        total += result.points;
+        favoritePoints += result.points;
+        dayPoints += result.points;
+      } else {
+        if (!get1N2Prono(prono)) return;
+
+        const result = computeNormalPoints(match, prono);
+        attempts += 1;
+        if (result.correct) corrects += 1;
+
+        total += result.points;
+        normalPoints += result.points;
+        dayPoints += result.points;
+      }
+    });
+
+    (journee.bonus || []).forEach((match) => {
+      if (!hasScore(match)) return;
+
+      const selectedBonusId =
+        bonusByJournee[journee.id] || oldBonus;
+
+      if (!isSelectedBonusMatch(selectedBonusId, match)) return;
+
+      const prono = getPronoForMatch(playerJourneePronos, match);
+      if (!prono) return;
+
+      const storedPoints = Number(prono?.points);
+
+      if (Number.isFinite(storedPoints)) {
+        attempts += 1;
+        if (storedPoints > 0) corrects += 1;
+
+        if (Boolean(prono?.exact_score ?? prono?.exactScore)) {
+          bonusExacts += 1;
+        }
+
+        total += storedPoints;
+        bonusPoints += storedPoints;
+        dayPoints += storedPoints;
+        return;
+      }
+
+      if (!isScorePronoFilled(prono)) return;
+
+      const result = computeExactModePoints(match, prono, "bonus");
+
+      attempts += 1;
+      if (result.correct) corrects += 1;
+      if (result.exact) bonusExacts += 1;
+
+      total += result.points;
+      bonusPoints += result.points;
+      dayPoints += result.points;
+    });
+
+    const day = byJournee.find(
+      (item) => Number(item.journee) === Number(journee.number)
+    );
+    if (day) day.points += dayPoints;
+
+    if (isLast) lastPoints += dayPoints;
+  });
+
+  const name =
+    profile.pseudo ||
+    profile.player_name ||
+    profile.email?.split("@")[0] ||
+    "Joueur";
+
+  return {
+    id: profile.id,
+    name,
+    avatar: profile.avatar_url || "",
+    total,
+    favoritePoints,
+    bonusPoints,
+    normalPoints,
+    favoriteExacts,
+    bonusExacts,
+    exacts: favoriteExacts + bonusExacts,
+    attempts,
+    corrects,
+    successRate: attempts ? Math.round((corrects / attempts) * 100) : 0,
+    lastPoints,
+    byJournee,
+  };
+}
 
 function GazettePage() {
-  const [selectedDay, setSelectedDay] = useState(0); // J1 par défaut pour le début de saison
-  const [supportersStats, setSupportersStats] = useState<{ favorite_team: string; count: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [journees, setJournees] = useState<Journee[]>([]);
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [storageRows, setStorageRows] = useState<StorageRow[]>([]);
+
   const scrollerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    async function fetchSupporters() {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('favorite_team')
-        .not('favorite_team', 'is', null);
+  const storageByUser = useMemo(() => {
+    const map: Record<string, Record<string, string | null>> = {};
 
-      if (!error && data) {
-        // Grouper et compter les supporters par équipe
-        const counts: Record<string, number> = {};
-        data.forEach(row => {
-          if (row.favorite_team) {
-            counts[row.favorite_team] = (counts[row.favorite_team] || 0) + 1;
-          }
-        });
-        const formatted = Object.entries(counts)
-          .map(([favorite_team, count]) => ({ favorite_team, count }))
-          .sort((a, b) => b.count - a.count);
-        setSupportersStats(formatted);
+    storageRows.forEach((row) => {
+      if (!map[row.user_id]) map[row.user_id] = {};
+      map[row.user_id][row.storage_key] = row.storage_value;
+    });
+
+    return map;
+  }, [storageRows]);
+
+  async function loadData(silent = false) {
+    if (!silent) setLoading(true);
+    setError("");
+
+    try {
+      let calendar = parseJson<any[]>(
+        localStorage.getItem(CALENDAR_KEY),
+        []
+      );
+
+      if (!calendar.length) {
+        const { data, error: calendarError } = await supabase
+          .from("app_settings")
+          .select("setting_value")
+          .eq("setting_key", CALENDAR_KEY)
+          .maybeSingle();
+
+        if (calendarError) throw calendarError;
+        calendar = parseJson<any[]>(data?.setting_value, []);
       }
+
+      const [
+        { data: profileData, error: profileError },
+        { data: predictionData, error: predictionError },
+      ] = await Promise.all([
+        // IMPORTANT : select("*") évite les anciennes colonnes
+        // player_name / account_status qui n'existent plus dans la base.
+        supabase
+          .from("profiles")
+          .select("*")
+          .order("pseudo", { ascending: true, nullsFirst: false }),
+        // Les pronostics sont maintenant dans predictions.
+        supabase
+          .from("predictions")
+          .select("*"),
+      ]);
+
+      if (profileError) throw profileError;
+      if (predictionError) throw predictionError;
+
+      const normalized = normalizeJournees(calendar);
+      const profilesLoaded = (profileData || []) as Profile[];
+      const predictions = predictionData || [];
+
+      // Index de tous les matchs présents dans le calendrier Gazette.
+      const matchIndex = new Map<string, { match: any; journee: Journee; isBonus: boolean }>();
+
+      normalized.forEach((journee) => {
+        (journee.matches || []).forEach((match) => {
+          getMatchKeyCandidates(match).forEach((key) => {
+            matchIndex.set(String(key), { match, journee, isBonus: false });
+          });
+        });
+
+        (journee.bonus || []).forEach((match) => {
+          getMatchKeyCandidates(match).forEach((key) => {
+            matchIndex.set(String(key), { match, journee, isBonus: true });
+          });
+        });
+      });
+
+      function findCalendarMatch(prediction: any) {
+        const directId = prediction?.match_id ?? prediction?.matchId ?? prediction?.fixtureId;
+        if (directId && matchIndex.has(String(directId))) {
+          return matchIndex.get(String(directId));
+        }
+
+        const home = clean(
+          prediction?.home ??
+            prediction?.home_team ??
+            prediction?.homeTeam ??
+            prediction?.domicile ??
+            ""
+        );
+        const away = clean(
+          prediction?.away ??
+            prediction?.away_team ??
+            prediction?.awayTeam ??
+            prediction?.exterieur ??
+            ""
+        );
+
+        if (!home || !away) return undefined;
+
+        for (const entry of matchIndex.values()) {
+          const entryHome = clean(getTeamHome(entry.match));
+          const entryAway = clean(getTeamAway(entry.match));
+          if (
+            (entryHome === home || entryHome.includes(home) || home.includes(entryHome)) &&
+            (entryAway === away || entryAway.includes(away) || away.includes(entryAway))
+          ) {
+            return entry;
+          }
+        }
+
+        return undefined;
+      }
+
+      // Recréation d'un petit adaptateur interne pour conserver exactement
+      // toute la logique/design de la Gazette existante, sans la table
+      // user_prono_storage.
+      const storageMap: Record<string, Record<string, any>> = {};
+
+      profilesLoaded.forEach((profile) => {
+        storageMap[profile.id] = {
+          pronos: {},
+          bonusByJournee: {},
+          favoriteTeam:
+            profile.favorite_team ??
+            profile.favorite_team_id ??
+            "Non choisi",
+        };
+      });
+
+      predictions.forEach((prediction: any) => {
+        const userId = prediction?.user_id;
+        if (!userId || !storageMap[userId]) return;
+
+        const located = findCalendarMatch(prediction);
+        if (!located) return;
+
+        const match = located.match;
+        const journee = located.journee;
+
+        if (!storageMap[userId].pronos[journee.id]) {
+          storageMap[userId].pronos[journee.id] = {};
+        }
+
+        const key =
+          prediction?.match_id ??
+          prediction?.matchId ??
+          prediction?.fixtureId ??
+          getMatchKeyCandidates(match)[0];
+
+        const prono = {
+          ...prediction,
+          pick:
+            prediction?.pick ??
+            prediction?.result ??
+            prediction?.prediction ??
+            prediction?.choice ??
+            "",
+          points:
+            prediction?.points === null || prediction?.points === undefined
+              ? undefined
+              : Number(prediction.points),
+          exact_score:
+            prediction?.exact_score ??
+            prediction?.exactScore ??
+            false,
+          bonus_used:
+            prediction?.bonus_used ??
+            prediction?.bonusUsed ??
+            false,
+          homeScore:
+            prediction?.homeScore ??
+            prediction?.predicted_home_score ??
+            prediction?.prediction_home_score ??
+            prediction?.scoreHome ??
+            prediction?.home ??
+            undefined,
+          awayScore:
+            prediction?.awayScore ??
+            prediction?.predicted_away_score ??
+            prediction?.prediction_away_score ??
+            prediction?.scoreAway ??
+            prediction?.away ??
+            undefined,
+        };
+
+        storageMap[userId].pronos[journee.id][String(key)] = prono;
+
+        if (prono.bonus_used) {
+          storageMap[userId].bonusByJournee[journee.id] = String(key);
+        }
+      });
+
+      const syntheticStorageRows: StorageRow[] = [];
+
+      profilesLoaded.forEach((profile) => {
+        const user = storageMap[profile.id] || {
+          pronos: {},
+          bonusByJournee: {},
+          favoriteTeam: "Non choisi",
+        };
+
+        syntheticStorageRows.push(
+          {
+            user_id: profile.id,
+            storage_key: PRONOS_KEY,
+            storage_value: JSON.stringify(user.pronos),
+          },
+          {
+            user_id: profile.id,
+            storage_key: BONUS_BY_JOURNEE_KEY,
+            storage_value: JSON.stringify(user.bonusByJournee),
+          },
+          {
+            user_id: profile.id,
+            storage_key: FAVORITE_TEAM_KEY,
+            storage_value: JSON.stringify(user.favoriteTeam),
+          }
+        );
+      });
+
+      setJournees(normalized);
+      setProfiles(profilesLoaded);
+      setStorageRows(syntheticStorageRows);
+
+      if (normalized.length) {
+        const scored = normalized.filter((journee) =>
+          [...journee.matches, ...journee.bonus].some(hasScore)
+        );
+
+        const lastScored = scored.length - 1;
+        setSelectedDayIndex(
+          Math.max(
+            0,
+            normalized.indexOf(scored[lastScored] || normalized[0])
+          )
+        );
+      }
+    } catch (err: any) {
+      setError(err?.message || "Impossible de charger les statistiques.");
+    } finally {
+      setLoading(false);
     }
-    fetchSupporters();
+  }
+
+  useEffect(() => {
+    loadData();
+    const interval = window.setInterval(() => loadData(true), 300000);
+    return () => window.clearInterval(interval);
   }, []);
 
-  // Génération de la phrase éditoriale dynamique de début de saison (Phase 7)
-  const renderSeasonIntro = () => {
-    if (supportersStats.length === 0) {
-      return "Cette saison, la course aux pronostics s'annonce palpitante entre tous les passionnés !";
-    }
-    const parts = supportersStats.map(s => {
-      const teamName = s.favorite_team.toUpperCase();
-      const prefix = teamName === "OM" ? "l'OM" : teamName === "PSG" ? "le PSG" : `le ${s.favorite_team}`;
-      return `${s.count} ${s.count > 1 ? "joueurs soutiennent" : "joueur soutient"} ${prefix}`;
+  const selectedJournee = journees[selectedDayIndex];
+
+  const scoredJournees = useMemo(
+    () =>
+      [...new Set(
+        journees
+          .filter((j) => [...j.matches, ...j.bonus].some(hasScore))
+          .map((j) => Number(j.number))
+          .filter(Boolean)
+      )].sort((a, b) => a - b),
+    [journees]
+  );
+
+  const lastJournee = scoredJournees[scoredJournees.length - 1] || 1;
+
+  const allStats = useMemo(() => {
+    const active = profiles;
+
+    const current = active
+      .map((profile) =>
+        calculatePlayer(
+          profile,
+          storageByUser[profile.id] || {},
+          journees,
+          scoredJournees,
+          lastJournee
+        )
+      )
+      .sort(sortRanking)
+      .map((item, index) => ({ ...item, rank: index + 1 }));
+
+    const beforeLast = active
+      .map((profile) =>
+        calculatePlayer(
+          profile,
+          storageByUser[profile.id] || {},
+          journees,
+          scoredJournees,
+          lastJournee,
+          true
+        )
+      )
+      .sort(sortRanking)
+      .map((item, index) => ({
+        id: item.id,
+        oldRank: index + 1,
+      }));
+
+    return current.map((item) => {
+      const old = beforeLast.find((entry) => entry.id === item.id);
+      const oldRank = old?.oldRank || item.rank;
+
+      return {
+        ...item,
+        oldRank,
+        evolution: oldRank - item.rank,
+      };
     });
-    
-    if (parts.length === 1) return `Cette saison, ${parts[0]}...`;
-    if (parts.length === 2) return `Cette saison, ${parts[0]} et ${parts[1]}...`;
-    return `Cette saison, ${parts.slice(0, -1).join(", ")}, et ${parts[parts.length - 1]}...`;
+  }, [
+    profiles,
+    storageByUser,
+    journees,
+    scoredJournees,
+    lastJournee,
+  ]);
+
+  const selectedDayMatches = useMemo<DayMatch[]>(
+    () =>
+      selectedJournee
+        ? [
+            ...selectedJournee.matches.map((match) => ({
+              match,
+              journee: selectedJournee,
+              isBonus: false,
+            })),
+            ...selectedJournee.bonus.map((match) => ({
+              match,
+              journee: selectedJournee,
+              isBonus: true,
+            })),
+          ].filter(({ match }) => hasScore(match))
+        : [],
+    [selectedJournee]
+  );
+
+  const dayPredictionStats = useMemo(() => {
+    const distribution = {
+      "1": 0,
+      N: 0,
+      "2": 0,
+    };
+
+    let totalPredictions = 0;
+    let totalExact = 0;
+
+    const matchRows: {
+      dayMatch: DayMatch;
+      picks: { result: string; exact: boolean }[];
+    }[] = [];
+
+    profiles
+
+      .forEach((profile) => {
+        const storage = storageByUser[profile.id] || {};
+        const pronos = parseJson(storage[PRONOS_KEY], {});
+        const playerJourneePronos = selectedJournee
+          ? getJourneePronos(pronos, selectedJournee)
+          : {};
+
+        selectedDayMatches.forEach((dayMatch) => {
+          const prono = getPronoForMatch(
+            playerJourneePronos,
+            dayMatch.match
+          );
+          if (!prono) return;
+
+          const storedPoints = Number(prono?.points);
+          const result = Number.isFinite(storedPoints)
+            ? {
+                points: storedPoints,
+                exact: Boolean(prono?.exact_score ?? prono?.exactScore),
+                correct: storedPoints > 0,
+              }
+            : dayMatch.isBonus
+              ? computeExactModePoints(dayMatch.match, prono, "bonus")
+              : isFavoriteMatch(
+                    dayMatch.match,
+                    getFavoriteTeamValue(storage[FAVORITE_TEAM_KEY])
+                  )
+                ? computeExactModePoints(
+                    dayMatch.match,
+                    prono,
+                    "favorite"
+                  )
+                : computeNormalPoints(dayMatch.match, prono);
+
+          const pick =
+            get1N2Prono(prono) ||
+            getResult1N2(
+              getScorePronoHome(prono),
+              getScorePronoAway(prono)
+            );
+
+          if (pick === "1" || pick === "N" || pick === "2") {
+            distribution[pick] += 1;
+            totalPredictions += 1;
+          }
+
+          if (Boolean((result as any).exact)) totalExact += 1;
+
+          let row = matchRows.find(
+            (entry) => entry.dayMatch.match === dayMatch.match
+          );
+          if (!row) {
+            row = { dayMatch, picks: [] };
+            matchRows.push(row);
+          }
+
+          row.picks.push({
+            result: pick || "",
+            exact: Boolean((result as any).exact),
+          });
+        });
+      });
+
+    return {
+      distribution,
+      totalPredictions,
+      totalExact,
+      matchRows,
+    };
+  }, [
+    profiles,
+    storageByUser,
+    selectedJournee,
+    selectedDayMatches,
+  ]);
+
+  const playerDayPoints = useMemo(() => {
+    if (!selectedJournee) return new Map<string, number>();
+
+    const map = new Map<string, number>();
+
+    profiles
+
+      .forEach((profile) => {
+        const storage = storageByUser[profile.id] || {};
+        const pronos = parseJson(storage[PRONOS_KEY], {});
+        const bonusByJournee = parseJson<Record<string, any>>(
+          storage[BONUS_BY_JOURNEE_KEY],
+          {}
+        );
+        const oldBonus = storage[OLD_BONUS_KEY] || "";
+        const favoriteTeam = getFavoriteTeamValue(
+          storage[FAVORITE_TEAM_KEY]
+        );
+        const playerJourneePronos = getJourneePronos(
+          pronos,
+          selectedJournee
+        );
+
+        let points = 0;
+
+        selectedJournee.matches.forEach((match) => {
+          if (!hasScore(match)) return;
+
+          const prono = getPronoForMatch(
+            playerJourneePronos,
+            match
+          );
+          const storedPoints = Number(prono?.points);
+
+          if (Number.isFinite(storedPoints)) {
+            points += storedPoints;
+          } else if (isFavoriteMatch(match, favoriteTeam)) {
+            if (isScorePronoFilled(prono)) {
+              points += computeExactModePoints(
+                match,
+                prono,
+                "favorite"
+              ).points;
+            }
+          } else if (get1N2Prono(prono)) {
+            points += computeNormalPoints(match, prono).points;
+          }
+        });
+
+        selectedJournee.bonus.forEach((match) => {
+          if (!hasScore(match)) return;
+
+          const selectedBonusId =
+            bonusByJournee[selectedJournee.id] || oldBonus;
+
+          if (!isSelectedBonusMatch(selectedBonusId, match)) return;
+
+          const prono = getPronoForMatch(
+            playerJourneePronos,
+            match
+          );
+
+          const storedPoints = Number(prono?.points);
+
+          if (Number.isFinite(storedPoints)) {
+            points += storedPoints;
+          } else if (isScorePronoFilled(prono)) {
+            points += computeExactModePoints(
+              match,
+              prono,
+              "bonus"
+            ).points;
+          }
+        });
+
+        map.set(profile.id, points);
+      });
+
+    return map;
+  }, [
+    profiles,
+    storageByUser,
+    selectedJournee,
+  ]);
+
+  const dynamicStats = useMemo(() => {
+    const matches = dayPredictionStats.matchRows;
+
+    const bestExact = [...allStats]
+      .sort(
+        (a, b) =>
+          (b.byJournee.find(
+            (d) => Number(d.journee) === Number(selectedJournee?.number)
+          )?.points || 0) -
+            (a.byJournee.find(
+              (d) => Number(d.journee) === Number(selectedJournee?.number)
+            )?.points || 0) ||
+          b.exacts - a.exacts
+      )[0];
+
+    const bestExactDay = [...allStats]
+      .map((player) => {
+        const day = player.byJournee.find(
+          (item) => Number(item.journee) === Number(selectedJournee?.number)
+        );
+        return {
+          player,
+          dayPoints: day?.points || 0,
+        };
+      })
+      .sort((a, b) => b.dayPoints - a.dayPoints)[0]?.player;
+
+    const bestExactCount = [...allStats]
+      .map((player) => {
+        const storage = storageByUser[player.id] || {};
+        const pronos = parseJson(storage[PRONOS_KEY], {});
+        const jp = selectedJournee
+          ? getJourneePronos(pronos, selectedJournee)
+          : {};
+
+        let exacts = 0;
+        selectedDayMatches.forEach(({ match, isBonus }) => {
+          const prono = getPronoForMatch(jp, match);
+          if (!prono) return;
+
+          const result = Number.isFinite(Number(prono?.points))
+            ? {
+                exact: Boolean(prono?.exact_score ?? prono?.exactScore),
+              }
+            : isBonus
+              ? computeExactModePoints(match, prono, "bonus")
+              : isFavoriteMatch(
+                    match,
+                    getFavoriteTeamValue(storage[FAVORITE_TEAM_KEY])
+                  )
+                ? computeExactModePoints(match, prono, "favorite")
+                : { exact: false };
+
+          if (result.exact) exacts += 1;
+        });
+
+        return { player, exacts };
+      })
+      .sort((a, b) => b.exacts - a.exacts)[0];
+
+    const remontee = [...allStats].sort(
+      (a, b) => b.evolution - a.evolution
+    )[0];
+
+    const totalVotes = dayPredictionStats.totalPredictions;
+    const homePct = totalVotes
+      ? Math.round((dayPredictionStats.distribution["1"] / totalVotes) * 100)
+      : 0;
+    const drawPct = totalVotes
+      ? Math.round((dayPredictionStats.distribution.N / totalVotes) * 100)
+      : 0;
+    const awayPct = Math.max(0, 100 - homePct - drawPct);
+
+    const surpriseCandidates = matches
+      .map((row) => {
+        const actual = getResult1N2(
+          getScoreHome(row.dayMatch.match),
+          getScoreAway(row.dayMatch.match)
+        );
+
+        const votes = row.picks.filter(
+          (pick) => pick.result === actual
+        ).length;
+
+        return {
+          ...row,
+          actual,
+          votes,
+          percentage: row.picks.length
+            ? Math.round((votes / row.picks.length) * 100)
+            : 100,
+        };
+      })
+      .filter((row) => row.actual)
+      .sort((a, b) => a.percentage - b.percentage)[0];
+
+    const flopCandidates = matches
+      .map((row) => {
+        const lost = row.picks.filter((pick) => !pick.exact).length;
+        return {
+          ...row,
+          lost,
+        };
+      })
+      .sort((a, b) => b.lost - a.lost)[0];
+
+    return {
+      bestExactPlayer:
+        bestExactCount?.exacts
+          ? bestExactCount.player
+          : bestExactDay || bestExact || null,
+      bestExactCount: bestExactCount?.exacts || 0,
+      remontee,
+      homePct,
+      drawPct,
+      awayPct,
+      surprise: surpriseCandidates || null,
+      flop: flopCandidates || null,
+      totalVotes,
+      totalExact: dayPredictionStats.totalExact,
+    };
+  }, [
+    allStats,
+    dayPredictionStats,
+    selectedJournee,
+    selectedDayMatches,
+    storageByUser,
+  ]);
+
+  const supportersStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+
+    profiles
+
+      .forEach((profile) => {
+        const storage = storageByUser[profile.id] || {};
+        const team = getFavoriteTeamValue(
+          storage[FAVORITE_TEAM_KEY]
+        );
+
+        if (team && team !== "Non choisi") {
+          counts[team] = (counts[team] || 0) + 1;
+        }
+      });
+
+    return Object.entries(counts)
+      .map(([team, count]) => ({ team, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [profiles, storageByUser]);
+
+  const topSupporterText = supportersStats.length
+    ? supportersStats
+        .map(
+          ({ team, count }) =>
+            `${count} ${count > 1 ? "joueurs" : "joueur"} pour ${team}`
+        )
+        .join(" • ")
+    : "Les données des supporters apparaîtront dès que les équipes de cœur seront renseignées.";
+
+  const scroll = (direction: -1 | 1) => {
+    scrollerRef.current?.scrollBy({
+      left: direction * 240,
+      behavior: "smooth",
+    });
   };
 
-  const scroll = (dir: -1 | 1) => {
-    scrollerRef.current?.scrollBy({ left: dir * 140, behavior: "smooth" });
+  const nextDay = journees[selectedDayIndex + 1]?.title || "—";
+
+  const cardData = useMemo(() => {
+    const surprise = dynamicStats.surprise;
+    const flop = dynamicStats.flop;
+    const remontee = dynamicStats.remontee;
+    const best = dynamicStats.bestExactPlayer;
+
+    const surpriseHome = surprise
+      ? getTeamHome(surprise.dayMatch.match)
+      : "—";
+    const surpriseAway = surprise
+      ? getTeamAway(surprise.dayMatch.match)
+      : "—";
+
+    const flopHome = flop ? getTeamHome(flop.dayMatch.match) : "—";
+    const flopAway = flop ? getTeamAway(flop.dayMatch.match) : "—";
+
+    const flopScore = flop
+      ? `${getScoreHome(flop.dayMatch.match)}–${getScoreAway(
+          flop.dayMatch.match
+        )}`
+      : "—";
+
+    return {
+      chiffre: {
+        value: `${dynamicStats.homePct}%`,
+        text: (
+          <>
+            des pronostics indiquent une
+            <br />
+            <span className="text-emerald-300">
+              victoire à domicile.
+            </span>
+          </>
+        ),
+      },
+      surprise: {
+        value: `${surprise?.percentage ?? 0}%`,
+        text: (
+          <>
+            seulement {surprise?.percentage ?? 0}% avaient
+            <br />
+            trouvé le résultat{" "}
+            <span className="text-amber-300">
+              {surprise ? `${surpriseHome} ${surprise.actual}` : "surprise"}.
+            </span>
+          </>
+        ),
+        teams: `${surpriseHome} — ${surpriseAway}`,
+      },
+      flop: {
+        value: flopScore,
+        text: (
+          <>
+            <span className="font-bold text-white">
+              {flopHome} — {flopAway}
+            </span>
+            <br />
+            le match qui a fait perdre
+            <br />
+            le plus de points.
+          </>
+        ),
+      },
+      remontee: {
+        value: `${Math.max(0, remontee?.evolution || 0) > 0 ? "+" : ""}${remontee?.evolution || 0}`,
+        suffix: "PLACES",
+        text: (
+          <>
+            {remontee?.name || "—"} gagne{" "}
+            <span className="text-emerald-300">
+              {Math.max(0, remontee?.evolution || 0)} place(s)
+            </span>
+            <br />
+            au classement.
+          </>
+        ),
+      },
+      exact: {
+        value: String(dynamicStats.bestExactCount),
+        text: (
+          <>
+            {best?.name || "Aucun joueur"}{" "}
+            {dynamicStats.bestExactCount > 1
+              ? "a trouvé"
+              : "a trouvé"}{" "}
+            {dynamicStats.bestExactCount} score(s) exact(s)
+            <br />
+            cette journée.
+          </>
+        ),
+      },
+    };
+  }, [dynamicStats]);
+
+  const donut = {
+    home: dynamicStats.homePct,
+    draw: dynamicStats.drawPct,
+    away: dynamicStats.awayPct,
   };
+
+  const circumference = 2 * Math.PI * 47;
+  const homeDash = (donut.home / 100) * circumference;
+  const drawDash = (donut.draw / 100) * circumference;
+  const awayDash = (donut.away / 100) * circumference;
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl space-y-8 pb-32">
+      <main className="relative mx-auto max-w-6xl overflow-hidden pb-24">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+        >
+          <div className="absolute inset-0 bg-[#030914]" />
+          <div
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: "url('/background-l1.png')" }}
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(2,8,18,.72),#030914_32%,#030914_100%)]" />
+        </div>
 
-        {/* ================= EN-TÊTE GAZETTE ================= */}
-        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 shadow-[0_0_50px_rgba(0,0,0,0.7)]">
-          <div className="absolute top-0 right-0 w-full md:w-1/2 h-full bg-gradient-to-l from-emerald-500/10 to-transparent pointer-events-none" />
-
-          <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
-            <div className="space-y-2">
-              <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 font-bold">
-                SAISON 2026—2027
-              </span>
+        <div className="relative z-10 px-3 pt-4 md:px-5 md:pt-6">
+          {/* HEADER */}
+          <section
+            className="relative overflow-hidden rounded-[28px] border border-white/10 bg-[#07111e]"
+            style={{
+              backgroundImage: "url('/bloc%20la%20gazette.png')",
+              backgroundSize: "cover",
+              backgroundPosition: "center center",
+              backgroundRepeat: "no-repeat",
+            }}
+          >
+            <div className="relative flex min-h-[155px] items-center justify-between gap-6 px-5 py-7 md:px-8">
               <div className="flex items-center gap-3">
-                <div className="grid size-12 place-items-center rounded-2xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                  <Newspaper size={24} />
+                <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-black/10">
+                  <img
+                    src="/logo%20ligue%201%20white.png"
+                    alt="Ligue 1"
+                    className="h-10 w-auto object-contain"
+                  />
                 </div>
-                <h1 className="font-display text-3xl md:text-4xl text-white tracking-tight">
-                  La Gazette
-                </h1>
+
+                <div>
+                  <h1 className="font-display text-4xl font-black uppercase tracking-[-0.03em] text-white md:text-6xl">
+                    La Gazette
+                  </h1>
+                  <p className="mt-2 max-w-xl text-sm leading-5 text-slate-400">
+                    Toute l'actualité, les analyses et les tendances
+                    <br />
+                    de votre saison de <span className="text-lime-300">Ligue 1.</span>
+                  </p>
+                </div>
               </div>
-              <p className="text-sm text-slate-400">
-                Ce qu'il faut retenir de la journée, vu depuis la ligue.
-              </p>
+
+              <div className="hidden text-right sm:block">
+                <div className="font-mono text-[9px] tracking-[.25em] text-slate-600">
+                  ÉDITION
+                </div>
+                <div className="mt-1 font-display text-4xl font-black text-white">
+                  {selectedJournee?.title || "—"}
+                </div>
+                <div className="mt-1 flex items-center justify-end gap-2 font-mono text-[9px] font-bold tracking-widest text-emerald-400">
+                  <span className="size-1.5 rounded-full bg-emerald-400" />
+                  {loading ? "CHARGEMENT" : "EN LIGNE"}
+                </div>
+              </div>
             </div>
+          </section>
 
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-[#060b16] px-4 py-2 font-mono text-xs text-slate-300 shadow-inner">
-              <span className="size-2 rounded-full bg-blue-500 animate-pulse" />
-              ÉDITION {matchdaysGazette[selectedDay]} EN LIGNE
-            </div>
-          </div>
-        </section>
-
-        {/* ================= SÉLECTEUR DE JOURNÉE HORIZONTAL ================= */}
-        <section className="rounded-3xl border border-slate-800 bg-[#0d1322] p-4 shadow-[0_0_30px_rgba(0,0,0,0.5)] sm:p-5">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => scroll(-1)}
-              className="tap grid size-10 shrink-0 place-items-center rounded-2xl border border-slate-800 bg-[#060b16] text-slate-400 transition-colors hover:border-emerald-500/40 hover:text-emerald-400"
-              aria-label="Précédent"
+          {/* SELECTEUR */}
+          {journees.length > 0 && (
+            <section
+              className="relative mt-5 overflow-hidden rounded-[28px] border border-white/10 bg-[#07111e]"
+              style={{
+                backgroundImage: "url('/bloc%20la%20gazette.png')",
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
             >
-              <ChevronLeft className="size-4" />
-            </button>
+              <div className="relative px-4 py-5 md:px-7 md:py-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="font-mono text-[9px] font-bold tracking-[.22em] text-slate-300 md:text-[10px]">
+                    SÉLECTIONNE TA JOURNÉE
+                  </div>
+                  <div className="hidden items-center gap-2 sm:flex">
+                    <span className="size-1.5 rounded-full bg-lime-300" />
+                    <span className="font-mono text-[8px] font-bold tracking-[.16em] text-lime-300">
+                      STATS EN DIRECT
+                    </span>
+                  </div>
+                </div>
 
-            <div
-              ref={scrollerRef}
-              className="flex flex-1 gap-2.5 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden py-1"
-            >
-              {matchdaysGazette.map((j, i) => {
-                const active = i === selectedDay;
-                return (
+                <div className="flex items-center gap-2 md:gap-3">
                   <button
-                    key={j}
-                    onClick={() => setSelectedDay(i)}
-                    className={`tap flex shrink-0 items-center justify-center rounded-2xl border px-6 py-3 font-display text-sm font-bold transition-all ${
-                      active
-                        ? "border-emerald-400 bg-emerald-400 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.3)]"
-                        : "border-slate-800 bg-[#060b16] text-slate-400 hover:border-slate-700 hover:text-white hover:bg-slate-900/60"
-                    }`}
+                    type="button"
+                    onClick={() => scroll(-1)}
+                    aria-label="Journée précédente"
+                    className="flex size-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-[#07111e]/80 text-slate-400 transition hover:border-white/20 hover:text-white"
                   >
-                    {j}
+                    <ChevronLeft className="size-5" />
                   </button>
-                );
-              })}
-            </div>
 
-            <button
-              onClick={() => scroll(1)}
-              className="tap grid size-10 shrink-0 place-items-center rounded-2xl border border-slate-800 bg-[#060b16] text-slate-400 transition-colors hover:border-emerald-500/40 hover:text-emerald-400"
-              aria-label="Suivant"
-            >
-              <ChevronRight className="size-4" />
-            </button>
-          </div>
-        </section>
+                  <div
+                    ref={scrollerRef}
+                    className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    <div className="flex min-w-max gap-2.5 md:gap-3">
+                      {journees.map((journee, index) => {
+                        const active = index === selectedDayIndex;
+                        const scored = [...journee.matches, ...journee.bonus].some(hasScore);
 
-        {/* ================= GRID SUPÉRIEUR : ÉDITO & JOUEUR DE LA SEMAINE ================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-6">
+                        return (
+                          <button
+                            key={journee.id}
+                            type="button"
+                            onClick={() => setSelectedDayIndex(index)}
+                            className={`relative flex h-[76px] w-[118px] shrink-0 flex-col items-center justify-center rounded-2xl border transition-all duration-200 md:h-[82px] md:w-[132px] ${
+                              active
+                                ? "border-emerald-400 bg-[#061b18]/90 text-white"
+                                : "border-white/[0.08] bg-[#07111e]/80 text-slate-300 hover:border-white/20 hover:text-white"
+                            }`}
+                          >
+                            {active && (
+                              <span className="absolute -top-2 rounded-full bg-emerald-400 px-2 py-0.5 font-mono text-[6px] font-black tracking-[.14em] text-[#04120e]">
+                                ACTIVE
+                              </span>
+                            )}
 
-          {/* CARTE ÉDITO À LA UNE (Phase 7 : Intégration des supporters) */}
-          <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 flex flex-col justify-between shadow-[0_0_40px_rgba(0,0,0,0.6)]">
-            <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none translate-x-10 translate-y-10">
-              <Flame size={280} className="text-amber-400" />
-            </div>
+                            <span className={`font-display text-2xl font-black leading-none ${
+                              active ? "text-emerald-300" : "text-white"
+                            }`}>
+                              {journee.title}
+                            </span>
 
-            <div className="relative z-10 space-y-4">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[10px] font-bold">
-                <Sparkles size={12} /> ÉDITO — DÉBUT DE SAISON
-              </span>
+                            <span className={`mt-2 font-mono text-[7px] font-bold tracking-[.12em] ${
+                              scored ? "text-emerald-200/70" : "text-slate-600"
+                            }`}>
+                              {scored ? "DONNÉES DISPONIBLES" : "À VENIR"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-              <h2 className="font-display text-3xl md:text-4xl text-white tracking-tight leading-tight">
-                Les forces en présence
-              </h2>
-
-              <p className="text-sm text-slate-300 leading-relaxed max-w-xl">
-                {renderSeasonIntro()}
-              </p>
-            </div>
-
-            <div className="relative z-10 pt-8 mt-6 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono text-slate-400">
-              <span>La Rédac • 3 min de lecture</span>
-              <span className="text-emerald-400 flex items-center gap-1 hover:underline cursor-pointer">
-                Lire l'article <ArrowRight size={14} />
-              </span>
-            </div>
-          </section>
-
-          {/* CARTE JOUEUR DE LA SEMAINE (HUGO) */}
-          <section className="relative overflow-hidden rounded-3xl border-2 border-amber-500/40 bg-[#0d1322] p-6 md:p-8 flex flex-col justify-between shadow-[0_0_40px_rgba(245,158,11,0.15)]">
-            <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-bl from-amber-500/10 to-transparent pointer-events-none" />
-
-            <div className="relative z-10 text-center space-y-4">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[10px] font-bold">
-                <Trophy size={12} /> JOUEUR DE LA SEMAINE
-              </div>
-
-              <div className="relative mx-auto size-24 rounded-full p-1 bg-gradient-to-tr from-amber-500 to-yellow-300 shadow-xl flex items-center justify-center">
-                <div className="size-full rounded-full bg-[#060b16] border-2 border-amber-400 flex items-center justify-center text-amber-400">
-                  <span className="font-display text-3xl font-black">H</span>
+                  <button
+                    type="button"
+                    onClick={() => scroll(1)}
+                    aria-label="Journée suivante"
+                    className="flex size-11 shrink-0 items-center justify-center rounded-full border border-white/10 bg-[#07111e]/80 text-slate-400 transition hover:border-white/20 hover:text-white"
+                  >
+                    <ChevronRight className="size-5" />
+                  </button>
                 </div>
               </div>
+            </section>
+          )}
 
-              <div>
-                <h3 className="font-display text-2xl text-white font-bold">Hugo</h3>
-                <p className="mt-2 text-xs text-slate-300 leading-relaxed px-2">
-                  Une régularité impressionnante ! Avec un total sécurisé de <strong className="text-amber-400">136 points</strong>, il réalise la performance majeure de cette édition.
-                </p>
-              </div>
-            </div>
-
-            <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-center gap-3">
-              <button className="tap flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300 hover:border-amber-500/50 transition-colors">
-                🔥 <span>14</span>
-              </button>
-              <button className="tap flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300 hover:border-amber-500/50 transition-colors">
-                👏 <span>8</span>
-              </button>
-            </div>
-          </section>
-
-        </div>
-
-        {/* ================= GRID INFÉRIEUR : ARTICLES SECONDAIRES ================= */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-          <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-7 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-            <div className="space-y-3">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[10px] font-bold">
-                <Target size={12} /> LE DUEL DU HAUT DE TABLEAU
-              </span>
-
-              <h3 className="font-display text-xl text-white">
-                Éric & Samuel : À égalité parfaite pour la première place
-              </h3>
-
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Les deux leaders ne se lâchent plus et imposent une cadence infernale au reste de la ligue. Mais attention dans le rétroviseur : Jo B est solidement accroché à la 2ème place, prêt à sévir à la moindre erreur.
+          {loading ? (
+            <div className="mt-5 rounded-3xl border border-white/10 bg-[#07101c]/95 py-20 text-center">
+              <div className="mx-auto size-8 animate-spin rounded-full border-2 border-slate-700 border-t-emerald-400" />
+              <p className="mt-4 font-mono text-xs text-slate-500">
+                Connexion aux statistiques des joueurs...
               </p>
             </div>
-
-            <div className="pt-6 mt-6 border-t border-slate-800/80 flex items-center justify-between">
-              <span className="font-mono text-xs text-slate-500">3 min</span>
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300">🤯 5</span>
-                <span className="px-2.5 py-1 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300">📈 12</span>
-              </div>
+          ) : error ? (
+            <div className="mt-5 rounded-3xl border border-red-400/20 bg-[#160b10]/95 p-8 text-center">
+              <p className="font-mono text-xs text-red-300">{error}</p>
+              <button
+                type="button"
+                onClick={() => loadData()}
+                className="mt-4 rounded-xl border border-red-400/30 px-4 py-2 font-mono text-[9px] font-bold text-red-300"
+              >
+                RÉESSAYER
+              </button>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* 6 RUBRIQUES */}
+              <section className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <article className="relative min-h-[190px] overflow-hidden rounded-xl border border-white/10 bg-[#07111d]/95">
+                  <img
+                    src="/le%20chiffre%20de%20la%20journee.png"
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                  <div className="relative z-10 flex h-full min-h-[190px] items-center justify-start p-5 text-left">
+                    <div>
+                      <div className="flex items-center justify-start gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-emerald-300">
+                        <BarChart3 className="size-4" />
+                        LE CHIFFRE DE LA JOURNÉE
+                      </div>
+                      <div className="mt-4 font-display text-5xl font-black text-white md:text-6xl">
+                        {cardData.chiffre.value}
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">
+                        {cardData.chiffre.text}
+                      </p>
+                      <button className="mt-4 rounded-md border border-emerald-300/30 bg-black/20 px-3 py-1.5 font-mono text-[9px] font-bold text-emerald-300">
+                        Voir plus <ChevronRight className="ml-1 inline size-3" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
 
-          <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-7 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-            <div className="space-y-3">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-mono text-[10px] font-bold">
-                <MessageSquare size={12} /> ANALYSE
-              </span>
+                <article className="relative min-h-[190px] overflow-hidden rounded-xl border border-white/10 bg-[#07111d]/95">
+                  <img
+                    src="/le%20prono%20surprise.png"
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                  <div className="relative z-10 flex h-full min-h-[190px] items-center justify-start p-5 text-left">
+                    <div>
+                      <div className="flex items-center justify-start gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-amber-300">
+                        <Lightbulb className="size-4" />
+                        LE PRONO SURPRISE
+                      </div>
+                      <div className="mt-4 font-display text-5xl font-black text-white md:text-6xl">
+                        {cardData.surprise.value}
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">
+                        {cardData.surprise.text}
+                        <br />
+                        <span className="text-amber-300">
+                          {cardData.surprise.teams}
+                        </span>
+                      </p>
+                      <button className="mt-4 rounded-md border border-amber-300/30 bg-black/20 px-3 py-1.5 font-mono text-[9px] font-bold text-amber-300">
+                        Voir plus <ChevronRight className="ml-1 inline size-3" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
 
-              <h3 className="font-display text-xl text-white">
-                Pourquoi tout le monde se trompe sur Toulouse
-              </h3>
+                <article className="relative min-h-[190px] overflow-hidden rounded-xl border border-white/10 bg-[#07111d]/95">
+                  <img
+                    src="/le%20flop%20de%20la%20semaine.png"
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                  <div className="relative z-10 flex h-full min-h-[190px] items-center justify-start p-5 text-left">
+                    <div>
+                      <div className="flex items-center justify-start gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-red-300">
+                        <Flame className="size-4" />
+                        LE FLOP DE LA JOURNÉE
+                      </div>
+                      <div className="mt-4 font-display text-5xl font-black text-white md:text-6xl">
+                        {cardData.flop.value}
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">
+                        {cardData.flop.text}
+                      </p>
+                      <button className="mt-4 rounded-md border border-red-300/30 bg-black/20 px-3 py-1.5 font-mono text-[9px] font-bold text-red-300">
+                        Voir plus <ChevronRight className="ml-1 inline size-3" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
 
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Le TFC est l'équipe la plus mal pronostiquée de la ligue. Les chiffres montrent une régularité que les parieurs refusent de voir.
-              </p>
-            </div>
+                <article className="relative min-h-[190px] overflow-hidden rounded-xl border border-white/10 bg-[#07111d]/95">
+                  <img
+                    src="/la%20remonte%20de%20la%20semaine.png"
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                  <div className="relative z-10 flex h-full min-h-[190px] items-center justify-start p-5 text-left">
+                    <div>
+                      <div className="flex items-center justify-start gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-emerald-300">
+                        <TrendingUp className="size-4" />
+                        LA REMONTÉE DE LA SEMAINE
+                      </div>
+                      <div className="mt-4 font-display text-5xl font-black text-white md:text-6xl">
+                        {cardData.remontee.value}
+                      </div>
+                      <div className="font-display text-sm font-black text-emerald-300">
+                        {cardData.remontee.suffix}
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">
+                        {cardData.remontee.text}
+                      </p>
+                      <button className="mt-4 rounded-md border border-emerald-300/30 bg-black/20 px-3 py-1.5 font-mono text-[9px] font-bold text-emerald-300">
+                        Voir plus <ChevronRight className="ml-1 inline size-3" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
 
-            <div className="pt-6 mt-6 border-t border-slate-800/80 flex items-center justify-between">
-              <span className="font-mono text-xs text-slate-500">4 min</span>
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300">😳 7</span>
-                <span className="px-2.5 py-1 rounded-full bg-[#060b16] border border-slate-800 text-xs font-mono text-slate-300">🤔 4</span>
-              </div>
-            </div>
-          </div>
+                <article className="relative min-h-[190px] overflow-hidden rounded-xl border border-white/10 bg-[#07111d]/95">
+                  <img
+                    src="/meilleur%20score%20exact.png"
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                  <div className="relative z-10 flex h-full min-h-[190px] items-center justify-start p-5 text-left">
+                    <div>
+                      <div className="flex items-center justify-start gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-blue-300">
+                        <Target className="size-4" />
+                        LE MEILLEUR SCORE EXACT
+                      </div>
+                      <div className="mt-4 font-display text-5xl font-black text-white md:text-6xl">
+                        {cardData.exact.value}
+                      </div>
+                      <div className="font-display text-sm font-black text-blue-300">
+                        SCORES EXACTS
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-300">
+                        {cardData.exact.text}
+                      </p>
+                      <button className="mt-4 rounded-md border border-blue-300/30 bg-black/20 px-3 py-1.5 font-mono text-[9px] font-bold text-blue-300">
+                        Voir plus <ChevronRight className="ml-1 inline size-3" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
 
+                {/* PRONOSTICS DES JOUEURS — DONUT DYNAMIQUE */}
+                <article className="relative min-h-[190px] overflow-hidden rounded-xl border border-white/10 bg-[#07111d]/95">
+                  <img
+                    src="/les%20pronostics%20des%20joueurs.png"
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/25" />
+
+                  <div className="relative z-10 flex h-full min-h-[190px] items-center gap-5 p-5">
+                    <div className="relative flex h-[125px] w-[125px] shrink-0 items-center justify-center md:h-[140px] md:w-[140px]">
+                      <svg
+                        viewBox="0 0 120 120"
+                        className="h-full w-full -rotate-90"
+                      >
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="47"
+                          fill="none"
+                          stroke="#172033"
+                          strokeWidth="12"
+                        />
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="47"
+                          fill="none"
+                          stroke="#34d399"
+                          strokeWidth="12"
+                          strokeDasharray={`${homeDash} ${circumference - homeDash}`}
+                        />
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="47"
+                          fill="none"
+                          stroke="#22d3ee"
+                          strokeWidth="12"
+                          strokeDasharray={`${drawDash} ${circumference - drawDash}`}
+                          strokeDashoffset={-homeDash}
+                        />
+                        <circle
+                          cx="60"
+                          cy="60"
+                          r="47"
+                          fill="none"
+                          stroke="#e879f9"
+                          strokeWidth="12"
+                          strokeDasharray={`${awayDash} ${circumference - awayDash}`}
+                          strokeDashoffset={-(homeDash + drawDash)}
+                        />
+                      </svg>
+
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="font-display text-3xl font-black leading-none text-white">
+                          {donut.home}%
+                        </span>
+                        <span className="mt-1 font-mono text-[7px] font-bold tracking-[.18em] text-slate-500">
+                          DOMICILE
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-fuchsia-300">
+                        <Users className="size-4 shrink-0" />
+                        LES PRONOSTICS DES JOUEURS
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        {[
+                          ["Victoire domicile", donut.home, "bg-emerald-400", "text-emerald-300"],
+                          ["Nul", donut.draw, "bg-cyan-300", "text-cyan-300"],
+                          ["Victoire extérieur", donut.away, "bg-fuchsia-300", "text-fuchsia-300"],
+                        ].map(([label, value, dot, color]) => (
+                          <div key={String(label)} className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`size-2 rounded-full ${dot}`} />
+                              <span className="font-mono text-[9px] text-slate-300">
+                                {label}
+                              </span>
+                            </div>
+                            <span className={`font-display text-lg font-black ${color}`}>
+                              {value}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-3 font-mono text-[7px] text-slate-600">
+                        {dayPredictionStats.totalPredictions} pronostics analysés
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              </section>
+
+
+            </>
+          )}
         </div>
-
-      </div>
+      </main>
     </AppShell>
   );
 }
