@@ -27,7 +27,6 @@ import {
   syncLigue1Matches,
   syncCompetitionMatches,
   getMatchdays,
-  createMatchday,
   updateMatchday,
   setMatchdayDeadline,
   setMatchdayAutoMinusOne,
@@ -45,7 +44,6 @@ import {
 import {
   type BonusCandidate,
   type BonusCompetitionCode,
-  normalizeCompetitionName,
   selectBestBonusMatch,
 } from "@/services/bonusSelectionService";
 
@@ -73,12 +71,15 @@ import {
   Check,
   Download,
   Globe,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
 } from "lucide-react";
 
 /** Onglets de l'espace admin, adressables via le search param `tab`
  * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
  * partageable/bookmarkable. */
-const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "reglages"] as const;
+const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "verrouillage", "reglages"] as const;
 export type AdminTab = (typeof ADMIN_TAB_VALUES)[number];
 
 function isAdminTab(value: unknown): value is AdminTab {
@@ -384,6 +385,7 @@ const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
   { id: "paiements", label: "Paiements", icon: Wallet },
   { id: "matchs", label: "Matchs", icon: Calendar },
   { id: "bonus", label: "Bonus", icon: Gift },
+  { id: "verrouillage", label: "Verrouillage", icon: Lock },
   { id: "reglages", label: "Réglages", icon: SettingsIcon },
 ];
 
@@ -511,6 +513,7 @@ function AdminPage() {
     } else {
       console.warn("matchdays:", matchdaysResult.reason);
       addError(nextErrors, "bonus", TABLE_MISSING_HINT);
+      addError(nextErrors, "verrouillage", TABLE_MISSING_HINT);
     }
 
     if (teamsResult.status === "fulfilled") {
@@ -529,6 +532,7 @@ function AdminPage() {
     } else {
       console.warn("seasons:", seasonsResult.reason);
       addError(nextErrors, "bonus", TABLE_MISSING_HINT);
+      addError(nextErrors, "verrouillage", TABLE_MISSING_HINT);
     }
 
     if (competitionsResult.status === "fulfilled") {
@@ -536,6 +540,7 @@ function AdminPage() {
     } else {
       console.warn("competitions:", competitionsResult.reason);
       addError(nextErrors, "bonus", TABLE_MISSING_HINT);
+      addError(nextErrors, "verrouillage", TABLE_MISSING_HINT);
     }
 
     if (settingsResult.status === "fulfilled") {
@@ -696,7 +701,6 @@ function AdminPage() {
           {activeTab === "bonus" && (
             <BonusTab
               matchdays={matchdays}
-              setMatchdays={setMatchdays}
               matches={matches}
               teams={teams}
               seasons={seasons}
@@ -709,6 +713,19 @@ function AdminPage() {
               }}
               onCompetitionsChanged={async () => setCompetitions(await getCompetitions())}
               onSettingsChanged={async () => setSettings(await getSettings())}
+              notify={notify}
+            />
+          )}
+
+          {activeTab === "verrouillage" && (
+            <MatchdayLockTab
+              matchdays={matchdays}
+              setMatchdays={setMatchdays}
+              matches={matches}
+              seasons={seasons}
+              competitions={competitions}
+              error={errors.verrouillage}
+              onChanged={async () => setMatchdays(await getMatchdays())}
               notify={notify}
             />
           )}
@@ -1813,14 +1830,40 @@ function StatusBadge({ status }: { status: string }) {
 // ============================================================
 // Remplace l'ancien onglet "Journées" : point d'entrée unique pour tout ce
 // qui touche au bonus (tirage de la sélection premium) et aux championnats
-// hors Ligue 1 (activation, synchronisation football-data.org). La gestion
-// des journées elle-même (création, verrouillage) vit ici aussi, reprise
-// telle quelle — les journées sont une notion transverse à tous les
-// championnats, pas seulement à la Ligue 1 (voir l'onglet Matchs, scopé
-// Ligue 1 uniquement).
+// hors Ligue 1 (activation, synchronisation football-data.org). Le
+// verrouillage des journées (deadline/is_finished) a depuis été extrait
+// dans son propre onglet, voir MatchdayLockTab.
+/** Convertit un timestamp ISO en UTC (tel que renvoyé par Supabase pour un
+ * `timestamptz`, ex. "2026-08-21T04:00:00+00:00") vers le format attendu
+ * par <input type="datetime-local"> — en heure LOCALE du navigateur.
+ *
+ * BUG corrigé ici : un `.slice(0, 16)` naïf sur la chaîne UTC ("2026-08-
+ * 21T04:00") réutilisait telles quelles les heures UTC comme si elles
+ * étaient déjà en heure locale. `<input type="datetime-local">` n'a
+ * aucune notion de fuseau — il affiche/interprète toujours sa valeur
+ * comme de l'heure locale — donc un admin en France (UTC+2 l'été)
+ * voyait "04:00" au lieu de "06:00", et si cette valeur (fausse) était
+ * réenregistrée telle quelle, l'écart se creusait un peu plus à chaque
+ * aller-retour (double conversion). La comparaison elle-même
+ * (isWithinBonusPeriod) était correcte ; seul le réaffichage après
+ * chargement des réglages était faux. */
+function toDatetimeLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const BONUS_COMPETITION_LABELS: Record<BonusCompetitionCode, string> = {
+  PL: "Premier League",
+  PD: "Liga",
+  SA: "Serie A",
+  BL1: "Bundesliga",
+};
+
 function BonusTab({
   matchdays,
-  setMatchdays,
   matches,
   teams,
   seasons,
@@ -1833,7 +1876,6 @@ function BonusTab({
   notify,
 }: {
   matchdays: Matchday[];
-  setMatchdays: React.Dispatch<React.SetStateAction<Matchday[]>>;
   matches: Match[];
   teams: Team[];
   seasons: Season[];
@@ -1845,18 +1887,6 @@ function BonusTab({
   onSettingsChanged: () => Promise<void>;
   notify: (message: string) => void;
 }) {
-  const [creating, setCreating] = useState(false);
-  const [number, setNumber] = useState("");
-  const [seasonId, setSeasonId] = useState("");
-  const [competitionId, setCompetitionId] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [lockBusyId, setLockBusyId] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Matchday | null>(null);
-  const [editing, setEditing] = useState<Matchday | null>(null);
-  const [editForm, setEditForm] = useState({ number: "", seasonId: "", competitionId: "", deadline: "", deadlineMode: "manual" as "manual" | "auto_minus_1" });
-  const [saving, setSaving] = useState(false);
-
   // Sélection bonus : état local pour cette première étape.
   // La persistance Supabase sera branchée dans adminService après validation de l'UI.
   const [bonusSelections, setBonusSelections] = useState<Record<string, Partial<Record<BonusCompetitionCode, BonusCandidate>>>>({});
@@ -1874,34 +1904,51 @@ function BonusTab({
 
   // Période d'éligibilité des matchs au tirage bonus (app_settings —
   // persistée pour survivre entre sessions, voir generateBonusForDay).
-  const [periodStart, setPeriodStart] = useState(settings?.bonus_period_start?.slice(0, 16) ?? "");
-  const [periodEnd, setPeriodEnd] = useState(settings?.bonus_period_end?.slice(0, 16) ?? "");
-  const [savingPeriod, setSavingPeriod] = useState(false);
-  const [periodSaved, setPeriodSaved] = useState(false);
+  // Sauvegarde au blur, comme les autres champs éditables inline de
+  // l'admin (score de match, montant de paiement) — pas de bouton dédié.
+  const [periodStart, setPeriodStart] = useState(toDatetimeLocalInput(settings?.bonus_period_start));
+  const [periodEnd, setPeriodEnd] = useState(toDatetimeLocalInput(settings?.bonus_period_end));
 
   useEffect(() => {
-    setPeriodStart(settings?.bonus_period_start?.slice(0, 16) ?? "");
-    setPeriodEnd(settings?.bonus_period_end?.slice(0, 16) ?? "");
+    setPeriodStart(toDatetimeLocalInput(settings?.bonus_period_start));
+    setPeriodEnd(toDatetimeLocalInput(settings?.bonus_period_end));
   }, [settings]);
 
-  async function handleSavePeriod() {
+  async function handleSavePeriod(requireBothDates = false): Promise<boolean> {
+    if (requireBothDates && (!periodStart || !periodEnd)) {
+      notify("Choisis une date de début ET une date de fin avant de générer les matchs bonus.");
+      return false;
+    }
+
+    if (periodStart && Number.isNaN(new Date(periodStart).getTime())) {
+      notify("La date de début bonus est invalide.");
+      return false;
+    }
+
+    if (periodEnd && Number.isNaN(new Date(periodEnd).getTime())) {
+      notify("La date de fin bonus est invalide.");
+      return false;
+    }
+
     if (periodStart && periodEnd && new Date(periodStart) >= new Date(periodEnd)) {
       notify("La fin de la période doit être après le début.");
-      return;
+      return false;
     }
-    setSavingPeriod(true);
+
+    const startIso = periodStart ? new Date(periodStart).toISOString() : null;
+    const endIso = periodEnd ? new Date(periodEnd).toISOString() : null;
+
+    if (startIso === (settings?.bonus_period_start ?? null) && endIso === (settings?.bonus_period_end ?? null)) {
+      return true;
+    }
+
     try {
-      await updateSettings({
-        bonus_period_start: periodStart ? new Date(periodStart).toISOString() : null,
-        bonus_period_end: periodEnd ? new Date(periodEnd).toISOString() : null,
-      });
+      await updateSettings({ bonus_period_start: startIso, bonus_period_end: endIso });
       await onSettingsChanged();
-      setPeriodSaved(true);
-      setTimeout(() => setPeriodSaved(false), 2500);
+      return true;
     } catch (e) {
       notify(errorMessage(e, "Erreur lors de l'enregistrement de la période."));
-    } finally {
-      setSavingPeriod(false);
+      return false;
     }
   }
 
@@ -1981,8 +2028,455 @@ function BonusTab({
     return map;
   }, [matches]);
 
+  /** Tous les matchs synchronisés d'un championnat, indépendamment de son
+   * propre numéro de journée : les calendriers ne sont pas alignés entre
+   * pays (le "matchday 1" anglais ne tombe pas la même semaine que le
+   * "J1" français, voire le même mois selon le championnat). BUG corrigé
+   * ici — l'ancienne version filtrait par `candidateDay.number ===
+   * md.number` (le numéro de la journée Ligue 1 sélectionnée), ce qui ne
+   * pouvait retourner un résultat que si les deux championnats avaient
+   * par coïncidence la même numérotation. Seule la période choisie
+   * (isWithinBonusPeriod, ci-dessous) doit délimiter les matchs
+   * éligibles au tirage, jamais un numéro de journée étranger. */
+  function bonusMatchesForCompetition(code: BonusCompetitionCode): Match[] {
+    return matches.filter((match) => match.match_type === code);
+  }
+
+  function toBonusMatch(match: Match): Match {
+    const home = teams.find((team) => team.id === match.home_team_id)?.name ?? "";
+    const away = teams.find((team) => team.id === match.away_team_id)?.name ?? "";
+    return { ...match, home_team: home, away_team: away };
+  }
+
+  async function generateBonusForDay(md: Matchday) {
+    // Les dates choisies par l'admin sont la source de vérité du tirage.
+    // On les enregistre AVANT de lancer la sélection pour éviter qu'un clic
+    // sur Générer avec des dates fraîchement modifiées utilise encore les
+    // anciennes valeurs de Supabase.
+    const periodSaved = await handleSavePeriod(true);
+    if (!periodSaved) return;
+
+    setGeneratingBonus(true);
+    try {
+      const key = `${md.season_id}:${md.number}`;
+      const next: Partial<Record<BonusCompetitionCode, BonusCandidate>> = {};
+      // Un message par championnat sans candidat, pour diagnostiquer sans
+      // repartir en chasse en base à chaque fois : absence totale de
+      // synchronisation vs matchs existants mais hors de la période choisie
+      // (avec le prochain match connu dans ce dernier cas).
+      const misses: string[] = [];
+
+      (["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).forEach((code) => {
+        const allForCompetition = bonusMatchesForCompetition(code);
+        const eligible = allForCompetition.filter(isWithinBonusPeriod).map(toBonusMatch);
+        const best = selectBestBonusMatch(eligible, code);
+        if (best) {
+          next[code] = best;
+          return;
+        }
+
+        const label = BONUS_COMPETITION_LABELS[code];
+        if (allForCompetition.length === 0) {
+          misses.push(`${label} : aucun match synchronisé (onglet Bonus → Championnats)`);
+          return;
+        }
+        const nextKickoff = allForCompetition
+          .map((m) => m.kickoff)
+          .filter((k): k is string => !!k && new Date(k).getTime() > Date.now())
+          .sort()[0];
+        misses.push(
+          `${label} : ${allForCompetition.length} match(s) synchronisé(s), aucun dans la période` +
+            (nextKickoff ? ` (prochain : ${new Date(nextKickoff).toLocaleDateString("fr-FR")})` : ""),
+        );
+      });
+
+      if (Object.keys(next).length === 0) {
+        notify(`Aucun match éligible pour J${md.number} — ${misses.join(" · ")}`);
+        return;
+      }
+
+      setBonusSelections((prev) => ({ ...prev, [key]: next }));
+      setReplacingBonus(null);
+      if (misses.length > 0) {
+        notify(`${Object.keys(next).length}/4 sélectionnés pour J${md.number}. Manquants — ${misses.join(" · ")}`);
+      } else {
+        notify(`${Object.keys(next).length}/4 Matchs bonus sélectionnés pour J${md.number}.`);
+      }
+    } finally {
+      setGeneratingBonus(false);
+    }
+  }
+
+  function replaceBonusForDay(md: Matchday, code: BonusCompetitionCode, match: Match) {
+    const candidate = scoreBonusCandidateForAdmin(match, code);
+    if (!candidate) return;
+
+    const key = `${md.season_id}:${md.number}`;
+    setBonusSelections((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? {}), [code]: candidate },
+    }));
+    setReplacingBonus(null);
+  }
+
+  function removeBonusDraw(md: Matchday) {
+    const key = `${md.season_id}:${md.number}`;
+    setBonusSelections((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setReplacingBonus(null);
+    notify(`Tirage bonus de J${md.number} retiré.`);
+  }
+
+  function scoreCandidateForMatch(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
+    return scoreBonusCandidateForAdmin(match, code);
+  }
+
+  function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
+    return selectBestBonusMatch([toBonusMatch(match)], code);
+  }
+
+  // Sélection bonus : une seule journée Ligue 1 à la fois (dropdown),
+  // plutôt qu'une carte par journée — sert uniquement à nommer/stocker le
+  // tirage (clé season_id:number) ; les matchs éligibles de chaque
+  // championnat sont eux déterminés par la période (bonusMatchesForCompetition
+  // + isWithinBonusPeriod), pas par le numéro de journée de la Ligue 1.
+  const ligue1CompetitionId = useMemo(
+    () => competitions.find((c) => c.external_code === "FL1" || c.code === "FL1")?.id ?? null,
+    [competitions],
+  );
+  const ligue1Matchdays = useMemo(
+    () =>
+      matchdays
+        .filter((md) => md.competition_id != null && md.competition_id === ligue1CompetitionId)
+        .sort((a, b) => a.number - b.number),
+    [matchdays, ligue1CompetitionId],
+  );
+  const [selectedBonusMatchdayId, setSelectedBonusMatchdayId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedBonusMatchdayId !== null || ligue1Matchdays.length === 0) return;
+    const ligue1MatchdayIds = new Set(ligue1Matchdays.map((md) => md.id));
+    const ligue1Matches = matches.filter((m) => m.matchday_id && ligue1MatchdayIds.has(m.matchday_id));
+    setSelectedBonusMatchdayId(computeDefaultMatchdayId(ligue1Matchdays, ligue1Matches) ?? ligue1Matchdays[0].id);
+  }, [ligue1Matchdays, matches, selectedBonusMatchdayId]);
+
+  const selectedBonusMatchday = ligue1Matchdays.find((md) => md.id === selectedBonusMatchdayId) ?? null;
+  const selectedBonusKey = selectedBonusMatchday ? `${selectedBonusMatchday.season_id}:${selectedBonusMatchday.number}` : null;
+  const selectedBonusSelection = selectedBonusKey ? bonusSelections[selectedBonusKey] ?? {} : {};
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+              <Globe size={18} className="text-emerald-400" />
+              Championnats
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Championnats disponibles sur ton compte football-data.org — active ceux à synchroniser pour la sélection bonus.
+            </p>
+          </div>
+          <GhostButton onClick={loadAvailableCompetitions} disabled={loadingCompetitions}>
+            <RefreshCw size={12} className={loadingCompetitions ? "animate-spin" : ""} />
+            {competitionsLoaded ? "Actualiser la liste" : "Charger les championnats"}
+          </GhostButton>
+        </div>
+
+        {!competitionsLoaded && !loadingCompetitions && (
+          <p className="py-6 text-center text-sm text-slate-500">
+            Charge la liste pour voir les championnats disponibles et les activer.
+          </p>
+        )}
+
+        {competitionsLoaded && availableCompetitions.length === 0 && (
+          <p className="py-6 text-center text-sm text-slate-500">Aucun championnat renvoyé par football-data.org.</p>
+        )}
+
+        <div className="space-y-2">
+          {availableCompetitions.map((discovered) => {
+            const row = competitionRowFor(discovered.code);
+            const isActive = row?.is_active ?? false;
+            const count = matchCountByCompetitionCode.get(discovered.code) ?? 0;
+            const expanded = expandedCode === discovered.code;
+            return (
+              <div key={discovered.code} className="rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {discovered.emblem ? (
+                      <img src={discovered.emblem} alt="" className="size-6 shrink-0 object-contain" />
+                    ) : (
+                      <span className="size-6 shrink-0 rounded-md border border-slate-700 bg-slate-800" />
+                    )}
+                    <div>
+                      <div className="text-sm font-semibold text-slate-100">{discovered.name}</div>
+                      <div className="font-mono text-[10px] text-slate-500">
+                        {discovered.code}
+                        {discovered.country ? ` · ${discovered.country}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-mono text-[10px] font-bold text-slate-300">
+                      {count} match{count > 1 ? "s" : ""} synchronisé{count > 1 ? "s" : ""}
+                    </span>
+                    <GhostButton
+                      onClick={() => toggleCompetitionActive(discovered)}
+                      disabled={togglingCode === discovered.code}
+                      title={isActive ? "Désactiver ce championnat" : "Activer ce championnat"}
+                    >
+                      {togglingCode === discovered.code ? (
+                        <RefreshCw size={12} className="animate-spin" />
+                      ) : isActive ? (
+                        <CheckCircle2 size={12} className="text-emerald-400" />
+                      ) : (
+                        <X size={12} />
+                      )}
+                      {isActive ? "Activé" : "Désactivé"}
+                    </GhostButton>
+                    <GhostButton
+                      onClick={() => handleSyncCompetition(discovered)}
+                      disabled={!isActive || syncingCode === discovered.code}
+                      title={isActive ? "Synchroniser depuis football-data.org" : "Active le championnat pour pouvoir synchroniser"}
+                    >
+                      {syncingCode === discovered.code ? (
+                        <RefreshCw size={12} className="animate-spin" />
+                      ) : (
+                        <Download size={12} />
+                      )}
+                      Synchroniser
+                    </GhostButton>
+                    {count > 0 && (
+                      <GhostButton onClick={() => setExpandedCode(expanded ? null : discovered.code)}>
+                        {expanded ? "Masquer" : "Voir les matchs"}
+                      </GhostButton>
+                    )}
+                  </div>
+                </div>
+
+                {expanded && (
+                  <div className="mt-3 border-t border-slate-800 pt-3">
+                    <CompetitionMatchesList
+                      matches={matches.filter((m) => (m.match_type ?? "LIGUE1") === discovered.code)}
+                      matchdays={row ? matchdays.filter((md) => md.competition_id === row.id) : []}
+                      onChanged={onChanged}
+                      notify={notify}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card className="p-5 border-sky-500/20">
+        <div className="mb-1 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
+          Sélection bonus premium
+        </div>
+        <h2 className="font-display text-xl font-black text-white">4 meilleures affiches, une par championnat</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Le site analyse automatiquement le prestige des équipes, l'équilibre du match, les rivalités et l'horaire.
+        </p>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1fr_auto_auto] lg:items-end">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Journée Ligue 1
+            </label>
+            <select
+              value={selectedBonusMatchdayId ?? ""}
+              onChange={(e) => setSelectedBonusMatchdayId(e.target.value)}
+              disabled={ligue1Matchdays.length === 0}
+              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500/60 disabled:opacity-50"
+            >
+              {ligue1Matchdays.length === 0 && <option value="">Aucune journée synchronisée</option>}
+              {ligue1Matchdays.map((md) => (
+                <option key={md.id} value={md.id}>
+                  Journée {md.number}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Début de la période
+            </label>
+            <input
+              type="datetime-local"
+              value={periodStart}
+              onChange={(e) => setPeriodStart(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              Fin de la période
+            </label>
+            <input
+              type="datetime-local"
+              value={periodEnd}
+              onChange={(e) => setPeriodEnd(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => selectedBonusMatchday && void generateBonusForDay(selectedBonusMatchday)}
+            disabled={!selectedBonusMatchday || generatingBonus || !periodStart || !periodEnd}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-500 px-4 py-2 font-display text-xs font-bold uppercase tracking-wide text-slate-950 shadow-[0_0_20px_rgba(14,165,233,0.3)] transition-all hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {generatingBonus ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            Générer la sélection premium
+          </button>
+          <GhostButton
+            danger
+            onClick={() => selectedBonusMatchday && removeBonusDraw(selectedBonusMatchday)}
+            disabled={!selectedBonusMatchday || Object.keys(selectedBonusSelection).length === 0}
+          >
+            <Trash2 size={12} />
+            Retirer le tirage
+          </GhostButton>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] text-slate-500">
+            Le tirage prend en compte TOUS les matchs synchronisés dont le coup d'envoi est compris entre ces deux dates,
+            inclusivement. Les journées des championnats étrangers ne sont jamais utilisées pour filtrer.
+          </p>
+          <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-sky-300">
+            {periodStart && periodEnd ? "Période active" : "Dates obligatoires"}
+          </span>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {(["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).map((code) => {
+            const candidate = selectedBonusSelection[code];
+            const alternatives = selectedBonusMatchday
+              ? bonusMatchesForCompetition(code)
+                  .filter(isWithinBonusPeriod)
+                  .filter((match): match is Match & { kickoff: string } => !!match.kickoff)
+                  .sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())
+              : [];
+
+            return (
+              <div key={code} className="rounded-xl border border-slate-800 bg-[#0d1322] p-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-sky-400">
+                    {BONUS_COMPETITION_LABELS[code]}
+                  </span>
+                  {candidate && (
+                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-sky-400">
+                      {candidate.score.total}/100
+                    </span>
+                  )}
+                </div>
+                <div className="mb-2 text-[11px] text-slate-500">
+                  {alternatives.length} match{alternatives.length > 1 ? "s" : ""} disponible{alternatives.length > 1 ? "s" : ""}
+                </div>
+
+                {candidate ? (
+                  <>
+                    <div className="text-sm font-bold text-white">
+                      {candidate.match.home_team} <span className="text-slate-600">—</span> {candidate.match.away_team}
+                    </div>
+                    <div className="mt-1 text-[10px] text-slate-500">
+                      {candidate.match.kickoff
+                        ? new Date(candidate.match.kickoff).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
+                        : "Date inconnue"}
+                      {candidate.reasons.length ? ` · ${candidate.reasons.join(" · ")}` : " · Affiche retenue automatiquement"}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-slate-500">En attente du tirage.</div>
+                )}
+
+                {alternatives.length > 0 && (
+                  <div className="mt-3">
+                    <GhostButton onClick={() => setReplacingBonus(replacingBonus === code ? null : code)}>
+                      <Pencil size={11} />
+                      {replacingBonus === code ? "Fermer" : "Remplacer"}
+                    </GhostButton>
+
+                    {replacingBonus === code && (
+                      <div className="mt-2 space-y-1.5">
+                        {alternatives.map((match) => {
+                          const scored = scoreCandidateForMatch(match, code);
+                          if (!scored) return null;
+                          return (
+                            <button
+                              key={match.id}
+                              type="button"
+                              onClick={() => selectedBonusMatchday && replaceBonusForDay(selectedBonusMatchday, code, match)}
+                              className="flex w-full items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-left hover:border-sky-500/40 hover:bg-sky-500/5"
+                            >
+                              <span className="text-xs font-semibold text-slate-200">
+                                {scored.match.home_team} — {scored.match.away_team}
+                              </span>
+                              <span className="font-mono text-[10px] font-bold text-sky-400">{scored.score.total}/100</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+    </div>
+  );
+}
+
+// ============================================================
+// 🔐 ONGLET VERROUILLAGE
+// ============================================================
+// Extrait de BonusTab : seul endroit qui écrit matchdays.deadline /
+// deadline_mode / is_finished, lu par src/routes/pronostics.tsx pour
+// bloquer les pronostics côté joueur — logique inchangée, uniquement
+// déplacée dans son propre onglet.
+function MatchdayLockTab({
+  matchdays,
+  setMatchdays,
+  matches,
+  seasons,
+  competitions,
+  error,
+  onChanged,
+  notify,
+}: {
+  matchdays: Matchday[];
+  setMatchdays: React.Dispatch<React.SetStateAction<Matchday[]>>;
+  matches: Match[];
+  seasons: Season[];
+  competitions: Competition[];
+  error?: string;
+  onChanged: () => Promise<void>;
+  notify: (message: string) => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [lockBusyId, setLockBusyId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Matchday | null>(null);
+  const [editing, setEditing] = useState<Matchday | null>(null);
+  const [editForm, setEditForm] = useState({ number: "", seasonId: "", competitionId: "", deadline: "", deadlineMode: "manual" as "manual" | "auto_minus_1" });
+  const [saving, setSaving] = useState(false);
+
   const seasonsById = useMemo(() => new Map(seasons.map((s) => [s.id, s])), [seasons]);
   const competitionsById = useMemo(() => new Map(competitions.map((c) => [c.id, c])), [competitions]);
+
+  const matchCountByMatchdayId = useMemo(() => {
+    const map = new Map<string, number>();
+    matches.forEach((m) => {
+      if (!m.matchday_id) return;
+      map.set(m.matchday_id, (map.get(m.matchday_id) ?? 0) + 1);
+    });
+    return map;
+  }, [matches]);
 
   function openEdit(md: Matchday) {
     setEditing(md);
@@ -2070,146 +2564,6 @@ function BonusTab({
     }
   }
 
-  const competitionCodeById = useMemo(() => {
-    const map = new Map<string, BonusCompetitionCode | null>();
-    competitions.forEach((competition) => {
-      map.set(competition.id, normalizeCompetitionName(competition.name));
-    });
-    return map;
-  }, [competitions]);
-
-  const matchesByMatchdayId = useMemo(() => {
-    const map = new Map<string, Match[]>();
-    matches.forEach((match) => {
-      if (!match.matchday_id) return;
-      const list = map.get(match.matchday_id) ?? [];
-      list.push(match);
-      map.set(match.matchday_id, list);
-    });
-    return map;
-  }, [matches]);
-
-  function bonusMatchesForDay(md: Matchday, code: BonusCompetitionCode): Match[] {
-    return matchdays
-      .filter(
-        (candidateDay) =>
-          candidateDay.number === md.number &&
-          candidateDay.season_id === md.season_id &&
-          candidateDay.competition_id != null &&
-          competitionCodeById.get(candidateDay.competition_id) === code,
-      )
-      .flatMap((candidateDay) => matchesByMatchdayId.get(candidateDay.id) ?? []);
-  }
-
-  function toBonusMatch(match: Match): Match {
-    const home = teams.find((team) => team.id === match.home_team_id)?.name ?? "";
-    const away = teams.find((team) => team.id === match.away_team_id)?.name ?? "";
-    return { ...match, home_team: home, away_team: away };
-  }
-
-  function generateBonusForDay(md: Matchday) {
-    setGeneratingBonus(true);
-    try {
-      const key = `${md.season_id}:${md.number}`;
-      const next: Partial<Record<BonusCompetitionCode, BonusCandidate>> = {};
-
-      (["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).forEach((code) => {
-        const candidates = bonusMatchesForDay(md, code).filter(isWithinBonusPeriod).map(toBonusMatch);
-        const best = selectBestBonusMatch(candidates, code);
-        if (best) next[code] = best;
-      });
-
-      if (Object.keys(next).length === 0) {
-        notify(
-          periodStart || periodEnd
-            ? `Aucun match des 4 championnats trouvé pour J${md.number} dans la période choisie.`
-            : `Aucun match des 4 championnats trouvé pour J${md.number}.`,
-        );
-        return;
-      }
-
-      setBonusSelections((prev) => ({ ...prev, [key]: next }));
-      setReplacingBonus(null);
-      notify(`${Object.keys(next).length}/4 Matchs bonus sélectionnés pour J${md.number}.`);
-    } finally {
-      setGeneratingBonus(false);
-    }
-  }
-
-  function replaceBonusForDay(md: Matchday, code: BonusCompetitionCode, match: Match) {
-    const candidate = scoreBonusCandidateForAdmin(match, code);
-    if (!candidate) return;
-
-    const key = `${md.season_id}:${md.number}`;
-    setBonusSelections((prev) => ({
-      ...prev,
-      [key]: { ...(prev[key] ?? {}), [code]: candidate },
-    }));
-    setReplacingBonus(null);
-  }
-
-  function removeBonusDraw(md: Matchday) {
-    const key = `${md.season_id}:${md.number}`;
-    setBonusSelections((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-    setReplacingBonus(null);
-    notify(`Tirage bonus de J${md.number} retiré.`);
-  }
-
-  function scoreCandidateForMatch(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
-    return scoreBonusCandidateForAdmin(match, code);
-  }
-
-  function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
-    return selectBestBonusMatch([toBonusMatch(match)], code);
-  }
-
-  const matchCountByMatchdayId = useMemo(() => {
-    const map = new Map<string, number>();
-    matches.forEach((m) => {
-      if (!m.matchday_id) return;
-      map.set(m.matchday_id, (map.get(m.matchday_id) ?? 0) + 1);
-    });
-    return map;
-  }, [matches]);
-
-  function suggestNextNumber() {
-    const numbers = matchdays.map((m) => m.number).filter((n) => !Number.isNaN(n));
-    const next = (numbers.length ? Math.max(...numbers) : 0) + 1;
-    setNumber(String(next));
-  }
-
-  async function handleCreate() {
-    const parsedNumber = parseInt(number, 10);
-    if (!number.trim() || Number.isNaN(parsedNumber)) {
-      notify("Le numéro de la journée est requis (ex: 1).");
-      return;
-    }
-    if (!seasonId || !competitionId) {
-      notify("Choisis une saison et une compétition.");
-      return;
-    }
-    setCreating(true);
-    try {
-      await createMatchday(
-        seasonId,
-        competitionId,
-        parsedNumber,
-        deadline ? new Date(deadline).toISOString() : null,
-      );
-      setNumber("");
-      setDeadline("");
-      await onChanged();
-    } catch (e: any) {
-      notify(e.message ?? "Erreur lors de la création de la journée.");
-    } finally {
-      setCreating(false);
-    }
-  }
-
   // Optimiste comme les autres bascules de statut (toggleAdmin, togglePaid) :
   // le badge EN COURS/TERMINÉE change tout de suite.
   async function toggleFinished(md: Matchday) {
@@ -2247,286 +2601,9 @@ function BonusTab({
   return (
     <div className="space-y-4">
       <Card className="p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-              <Globe size={18} className="text-emerald-400" />
-              Championnats
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Championnats disponibles sur ton compte football-data.org — active ceux à synchroniser pour la sélection bonus.
-            </p>
-          </div>
-          <GhostButton onClick={loadAvailableCompetitions} disabled={loadingCompetitions}>
-            <RefreshCw size={12} className={loadingCompetitions ? "animate-spin" : ""} />
-            {competitionsLoaded ? "Actualiser la liste" : "Charger les championnats"}
-          </GhostButton>
-        </div>
-
-        {!competitionsLoaded && !loadingCompetitions && (
-          <p className="py-6 text-center text-sm text-slate-500">
-            Charge la liste pour voir les championnats disponibles et les activer.
-          </p>
-        )}
-
-        {competitionsLoaded && availableCompetitions.length === 0 && (
-          <p className="py-6 text-center text-sm text-slate-500">Aucun championnat renvoyé par football-data.org.</p>
-        )}
-
-        <div className="space-y-2">
-          {availableCompetitions.map((discovered) => {
-            const row = competitionRowFor(discovered.code);
-            const isActive = row?.is_active ?? false;
-            const count = matchCountByCompetitionCode.get(discovered.code) ?? 0;
-            const expanded = expandedCode === discovered.code;
-            return (
-              <div key={discovered.code} className="rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    {discovered.emblem ? (
-                      <img src={discovered.emblem} alt="" className="size-6 shrink-0 object-contain" />
-                    ) : (
-                      <span className="size-6 shrink-0 rounded-md border border-slate-700 bg-slate-800" />
-                    )}
-                    <div>
-                      <div className="text-sm font-semibold text-slate-100">{discovered.name}</div>
-                      <div className="font-mono text-[10px] text-slate-500">
-                        {discovered.code}
-                        {discovered.area ? ` · ${discovered.area}` : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-1 font-mono text-[10px] font-bold text-slate-300">
-                      {count} match{count > 1 ? "s" : ""} synchronisé{count > 1 ? "s" : ""}
-                    </span>
-                    <GhostButton
-                      onClick={() => toggleCompetitionActive(discovered)}
-                      disabled={togglingCode === discovered.code}
-                      title={isActive ? "Désactiver ce championnat" : "Activer ce championnat"}
-                    >
-                      {togglingCode === discovered.code ? (
-                        <RefreshCw size={12} className="animate-spin" />
-                      ) : isActive ? (
-                        <CheckCircle2 size={12} className="text-emerald-400" />
-                      ) : (
-                        <X size={12} />
-                      )}
-                      {isActive ? "Activé" : "Désactivé"}
-                    </GhostButton>
-                    <GhostButton
-                      onClick={() => handleSyncCompetition(discovered)}
-                      disabled={!isActive || syncingCode === discovered.code}
-                      title={isActive ? "Synchroniser depuis football-data.org" : "Active le championnat pour pouvoir synchroniser"}
-                    >
-                      {syncingCode === discovered.code ? (
-                        <RefreshCw size={12} className="animate-spin" />
-                      ) : (
-                        <Download size={12} />
-                      )}
-                      Synchroniser
-                    </GhostButton>
-                    {count > 0 && (
-                      <GhostButton onClick={() => setExpandedCode(expanded ? null : discovered.code)}>
-                        {expanded ? "Masquer" : "Voir les matchs"}
-                      </GhostButton>
-                    )}
-                  </div>
-                </div>
-
-                {expanded && (
-                  <div className="mt-3 border-t border-slate-800 pt-3">
-                    <CompetitionMatchesList
-                      matches={matches.filter((m) => (m.match_type ?? "LIGUE1") === discovered.code)}
-                      matchdays={row ? matchdays.filter((md) => md.competition_id === row.id) : []}
-                      onChanged={onChanged}
-                      notify={notify}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card className="p-5 border-emerald-500/20">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-              <Gift size={18} className="text-emerald-400" />
-              Match bonus
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              1 grosse affiche par championnat · Prestige 40 % · Équilibre 30 % · Rivalité 20 % · Horaire 10 %.
-            </p>
-          </div>
-        </div>
-
-        <div className="mb-4 rounded-xl border border-slate-800 bg-[#0d1322] p-4">
-          <div className="mb-3 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-            <CalendarClock size={11} className="text-emerald-400" />
-            Période d'éligibilité des matchs au tirage
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-            <div>
-              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-                Début de la période
-              </label>
-              <input
-                type="datetime-local"
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-                Fin de la période
-              </label>
-              <input
-                type="datetime-local"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
-              />
-            </div>
-            <PrimaryButton onClick={handleSavePeriod} disabled={savingPeriod}>
-              {savingPeriod ? (
-                <RefreshCw size={14} className="animate-spin" />
-              ) : periodSaved ? (
-                <CheckCircle2 size={14} />
-              ) : (
-                <Save size={14} />
-              )}
-              {periodSaved ? "Enregistré" : "Enregistrer"}
-            </PrimaryButton>
-          </div>
-          <p className="mt-2 text-[10px] text-slate-500">
-            Seuls les matchs dont le coup d'envoi tombe dans cette fenêtre sont proposés au tirage. Laisse les deux
-            champs vides pour ne filtrer sur rien (comportement historique).
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          {matchdays
-            .slice()
-            .sort((a, b) => a.number - b.number)
-            .map((md) => {
-              const key = `${md.season_id}:${md.number}`;
-              const selection = bonusSelections[key] ?? {};
-              const codes: BonusCompetitionCode[] = ["PL", "PD", "SA", "BL1"];
-              const labels: Record<BonusCompetitionCode, string> = {
-                PL: "Premier League",
-                PD: "Liga",
-                SA: "Serie A",
-                BL1: "Bundesliga",
-              };
-
-              return (
-                <div key={`bonus-${md.id}`} className="rounded-2xl border border-slate-800 bg-[#0d1322] p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-lg bg-emerald-500/10 px-2.5 py-1 font-display text-sm font-black text-emerald-400">
-                        J{md.number}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {codes.filter((code) => selection[code]).length}/4 sélectionnés
-                      </span>
-                    </div>
-                    <div className="flex gap-2">
-                      <PrimaryButton onClick={() => generateBonusForDay(md)} disabled={generatingBonus}>
-                        {generatingBonus ? <RefreshCw size={13} className="animate-spin" /> : <Gift size={13} />}
-                        Générer la sélection bonus
-                      </PrimaryButton>
-                      {Object.keys(selection).length > 0 && (
-                        <GhostButton danger onClick={() => removeBonusDraw(md)} ariaLabel={`Retirer le tirage bonus J${md.number}`}>
-                          <Trash2 size={12} />
-                          Retirer le tirage
-                        </GhostButton>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    {codes.map((code) => {
-                      const candidate = selection[code];
-                      const alternatives = bonusMatchesForDay(md, code).filter(isWithinBonusPeriod);
-
-                      return (
-                        <div key={code} className="rounded-xl border border-slate-800 bg-[#0b1325] p-3">
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                              {labels[code]}
-                            </span>
-                            {candidate && (
-                              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400">
-                                {candidate.score.total}/100
-                              </span>
-                            )}
-                          </div>
-
-                          {candidate ? (
-                            <>
-                              <div className="text-sm font-bold text-white">
-                                {candidate.match.home_team} <span className="text-slate-600">—</span> {candidate.match.away_team}
-                              </div>
-                              <div className="mt-1 text-[10px] text-slate-500">
-                                {candidate.reasons.length ? candidate.reasons.join(" · ") : "Affiche retenue automatiquement"}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="text-xs text-slate-500">
-                              Aucun candidat trouvé.
-                            </div>
-                          )}
-
-                          {alternatives.length > 0 && (
-                            <div className="mt-3">
-                              <GhostButton onClick={() => setReplacingBonus(replacingBonus === code ? null : code)}>
-                                <Pencil size={11} />
-                                {replacingBonus === code ? "Fermer" : "Remplacer"}
-                              </GhostButton>
-
-                              {replacingBonus === code && (
-                                <div className="mt-2 space-y-1.5">
-                                  {alternatives.map((match) => {
-                                    const scored = scoreCandidateForMatch(match, code);
-                                    if (!scored) return null;
-                                    return (
-                                      <button
-                                        key={match.id}
-                                        type="button"
-                                        onClick={() => replaceBonusForDay(md, code, match)}
-                                        className="flex w-full items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-left hover:border-emerald-500/40 hover:bg-emerald-500/5"
-                                      >
-                                        <span className="text-xs font-semibold text-slate-200">
-                                          {scored.match.home_team} — {scored.match.away_team}
-                                        </span>
-                                        <span className="font-mono text-[10px] font-bold text-emerald-400">
-                                          {scored.score.total}/100
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-      </Card>
-
-      <Card className="p-5">
         <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Plus size={18} className="text-emerald-400" />
-          Créer une journée
+          <Calendar size={18} className="text-emerald-400" />
+          Journées ({matchdays.length})
         </h2>
 
         {error && (
@@ -2534,69 +2611,6 @@ function BonusTab({
             <ErrorBanner message={error} />
           </div>
         )}
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[110px_1fr_1fr_1fr]">
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Numéro
-            </label>
-            <TextInput placeholder="1" value={number} onChange={(e) => setNumber(e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Compétition
-            </label>
-            <select
-              value={competitionId}
-              onChange={(e) => setCompetitionId(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
-            >
-              <option value="">Choisir…</option>
-              {competitions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Saison
-            </label>
-            <select
-              value={seasonId}
-              onChange={(e) => setSeasonId(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
-            >
-              <option value="">Choisir…</option>
-              {seasons.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Date limite pronos
-            </label>
-            <TextInput type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
-          </div>
-        </div>
-        <div className="mt-3 flex justify-end gap-2">
-          <GhostButton onClick={suggestNextNumber}>Numéro suivant</GhostButton>
-          <PrimaryButton onClick={handleCreate} disabled={creating}>
-            {creating ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-            Créer
-          </PrimaryButton>
-        </div>
-      </Card>
-
-      <Card className="p-5">
-        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Calendar size={18} className="text-emerald-400" />
-          Journées ({matchdays.length})
-        </h2>
 
         {!error && matchdays.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500">Aucune journée créée pour le moment.</p>
@@ -2883,6 +2897,11 @@ function CompetitionMatchesList({
     return sorted.filter((m) => m.matchday_id === selectedMatchdayId);
   }, [sorted, selectedMatchdayId]);
 
+  const currentMatchdayIndex =
+    selectedMatchdayId && selectedMatchdayId !== "all"
+      ? sortedMatchdays.findIndex((md) => md.id === selectedMatchdayId)
+      : -1;
+
   if (sorted.length === 0) {
     return <p className="py-4 text-center text-xs text-slate-500">Aucun match synchronisé pour ce championnat.</p>;
   }
@@ -2890,32 +2909,39 @@ function CompetitionMatchesList({
   return (
     <div>
       {sortedMatchdays.length > 1 && (
-        <div className="mb-2 flex flex-wrap items-center gap-1 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setSelectedMatchdayId("all")}
-            className={`shrink-0 rounded-lg px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide transition-all ${
-              selectedMatchdayId === "all"
-                ? "bg-emerald-500 text-slate-950"
-                : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
-            }`}
+        <div className="mb-2 flex items-center gap-1">
+          <GhostButton
+            onClick={() => setSelectedMatchdayId(sortedMatchdays[currentMatchdayIndex - 1].id)}
+            disabled={currentMatchdayIndex <= 0}
+            title="Journée précédente"
+            ariaLabel="Journée précédente"
+            className="!px-1.5 !py-1"
           >
-            Toutes
-          </button>
-          {sortedMatchdays.map((md) => (
-            <button
-              key={md.id}
-              type="button"
-              onClick={() => setSelectedMatchdayId(md.id)}
-              className={`shrink-0 rounded-lg px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide transition-all ${
-                selectedMatchdayId === md.id
-                  ? "bg-emerald-500 text-slate-950"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
-              }`}
-            >
-              {matchdayLabel(md)}
-            </button>
-          ))}
+            <ChevronLeft size={12} />
+          </GhostButton>
+
+          <select
+            value={selectedMatchdayId ?? "all"}
+            onChange={(e) => setSelectedMatchdayId(e.target.value)}
+            className="rounded-lg border border-slate-700 bg-[#0d1322] px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide text-slate-200 outline-none focus:border-emerald-500/60"
+          >
+            <option value="all">Toutes les journées</option>
+            {sortedMatchdays.map((md) => (
+              <option key={md.id} value={md.id}>
+                {matchdayLabel(md)}
+              </option>
+            ))}
+          </select>
+
+          <GhostButton
+            onClick={() => setSelectedMatchdayId(sortedMatchdays[currentMatchdayIndex + 1].id)}
+            disabled={currentMatchdayIndex === -1 || currentMatchdayIndex >= sortedMatchdays.length - 1}
+            title="Journée suivante"
+            ariaLabel="Journée suivante"
+            className="!px-1.5 !py-1"
+          >
+            <ChevronRight size={12} />
+          </GhostButton>
         </div>
       )}
       <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
