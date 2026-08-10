@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { getMatches, getMatchdays } from "@/services/adminService";
 
 export const Route = createFileRoute("/gazette")({
   head: () => ({
@@ -31,18 +32,6 @@ export const Route = createFileRoute("/gazette")({
   }),
   component: GazettePage,
 });
-
-const CALENDAR_KEY = "admin_journees";
-const PRONOS_KEY = "prono_lm_clean_pronos";
-const BONUS_BY_JOURNEE_KEY = "prono_lm_bonus_selected_by_journee";
-const OLD_BONUS_KEY = "prono_lm_bonus_selected";
-const FAVORITE_TEAM_KEY = "favoriteTeam";
-
-type StorageRow = {
-  user_id: string;
-  storage_key: string;
-  storage_value: string | null;
-};
 
 type Profile = {
   id: string;
@@ -59,6 +48,14 @@ type Journee = {
   title: string;
   matches: any[];
   bonus: any[];
+};
+
+// Pronostics d'un joueur, indexés directement par match_id — predictions.match_id
+// référence matches.id (voir pronostics.tsx), donc plus besoin d'appareillage
+// flou par nom d'équipe ni de regroupement par journée pour retrouver un prono.
+type PlayerPronos = {
+  favoriteTeam: string;
+  byMatch: Map<string, any>;
 };
 
 type PlayerStats = {
@@ -88,15 +85,6 @@ type DayMatch = {
   isBonus: boolean;
 };
 
-function parseJson<T>(value: any, fallback: T): T {
-  try {
-    if (!value) return fallback;
-    return typeof value === "string" ? JSON.parse(value) : value;
-  } catch {
-    return fallback;
-  }
-}
-
 function clean(value: any) {
   return String(value || "")
     .normalize("NFD")
@@ -113,6 +101,7 @@ function sameClub(a: any, b: any) {
 
 function getTeamHome(match: any) {
   return (
+    match?.home_team ??
     match?.home ??
     match?.domicile ??
     match?.equipeDomicile ??
@@ -125,6 +114,7 @@ function getTeamHome(match: any) {
 
 function getTeamAway(match: any) {
   return (
+    match?.away_team ??
     match?.away ??
     match?.exterieur ??
     match?.equipeExterieur ??
@@ -174,92 +164,26 @@ function getResult1N2(home: any, away: any): "1" | "N" | "2" | null {
   return "N";
 }
 
-function get1N2Prono(prono: any) {
+// Le pick 1N2 d'un pronostic : soit renseigné directement (liste principale),
+// soit dérivé du score exact (club de cœur / bonus — voir pronostics.tsx qui
+// stocke déjà les deux). `pick` prime, le score sert de repli défensif.
+function pickResult(prono: any): "1" | "N" | "2" | "" {
   if (!prono) return "";
-  return String(
-    prono?.result ??
-      prono?.pick ??
-      prono?.prediction ??
-      prono?.choice ??
-      prono?.outcome ??
-      ""
-  ).toUpperCase();
+  const p = String(prono.pick ?? "").toUpperCase();
+  if (p === "1" || p === "N" || p === "2") return p;
+  return getResult1N2(prono.home_score, prono.away_score) || "";
 }
 
-function getScorePronoHome(prono: any) {
+// Score exact uniquement pertinent pour les pronostics "club de cœur"/bonus :
+// les picks 1N2 classiques n'ont jamais home_score/away_score renseignés,
+// donc cette fonction retourne naturellement false pour eux.
+function isExactPrediction(match: any, prono: any): boolean {
+  if (!prono || prono.home_score == null || prono.away_score == null) return false;
+  if (!hasScore(match)) return false;
   return (
-    prono?.homeScore ??
-    prono?.home ??
-    prono?.scoreHome ??
-    prono?.pronoHome ??
-    prono?.domicile ??
-    prono?.scoreDomicile ??
-    ""
+    Number(prono.home_score) === Number(getScoreHome(match)) &&
+    Number(prono.away_score) === Number(getScoreAway(match))
   );
-}
-
-function getScorePronoAway(prono: any) {
-  return (
-    prono?.awayScore ??
-    prono?.away ??
-    prono?.scoreAway ??
-    prono?.pronoAway ??
-    prono?.exterieur ??
-    prono?.scoreExterieur ??
-    ""
-  );
-}
-
-function isScorePronoFilled(prono: any) {
-  if (!prono) return false;
-  const h = Number(getScorePronoHome(prono));
-  const a = Number(getScorePronoAway(prono));
-  return Number.isFinite(h) && Number.isFinite(a);
-}
-
-function computeNormalPoints(match: any, prono: any) {
-  const pick = get1N2Prono(prono);
-  if (!pick || !hasScore(match)) return { points: 0, correct: false };
-  const real = getResult1N2(getScoreHome(match), getScoreAway(match));
-  const correct = pick === real;
-  return { points: correct ? 1 : 0, correct };
-}
-
-function computeExactModePoints(
-  match: any,
-  prono: any,
-  type: "favorite" | "bonus"
-) {
-  if (!prono || !hasScore(match)) {
-    return { points: 0, exact: false, correct: false };
-  }
-
-  const realHome = Number(getScoreHome(match));
-  const realAway = Number(getScoreAway(match));
-  const pronoHome = Number(getScorePronoHome(prono));
-  const pronoAway = Number(getScorePronoAway(prono));
-
-  if (
-    [realHome, realAway, pronoHome, pronoAway].some(
-      (value) => !Number.isFinite(value)
-    )
-  ) {
-    return { points: 0, exact: false, correct: false };
-  }
-
-  const exact = realHome === pronoHome && realAway === pronoAway;
-  const correct =
-    getResult1N2(realHome, realAway) === getResult1N2(pronoHome, pronoAway);
-
-  if (type === "bonus") {
-    if (exact) return { points: 3, exact: true, correct: true };
-    if (correct) return { points: 2, exact: false, correct: true };
-    return { points: 0, exact: false, correct: false };
-  }
-
-  if (exact) return { points: 2, exact: true, correct: true };
-  if (correct) return { points: 1, exact: false, correct: true };
-  return { points: 0, exact: false, correct: false };
 }
 
 function getFavoriteTeamValue(value: any) {
@@ -293,129 +217,6 @@ function isFavoriteMatch(match: any, favoriteTeam: string) {
   );
 }
 
-function normalizeJournees(data: any): Journee[] {
-  if (!Array.isArray(data)) return [];
-
-  return data.map((j: any, index: number) => ({
-    ...j,
-    id: j.id || `j${index + 1}`,
-    number: j.number ?? j.numero ?? index + 1,
-    title: j.title || `J${j.number ?? j.numero ?? index + 1}`,
-    matches: Array.isArray(j.matches)
-      ? j.matches
-      : Array.isArray(j.matchs)
-        ? j.matchs
-        : [],
-    bonus: Array.isArray(j.bonus) ? j.bonus : [],
-  }));
-}
-
-function getMatchKeyCandidates(match: any) {
-  const values = [
-    match?.id,
-    match?.matchId,
-    match?.fixtureId,
-    match?.api_fixture_id,
-    `${getTeamHome(match)}vs${getTeamAway(match)}`,
-    `${clean(getTeamHome(match))}vs${clean(getTeamAway(match))}`,
-  ]
-    .filter(Boolean)
-    .map(String);
-
-  return [...new Set(values)];
-}
-
-function getPronoForMatch(playerJourneePronos: any, match: any) {
-  if (!playerJourneePronos || typeof playerJourneePronos !== "object") {
-    return null;
-  }
-
-  for (const key of getMatchKeyCandidates(match)) {
-    if (playerJourneePronos[key]) return playerJourneePronos[key];
-  }
-
-  const home = clean(getTeamHome(match));
-  const away = clean(getTeamAway(match));
-
-  for (const [key, value] of Object.entries(playerJourneePronos)) {
-    const cleanedKey = clean(key);
-    if (home && away && cleanedKey.includes(home) && cleanedKey.includes(away)) {
-      return value;
-    }
-  }
-
-  return null;
-}
-
-function getJourneePronos(pronos: any, journee: Journee) {
-  if (!pronos || typeof pronos !== "object") return {};
-
-  const candidates = [
-    journee.id,
-    String(journee.number),
-    `J${journee.number}`,
-    journee.title,
-  ].filter(Boolean);
-
-  for (const key of candidates) {
-    if (pronos[key] && typeof pronos[key] === "object") {
-      return pronos[key];
-    }
-  }
-
-  for (const [key, value] of Object.entries(pronos)) {
-    const c = clean(key);
-    if (
-      c === clean(journee.id) ||
-      c === clean(journee.title) ||
-      c === clean(`J${journee.number}`) ||
-      c === clean(String(journee.number))
-    ) {
-      return value;
-    }
-  }
-
-  return {};
-}
-
-function normalizeBonusChoice(value: any) {
-  if (!value) return "";
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    if (typeof parsed === "string") return parsed;
-    if (parsed && typeof parsed === "object") {
-      return (
-        parsed.matchId ??
-        parsed.id ??
-        parsed.match ??
-        parsed.fixtureId ??
-        Object.values(parsed).find(Boolean) ??
-        ""
-      );
-    }
-  } catch {
-    return String(value);
-  }
-  return String(value);
-}
-
-function isSelectedBonusMatch(
-  selectedBonusId: any,
-  match: any
-) {
-  const selected = clean(normalizeBonusChoice(selectedBonusId));
-  if (!selected) return false;
-
-  return getMatchKeyCandidates(match).some((key) => {
-    const cleaned = clean(key);
-    return (
-      cleaned === selected ||
-      cleaned.includes(selected) ||
-      selected.includes(cleaned)
-    );
-  });
-}
-
 function sortRanking(
   a: Omit<PlayerStats, "rank" | "oldRank" | "evolution">,
   b: Omit<PlayerStats, "rank" | "oldRank" | "evolution">
@@ -430,19 +231,14 @@ function sortRanking(
 
 function calculatePlayer(
   profile: Profile,
-  storage: Record<string, string | null>,
+  playerPronos: PlayerPronos | undefined,
   journees: Journee[],
   scoredJournees: number[],
   lastJournee: number,
   onlyBeforeLast = false
 ): Omit<PlayerStats, "rank" | "oldRank" | "evolution"> {
-  const pronos = parseJson(storage[PRONOS_KEY], {});
-  const bonusByJournee = parseJson<Record<string, any>>(
-    storage[BONUS_BY_JOURNEE_KEY],
-    {}
-  );
-  const oldBonus = storage[OLD_BONUS_KEY] || "";
-  const favoriteTeam = getFavoriteTeamValue(storage[FAVORITE_TEAM_KEY]);
+  const byMatch = playerPronos?.byMatch;
+  const favoriteTeam = playerPronos?.favoriteTeam || "Non choisi";
 
   let total = 0;
   let favoritePoints = 0;
@@ -463,94 +259,56 @@ function calculatePlayer(
     const isLast = Number(journee.number) === Number(lastJournee);
     if (onlyBeforeLast && isLast) return;
 
-    const playerJourneePronos = getJourneePronos(pronos, journee);
     let dayPoints = 0;
 
+    // Barème aligné sur classement.tsx : 1 point par pick 1N2 correct (le
+    // pronostic "club de cœur" en score exact compte pour le même point s'il
+    // donne le bon résultat — aucun bonus de points pour l'exact ici, la
+    // distinction favori ne sert qu'à ventiler l'affichage de la Gazette).
     (journee.matches || []).forEach((match) => {
       if (!hasScore(match)) return;
 
-      const prono = getPronoForMatch(playerJourneePronos, match);
+      const prono = byMatch?.get(String(match.id));
       if (!prono) return;
 
       const favorite = isFavoriteMatch(match, favoriteTeam);
-      const storedPoints = Number(prono?.points);
+      const pick = pickResult(prono);
+      const real = getResult1N2(getScoreHome(match), getScoreAway(match));
+      const correct = Boolean(pick) && pick === real;
+      const points = correct ? 1 : 0;
 
-      if (Number.isFinite(storedPoints)) {
-        attempts += 1;
-        if (storedPoints > 0) corrects += 1;
-
-        const exact = Boolean(prono?.exact_score ?? prono?.exactScore);
-        if (favorite && exact) favoriteExacts += 1;
-
-        total += storedPoints;
-        if (favorite) favoritePoints += storedPoints;
-        else normalPoints += storedPoints;
-        dayPoints += storedPoints;
-        return;
-      }
+      attempts += 1;
+      if (correct) corrects += 1;
+      total += points;
+      dayPoints += points;
 
       if (favorite) {
-        if (!isScorePronoFilled(prono)) return;
-
-        const result = computeExactModePoints(match, prono, "favorite");
-        attempts += 1;
-        if (result.correct) corrects += 1;
-        if (result.exact) favoriteExacts += 1;
-
-        total += result.points;
-        favoritePoints += result.points;
-        dayPoints += result.points;
+        favoritePoints += points;
+        if (isExactPrediction(match, prono)) favoriteExacts += 1;
       } else {
-        if (!get1N2Prono(prono)) return;
-
-        const result = computeNormalPoints(match, prono);
-        attempts += 1;
-        if (result.correct) corrects += 1;
-
-        total += result.points;
-        normalPoints += result.points;
-        dayPoints += result.points;
+        normalPoints += points;
       }
     });
 
+    // Matchs bonus : exclus du total, comme dans classement.tsx ("les matchs
+    // bonus ayant leur propre système de points séparé"). On garde des
+    // compteurs informatifs (bonusPoints/bonusExacts) pour les rubriques
+    // dédiées de la Gazette, jamais ajoutés à `total`/`attempts`/`corrects`.
+    // Seul le match bonus effectivement choisi par le joueur a une prediction
+    // (les autres candidats de la journée n'en ont aucune) — pas besoin de
+    // retrouver une "sélection" séparée.
     (journee.bonus || []).forEach((match) => {
       if (!hasScore(match)) return;
 
-      const selectedBonusId =
-        bonusByJournee[journee.id] || oldBonus;
-
-      if (!isSelectedBonusMatch(selectedBonusId, match)) return;
-
-      const prono = getPronoForMatch(playerJourneePronos, match);
+      const prono = byMatch?.get(String(match.id));
       if (!prono) return;
 
-      const storedPoints = Number(prono?.points);
+      const pick = pickResult(prono);
+      const real = getResult1N2(getScoreHome(match), getScoreAway(match));
+      const correct = Boolean(pick) && pick === real;
 
-      if (Number.isFinite(storedPoints)) {
-        attempts += 1;
-        if (storedPoints > 0) corrects += 1;
-
-        if (Boolean(prono?.exact_score ?? prono?.exactScore)) {
-          bonusExacts += 1;
-        }
-
-        total += storedPoints;
-        bonusPoints += storedPoints;
-        dayPoints += storedPoints;
-        return;
-      }
-
-      if (!isScorePronoFilled(prono)) return;
-
-      const result = computeExactModePoints(match, prono, "bonus");
-
-      attempts += 1;
-      if (result.correct) corrects += 1;
-      if (result.exact) bonusExacts += 1;
-
-      total += result.points;
-      bonusPoints += result.points;
-      dayPoints += result.points;
+      if (correct) bonusPoints += 1;
+      if (isExactPrediction(match, prono)) bonusExacts += 1;
     });
 
     const day = byJournee.find(
@@ -592,38 +350,34 @@ function GazettePage() {
   const [journees, setJournees] = useState<Journee[]>([]);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [storageRows, setStorageRows] = useState<StorageRow[]>([]);
+  const [predictionsByUser, setPredictionsByUser] = useState<
+    Map<string, PlayerPronos>
+  >(new Map());
 
   const scrollerRef = useRef<HTMLDivElement>(null);
-
-  const storageByUser = useMemo(() => {
-    const map: Record<string, Record<string, string | null>> = {};
-
-    storageRows.forEach((row) => {
-      if (!map[row.user_id]) map[row.user_id] = {};
-      map[row.user_id][row.storage_key] = row.storage_value;
-    });
-
-    return map;
-  }, [storageRows]);
 
   async function loadData(silent = false) {
     if (!silent) setLoading(true);
     setError("");
 
     try {
-      // Le calendrier admin n'est stocké que côté client (localStorage) :
-      // app_settings n'est pas une table clé-valeur et n'a pas de colonne
-      // pour ces données, donc aucun fallback Supabase n'est possible ici.
-      const calendar = parseJson<any[]>(
-        localStorage.getItem(CALENDAR_KEY),
-        []
-      );
-
       const [
+        { data: competitionsData, error: competitionsError },
+        matchdaysData,
+        matchesData,
+        { data: bonusOptionsData, error: bonusOptionsError },
         { data: profileData, error: profileError },
         { data: predictionData, error: predictionError },
       ] = await Promise.all([
+        supabase.from("competitions").select("id, external_code, code"),
+        // Déjà triées par number, mêmes fonctions que admin.tsx/adminService.ts.
+        getMatchdays(),
+        // Paginée (>1000 lignes gérées) — même fonction que l'onglet admin.
+        getMatches(),
+        supabase
+          .from("bonus_options")
+          .select("matchday_id, match_id")
+          .eq("is_active", true),
         // IMPORTANT : select("*") évite les anciennes colonnes
         // player_name / account_status qui n'existent plus dans la base.
         supabase
@@ -631,182 +385,91 @@ function GazettePage() {
           .select("*")
           .order("pseudo", { ascending: true, nullsFirst: false }),
         // Les pronostics sont maintenant dans predictions.
-        supabase
-          .from("predictions")
-          .select("*"),
+        supabase.from("predictions").select("*"),
       ]);
 
+      if (competitionsError) throw competitionsError;
+      if (bonusOptionsError) throw bonusOptionsError;
       if (profileError) throw profileError;
       if (predictionError) throw predictionError;
 
-      const normalized = normalizeJournees(calendar);
+      // Filtre Ligue 1 : même pattern que pronostics.tsx — les matchdays des
+      // 4 championnats bonus (PL/PD/SA/BL1) partagent le même format de code
+      // ("J1", "J2"...), donc on scope explicitement par competition_id
+      // plutôt que par code/numéro.
+      const ligue1CompetitionId = (competitionsData ?? []).find(
+        (c: any) => c.external_code === "FL1" || c.code === "FL1"
+      )?.id;
+
+      const ligue1Matchdays = (matchdaysData ?? []).filter(
+        (md: any) => md.competition_id === ligue1CompetitionId
+      );
+
+      const matchesById = new Map<string, any>();
+      const matchesByMatchday = new Map<string, any[]>();
+
+      (matchesData ?? []).forEach((match: any) => {
+        matchesById.set(String(match.id), match);
+
+        if ((match.match_type ?? "LIGUE1") !== "LIGUE1") return;
+        if (!match.matchday_id) return;
+
+        const list = matchesByMatchday.get(match.matchday_id) ?? [];
+        list.push(match);
+        matchesByMatchday.set(match.matchday_id, list);
+      });
+
+      // Le match bonus réellement retenu pour une journée n'est pas marqué
+      // par un flag sur `matches` (is_bonus n'indique que "appartient à une
+      // compétition bonus", pas "sélectionné") — il faut passer par
+      // bonus_options (jusqu'à 4 candidats actifs par journée, un par
+      // championnat, cf. bonusOptionsService.ts).
+      const bonusMatchesByMatchday = new Map<string, any[]>();
+
+      (bonusOptionsData ?? []).forEach((option: any) => {
+        const match = matchesById.get(String(option.match_id));
+        if (!match) return;
+
+        const list = bonusMatchesByMatchday.get(option.matchday_id) ?? [];
+        list.push(match);
+        bonusMatchesByMatchday.set(option.matchday_id, list);
+      });
+
+      const normalized: Journee[] = ligue1Matchdays
+        .map((matchday: any) => ({
+          id: matchday.id,
+          number: matchday.number,
+          title: `J${matchday.number}`,
+          matches: matchesByMatchday.get(matchday.id) ?? [],
+          bonus: bonusMatchesByMatchday.get(matchday.id) ?? [],
+        }))
+        .sort((a, b) => Number(a.number) - Number(b.number));
+
       const profilesLoaded = (profileData || []) as Profile[];
       const predictions = predictionData || [];
 
-      // Index de tous les matchs présents dans le calendrier Gazette.
-      const matchIndex = new Map<string, { match: any; journee: Journee; isBonus: boolean }>();
+      // predictions.match_id référence directement matches.id (voir
+      // pronostics.tsx) : indexation directe, aucun appareillage flou requis.
+      const predictionsMap = new Map<string, PlayerPronos>();
 
-      normalized.forEach((journee) => {
-        (journee.matches || []).forEach((match) => {
-          getMatchKeyCandidates(match).forEach((key) => {
-            matchIndex.set(String(key), { match, journee, isBonus: false });
-          });
+      profilesLoaded.forEach((profile: any) => {
+        predictionsMap.set(profile.id, {
+          favoriteTeam: getFavoriteTeamValue(
+            profile.favorite_team ?? profile.favorite_team_id ?? null
+          ),
+          byMatch: new Map(),
         });
-
-        (journee.bonus || []).forEach((match) => {
-          getMatchKeyCandidates(match).forEach((key) => {
-            matchIndex.set(String(key), { match, journee, isBonus: true });
-          });
-        });
-      });
-
-      function findCalendarMatch(prediction: any) {
-        const directId = prediction?.match_id ?? prediction?.matchId ?? prediction?.fixtureId;
-        if (directId && matchIndex.has(String(directId))) {
-          return matchIndex.get(String(directId));
-        }
-
-        const home = clean(
-          prediction?.home ??
-            prediction?.home_team ??
-            prediction?.homeTeam ??
-            prediction?.domicile ??
-            ""
-        );
-        const away = clean(
-          prediction?.away ??
-            prediction?.away_team ??
-            prediction?.awayTeam ??
-            prediction?.exterieur ??
-            ""
-        );
-
-        if (!home || !away) return undefined;
-
-        for (const entry of matchIndex.values()) {
-          const entryHome = clean(getTeamHome(entry.match));
-          const entryAway = clean(getTeamAway(entry.match));
-          if (
-            (entryHome === home || entryHome.includes(home) || home.includes(entryHome)) &&
-            (entryAway === away || entryAway.includes(away) || away.includes(entryAway))
-          ) {
-            return entry;
-          }
-        }
-
-        return undefined;
-      }
-
-      // Recréation d'un petit adaptateur interne pour conserver exactement
-      // toute la logique/design de la Gazette existante, sans la table
-      // user_prono_storage.
-      const storageMap: Record<string, Record<string, any>> = {};
-
-      profilesLoaded.forEach((profile) => {
-        storageMap[profile.id] = {
-          pronos: {},
-          bonusByJournee: {},
-          favoriteTeam:
-            profile.favorite_team ??
-            profile.favorite_team_id ??
-            "Non choisi",
-        };
       });
 
       predictions.forEach((prediction: any) => {
-        const userId = prediction?.user_id;
-        if (!userId || !storageMap[userId]) return;
-
-        const located = findCalendarMatch(prediction);
-        if (!located) return;
-
-        const match = located.match;
-        const journee = located.journee;
-
-        if (!storageMap[userId].pronos[journee.id]) {
-          storageMap[userId].pronos[journee.id] = {};
-        }
-
-        const key =
-          prediction?.match_id ??
-          prediction?.matchId ??
-          prediction?.fixtureId ??
-          getMatchKeyCandidates(match)[0];
-
-        const prono = {
-          ...prediction,
-          pick:
-            prediction?.pick ??
-            prediction?.result ??
-            prediction?.prediction ??
-            prediction?.choice ??
-            "",
-          points:
-            prediction?.points === null || prediction?.points === undefined
-              ? undefined
-              : Number(prediction.points),
-          exact_score:
-            prediction?.exact_score ??
-            prediction?.exactScore ??
-            false,
-          bonus_used:
-            prediction?.bonus_used ??
-            prediction?.bonusUsed ??
-            false,
-          homeScore:
-            prediction?.homeScore ??
-            prediction?.predicted_home_score ??
-            prediction?.prediction_home_score ??
-            prediction?.scoreHome ??
-            prediction?.home ??
-            undefined,
-          awayScore:
-            prediction?.awayScore ??
-            prediction?.predicted_away_score ??
-            prediction?.prediction_away_score ??
-            prediction?.scoreAway ??
-            prediction?.away ??
-            undefined,
-        };
-
-        storageMap[userId].pronos[journee.id][String(key)] = prono;
-
-        if (prono.bonus_used) {
-          storageMap[userId].bonusByJournee[journee.id] = String(key);
-        }
-      });
-
-      const syntheticStorageRows: StorageRow[] = [];
-
-      profilesLoaded.forEach((profile) => {
-        const user = storageMap[profile.id] || {
-          pronos: {},
-          bonusByJournee: {},
-          favoriteTeam: "Non choisi",
-        };
-
-        syntheticStorageRows.push(
-          {
-            user_id: profile.id,
-            storage_key: PRONOS_KEY,
-            storage_value: JSON.stringify(user.pronos),
-          },
-          {
-            user_id: profile.id,
-            storage_key: BONUS_BY_JOURNEE_KEY,
-            storage_value: JSON.stringify(user.bonusByJournee),
-          },
-          {
-            user_id: profile.id,
-            storage_key: FAVORITE_TEAM_KEY,
-            storage_value: JSON.stringify(user.favoriteTeam),
-          }
-        );
+        const entry = predictionsMap.get(prediction?.user_id);
+        if (!entry || !prediction?.match_id) return;
+        entry.byMatch.set(String(prediction.match_id), prediction);
       });
 
       setJournees(normalized);
       setProfiles(profilesLoaded);
-      setStorageRows(syntheticStorageRows);
+      setPredictionsByUser(predictionsMap);
 
       if (normalized.length) {
         const scored = normalized.filter((journee) =>
@@ -850,13 +513,11 @@ function GazettePage() {
   const lastJournee = scoredJournees[scoredJournees.length - 1] || 1;
 
   const allStats = useMemo(() => {
-    const active = profiles;
-
-    const current = active
+    const current = profiles
       .map((profile) =>
         calculatePlayer(
           profile,
-          storageByUser[profile.id] || {},
+          predictionsByUser.get(profile.id),
           journees,
           scoredJournees,
           lastJournee
@@ -865,11 +526,11 @@ function GazettePage() {
       .sort(sortRanking)
       .map((item, index) => ({ ...item, rank: index + 1 }));
 
-    const beforeLast = active
+    const beforeLast = profiles
       .map((profile) =>
         calculatePlayer(
           profile,
-          storageByUser[profile.id] || {},
+          predictionsByUser.get(profile.id),
           journees,
           scoredJournees,
           lastJournee,
@@ -894,7 +555,7 @@ function GazettePage() {
     });
   }, [
     profiles,
-    storageByUser,
+    predictionsByUser,
     journees,
     scoredJournees,
     lastJournee,
@@ -934,70 +595,34 @@ function GazettePage() {
       picks: { result: string; exact: boolean }[];
     }[] = [];
 
-    profiles
+    profiles.forEach((profile) => {
+      const playerPronos = predictionsByUser.get(profile.id);
 
-      .forEach((profile) => {
-        const storage = storageByUser[profile.id] || {};
-        const pronos = parseJson(storage[PRONOS_KEY], {});
-        const playerJourneePronos = selectedJournee
-          ? getJourneePronos(pronos, selectedJournee)
-          : {};
+      selectedDayMatches.forEach((dayMatch) => {
+        const prono = playerPronos?.byMatch.get(String(dayMatch.match.id));
+        if (!prono) return;
 
-        selectedDayMatches.forEach((dayMatch) => {
-          const prono = getPronoForMatch(
-            playerJourneePronos,
-            dayMatch.match
-          );
-          if (!prono) return;
+        const pick = pickResult(prono);
+        const exact = isExactPrediction(dayMatch.match, prono);
 
-          const storedPoints = Number(prono?.points);
-          const result = Number.isFinite(storedPoints)
-            ? {
-                points: storedPoints,
-                exact: Boolean(prono?.exact_score ?? prono?.exactScore),
-                correct: storedPoints > 0,
-              }
-            : dayMatch.isBonus
-              ? computeExactModePoints(dayMatch.match, prono, "bonus")
-              : isFavoriteMatch(
-                    dayMatch.match,
-                    getFavoriteTeamValue(storage[FAVORITE_TEAM_KEY])
-                  )
-                ? computeExactModePoints(
-                    dayMatch.match,
-                    prono,
-                    "favorite"
-                  )
-                : computeNormalPoints(dayMatch.match, prono);
+        if (pick === "1" || pick === "N" || pick === "2") {
+          distribution[pick] += 1;
+          totalPredictions += 1;
+        }
 
-          const pick =
-            get1N2Prono(prono) ||
-            getResult1N2(
-              getScorePronoHome(prono),
-              getScorePronoAway(prono)
-            );
+        if (exact) totalExact += 1;
 
-          if (pick === "1" || pick === "N" || pick === "2") {
-            distribution[pick] += 1;
-            totalPredictions += 1;
-          }
+        let row = matchRows.find(
+          (entry) => entry.dayMatch.match === dayMatch.match
+        );
+        if (!row) {
+          row = { dayMatch, picks: [] };
+          matchRows.push(row);
+        }
 
-          if (Boolean((result as any).exact)) totalExact += 1;
-
-          let row = matchRows.find(
-            (entry) => entry.dayMatch.match === dayMatch.match
-          );
-          if (!row) {
-            row = { dayMatch, picks: [] };
-            matchRows.push(row);
-          }
-
-          row.picks.push({
-            result: pick || "",
-            exact: Boolean((result as any).exact),
-          });
-        });
+        row.picks.push({ result: pick || "", exact });
       });
+    });
 
     return {
       distribution,
@@ -1005,97 +630,7 @@ function GazettePage() {
       totalExact,
       matchRows,
     };
-  }, [
-    profiles,
-    storageByUser,
-    selectedJournee,
-    selectedDayMatches,
-  ]);
-
-  const playerDayPoints = useMemo(() => {
-    if (!selectedJournee) return new Map<string, number>();
-
-    const map = new Map<string, number>();
-
-    profiles
-
-      .forEach((profile) => {
-        const storage = storageByUser[profile.id] || {};
-        const pronos = parseJson(storage[PRONOS_KEY], {});
-        const bonusByJournee = parseJson<Record<string, any>>(
-          storage[BONUS_BY_JOURNEE_KEY],
-          {}
-        );
-        const oldBonus = storage[OLD_BONUS_KEY] || "";
-        const favoriteTeam = getFavoriteTeamValue(
-          storage[FAVORITE_TEAM_KEY]
-        );
-        const playerJourneePronos = getJourneePronos(
-          pronos,
-          selectedJournee
-        );
-
-        let points = 0;
-
-        selectedJournee.matches.forEach((match) => {
-          if (!hasScore(match)) return;
-
-          const prono = getPronoForMatch(
-            playerJourneePronos,
-            match
-          );
-          const storedPoints = Number(prono?.points);
-
-          if (Number.isFinite(storedPoints)) {
-            points += storedPoints;
-          } else if (isFavoriteMatch(match, favoriteTeam)) {
-            if (isScorePronoFilled(prono)) {
-              points += computeExactModePoints(
-                match,
-                prono,
-                "favorite"
-              ).points;
-            }
-          } else if (get1N2Prono(prono)) {
-            points += computeNormalPoints(match, prono).points;
-          }
-        });
-
-        selectedJournee.bonus.forEach((match) => {
-          if (!hasScore(match)) return;
-
-          const selectedBonusId =
-            bonusByJournee[selectedJournee.id] || oldBonus;
-
-          if (!isSelectedBonusMatch(selectedBonusId, match)) return;
-
-          const prono = getPronoForMatch(
-            playerJourneePronos,
-            match
-          );
-
-          const storedPoints = Number(prono?.points);
-
-          if (Number.isFinite(storedPoints)) {
-            points += storedPoints;
-          } else if (isScorePronoFilled(prono)) {
-            points += computeExactModePoints(
-              match,
-              prono,
-              "bonus"
-            ).points;
-          }
-        });
-
-        map.set(profile.id, points);
-      });
-
-    return map;
-  }, [
-    profiles,
-    storageByUser,
-    selectedJournee,
-  ]);
+  }, [profiles, predictionsByUser, selectedDayMatches]);
 
   const dynamicStats = useMemo(() => {
     const matches = dayPredictionStats.matchRows;
@@ -1126,31 +661,12 @@ function GazettePage() {
 
     const bestExactCount = [...allStats]
       .map((player) => {
-        const storage = storageByUser[player.id] || {};
-        const pronos = parseJson(storage[PRONOS_KEY], {});
-        const jp = selectedJournee
-          ? getJourneePronos(pronos, selectedJournee)
-          : {};
+        const playerPronos = predictionsByUser.get(player.id);
 
         let exacts = 0;
-        selectedDayMatches.forEach(({ match, isBonus }) => {
-          const prono = getPronoForMatch(jp, match);
-          if (!prono) return;
-
-          const result = Number.isFinite(Number(prono?.points))
-            ? {
-                exact: Boolean(prono?.exact_score ?? prono?.exactScore),
-              }
-            : isBonus
-              ? computeExactModePoints(match, prono, "bonus")
-              : isFavoriteMatch(
-                    match,
-                    getFavoriteTeamValue(storage[FAVORITE_TEAM_KEY])
-                  )
-                ? computeExactModePoints(match, prono, "favorite")
-                : { exact: false };
-
-          if (result.exact) exacts += 1;
+        selectedDayMatches.forEach(({ match }) => {
+          const prono = playerPronos?.byMatch.get(String(match.id));
+          if (isExactPrediction(match, prono)) exacts += 1;
         });
 
         return { player, exacts };
@@ -1223,30 +739,25 @@ function GazettePage() {
     dayPredictionStats,
     selectedJournee,
     selectedDayMatches,
-    storageByUser,
+    predictionsByUser,
   ]);
 
   const supportersStats = useMemo(() => {
     const counts: Record<string, number> = {};
 
-    profiles
+    profiles.forEach((profile) => {
+      const team = predictionsByUser.get(profile.id)?.favoriteTeam || "Non choisi";
 
-      .forEach((profile) => {
-        const storage = storageByUser[profile.id] || {};
-        const team = getFavoriteTeamValue(
-          storage[FAVORITE_TEAM_KEY]
-        );
-
-        if (team && team !== "Non choisi") {
-          counts[team] = (counts[team] || 0) + 1;
-        }
-      });
+      if (team && team !== "Non choisi") {
+        counts[team] = (counts[team] || 0) + 1;
+      }
+    });
 
     return Object.entries(counts)
       .map(([team, count]) => ({ team, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 4);
-  }, [profiles, storageByUser]);
+  }, [profiles, predictionsByUser]);
 
   const topSupporterText = supportersStats.length
     ? supportersStats
