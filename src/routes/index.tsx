@@ -1,4 +1,3 @@
-﻿
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
@@ -18,7 +17,6 @@ import {
   Sparkles,
   Star
 } from "lucide-react";
-import { ranking } from "@/lib/prono-data";
 import { CountdownBlocks } from "@/components/prono/Countdown";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 
@@ -34,10 +32,6 @@ export const Route = createFileRoute("/")({
 
 function IndexPage() {
   const { favoriteTeamId, saveFavoriteTeam } = useFavoriteTeam();
-  // Profil (table `profiles`, colonne avatar_url) : même source de vérité
-  // que /profil, via le contexte auth partagé — refreshProfile() permet à
-  // /profil de pousser un changement d'avatar ici sans rechargement, et
-  // inversement dès que cette carte enregistre une nouvelle photo.
   const { user, profile, refreshProfile } = useAuth();
 
   const [teams, setTeams] = useState<any[]>([]);
@@ -45,47 +39,215 @@ function IndexPage() {
   const [isSaved, setIsSaved] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
-  // "Changer mon équipe" : révèle un select inline + bouton Valider, sans
-  // quitter l'accueil. Même liste d'équipes (déjà chargée ci-dessous) et
-  // même hook saveFavoriteTeam que le reste du site.
   const [isChangingTeam, setIsChangingTeam] = useState(false);
   const [pendingTeamId, setPendingTeamId] = useState("");
   const [savingTeam, setSavingTeam] = useState(false);
 
-  // 1. On télécharge la vraie liste des équipes depuis ta base de données
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [myStats, setMyStats] = useState({
+    rank: 0,
+    points: 0,
+    exactScores: 0,
+    successRate: 0,
+    totalPronos: 0,
+    avgPoints: 0,
+    bestDay: "-",
+    bestDayPoints: 0,
+  });
+  const [currentMatchday, setCurrentMatchday] = useState("J1");
+  const [potAmount, setPotAmount] = useState(0);
+
+  // 1. Liste des équipes
   useEffect(() => {
     async function fetchTeams() {
       const { data } = await supabase
         .from("teams")
         .select("id, name, short_name, logo_url")
         .order("name");
-        
-      if (data) {
-        setTeams(data);
-      }
+      if (data) setTeams(data);
     }
     fetchTeams();
   }, []);
 
-  // 2. On met à jour l'affichage avec l'équipe favorite (ou on met Lens par défaut si rien n'est choisi)
+  // 2. Données d’accueil (classement, stats, cagnotte) – robuste
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchHomeData() {
+      try {
+        // On récupère chaque ressource indépendamment pour ne pas tout casser
+        const [
+          { data: profiles, error: profilesError },
+          { data: predictions, error: predictionsError },
+          { data: matches, error: matchesError },
+          { data: payments, error: paymentsError },
+        ] = await Promise.all([
+          supabase
+            .from("profiles")
+            // Si la colonne account_status n'existe pas, la 400 disparaît.
+            // Tu pourras la rajouter quand elle sera créée.
+            .select("id,pseudo,username,player_name,avatar_url,favorite_team_id"),
+          supabase
+            .from("predictions")
+            .select("user_id,match_id,points,exact_score,updated_at"),
+          supabase
+            .from("matches")
+            .select("id,matchday_code,matchday,match_day,status,kickoff,kickoff_time")
+            .order("kickoff", { ascending: true }),
+          supabase
+            .from("payments")
+            .select("amount,paid"),
+        ]);
+
+        // On logue les erreurs individuelles mais on continue
+        if (profilesError) console.warn("Erreur chargement profils :", profilesError);
+        if (predictionsError) console.warn("Erreur chargement pronostics :", predictionsError);
+        if (matchesError) console.warn("Erreur chargement matchs :", matchesError);
+        if (paymentsError) console.warn("Cagnotte non accessible :", paymentsError);
+
+        if (cancelled) return;
+
+        const profileById = new Map((profiles || []).map((p: any) => [p.id, p]));
+        const teamById = new Map((teams || []).map((t: any) => [t.id, t]));
+
+        // -------- Calcul du classement à partir des pronostics --------
+        const rankingMap = new Map<string, number>();
+        const exactMap = new Map<string, number>();
+        const countMap = new Map<string, number>();
+
+        (predictions || []).forEach((p: any) => {
+          const uid = p.user_id;
+          const points = Number(p.points || 0);
+          rankingMap.set(uid, (rankingMap.get(uid) || 0) + points);
+          exactMap.set(uid, (exactMap.get(uid) || 0) + (p.exact_score ? 1 : 0));
+          countMap.set(uid, (countMap.get(uid) || 0) + 1);
+        });
+
+        // On complète avec les profils manquants (pour les joueurs sans pronos)
+        const allUserIds = new Set(rankingMap.keys());
+        (profiles || []).forEach((p: any) => allUserIds.add(p.id));
+
+        const normalizedRankings = Array.from(allUserIds)
+          .map((uid) => {
+            const p = profileById.get(uid) || {};
+            const team = teamById.get(p.favorite_team_id);
+            return {
+              user_id: uid,
+              total_points: rankingMap.get(uid) || 0,
+              exact_scores: exactMap.get(uid) || 0,
+              predictions_count: countMap.get(uid) || 0,
+              name: p.pseudo || p.username || p.player_name || "Joueur",
+              avatar_url: p.avatar_url || "",
+              favorite_team: team?.name || "",
+              favorite_logo: team?.logo_url || "",
+            };
+          })
+          // Tri : points décroissant, puis scores exacts, puis nb pronos
+          .sort((a, b) =>
+            b.total_points - a.total_points ||
+            b.exact_scores - a.exact_scores ||
+            a.predictions_count - b.predictions_count
+          )
+          // On attribue un rang (1er ex-aequo garde le même rang)
+          .map((row, idx, arr) => ({
+            ...row,
+            rank: idx === 0 ? 1 : arr[idx - 1].total_points === row.total_points ? arr[idx - 1].rank : idx + 1,
+          }));
+
+        setLeaderboard(normalizedRankings);
+
+        // -------- Journée la plus récente terminée --------
+        const finished = (matches || []).filter((m: any) =>
+          String(m.status || "").toLowerCase() === "finished" ||
+          String(m.status || "").toLowerCase() === "ft"
+        );
+        const dayNumber = (value: any) => {
+          const match = String(value ?? "").match(/\d+/);
+          return match ? Number(match[0]) : 0;
+        };
+        const latest = [...finished].sort((a: any, b: any) =>
+          dayNumber(b.matchday_code || b.matchday || b.match_day) -
+          dayNumber(a.matchday_code || a.matchday || a.match_day)
+        )[0];
+        if (latest) {
+          const raw = latest.matchday_code || latest.matchday || latest.match_day;
+          setCurrentMatchday(String(raw).toUpperCase().startsWith("J") ? String(raw).toUpperCase() : `J${raw}`);
+        }
+
+        // -------- Stats personnelles --------
+        if (user?.id) {
+          const mine = (predictions || []).filter((p: any) => p.user_id === user.id);
+          const meRanking = normalizedRankings.find((r: any) => r.user_id === user.id);
+          const matchById = new Map((matches || []).map((m: any) => [String(m.id), m]));
+          const points = mine.reduce((sum: number, p: any) => sum + Number(p.points || 0), 0);
+          const exacts = mine.reduce((sum: number, p: any) => sum + (p.exact_score ? 1 : 0), 0);
+          const bons = mine.filter((p: any) => Number(p.points || 0) > 0).length;
+          const days = new Set<string>();
+          const pointsByDay = new Map<string, number>();
+
+          mine.forEach((p: any) => {
+            const m = matchById.get(String(p.match_id));
+            if (!m) return;
+            const rawDay = m.matchday_code || m.matchday || m.match_day;
+            if (rawDay === null || rawDay === undefined || rawDay === "") return;
+            const day = String(rawDay).toUpperCase().startsWith("J") ? String(rawDay).toUpperCase() : `J${rawDay}`;
+            days.add(day);
+            pointsByDay.set(day, (pointsByDay.get(day) || 0) + Number(p.points || 0));
+          });
+
+          let bestDay = "-";
+          let bestDayPoints = 0;
+          pointsByDay.forEach((value, day) => {
+            if (value > bestDayPoints) {
+              bestDayPoints = value;
+              bestDay = day;
+            }
+          });
+
+          const finalPoints = points;
+          const finalExacts = exacts;
+          const finalCount = mine.length;
+          const rank = meRanking?.rank ?? 0;
+
+          setMyStats({
+            rank,
+            points: finalPoints,
+            exactScores: finalExacts,
+            successRate: mine.length ? Math.round((bons / mine.length) * 100) : 0,
+            totalPronos: finalCount,
+            avgPoints: days.size ? Number((points / days.size).toFixed(1)) : 0,
+            bestDay,
+            bestDayPoints,
+          });
+        }
+
+        // -------- Cagnotte --------
+        if (!paymentsError) {
+          const total = (payments || [])
+            .filter((p: any) => Boolean(p.paid))
+            .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+          setPotAmount(total);
+        }
+      } catch (error) {
+        console.error("Erreur de chargement Supabase accueil :", error);
+      }
+    }
+
+    fetchHomeData();
+    return () => { cancelled = true; };
+  }, [user?.id, teams]);
+
+  // 3. Équipe favorite par défaut
   useEffect(() => {
     if (favoriteTeamId) {
       setClubId(favoriteTeamId);
     } else if (teams.length > 0 && !clubId) {
-      // Cherche le vrai ID du RC Lens dans la base de données via son short_name 'RCL'
       const defaultTeam = teams.find(t => t.short_name === 'RCL') || teams[0];
       if (defaultTeam) setClubId(defaultTeam.id);
     }
-  }, [favoriteTeamId, teams]); 
+  }, [favoriteTeamId, teams]);
 
-  // L'équipe qui s'affiche à l'écran correspond au choix en cours dans le menu déroulant
   const activeClub = teams.find((c) => c.id === clubId);
-  const me = ranking?.find((p) => p.current) || { rank: 5, score: 112, name: "Red evils" };
-  // Thème visuel du club affiché (background, couleurs, glow, gradient, bouton)
-  // — voir src/lib/team-theme.ts. On passe `activeClub?.name` en override plutôt
-  // que de laisser le hook regarder le club favori enregistré : `activeClub` est
-  // ce qui est réellement affiché à l'écran (le défaut RC Lens tant qu'aucun
-  // favori n'est confirmé, voir l'effet ci-dessus), donc la source correcte.
   const {
     theme: clubTheme,
     backgroundUrl: clubWallpaperUrl,
@@ -115,10 +277,9 @@ function IndexPage() {
     }
   };
 
-  // Upload direct de l'avatar depuis cette carte (pas de redirection vers /profil).
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // permet de re-sélectionner le même fichier ensuite
+    e.target.value = "";
     if (!file || !user) return;
 
     setAvatarUploading(true);
@@ -144,25 +305,21 @@ function IndexPage() {
         
         {/* HERO SECTION avec Effet Verre */}
         <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-8 md:p-12 shadow-[0_0_50px_rgba(0,0,0,0.7)]">
-          {/* Visuel L1 (stade + badge) */}
           <div
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 right-0 w-full md:w-[62%] block"
+            role="img"
+            aria-label="Ligue 1"
+            className="pointer-events-none absolute inset-0 block"
             style={{
-              backgroundImage: "url('/hero-l1.jpg')",
-              backgroundSize: "115% auto",
+              backgroundImage: "url('/logo-ligue1.png')",
+              backgroundSize: "cover",
               backgroundPosition: "center 35%",
               backgroundRepeat: "no-repeat",
-              WebkitMaskImage: "linear-gradient(to left, black 45%, transparent 92%)",
-              maskImage: "linear-gradient(to left, black 45%, transparent 92%)",
             }}
           />
           <div
             aria-hidden
-            className="pointer-events-none absolute right-0 bottom-0 hidden h-2/3 w-[62%] bg-gradient-to-t from-[#0d1322] to-transparent lg:block"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1322] from-0% via-[#0d1322]/70 via-40% to-[#0d1322]/10 to-90%"
           />
-
-          <div className="absolute top-0 right-0 w-full md:w-2/3 h-full bg-gradient-to-l from-emerald-500/10 via-blue-500/5 to-transparent pointer-events-none" />
 
           <div className="relative z-10 grid gap-8 lg:grid-cols-[1fr_auto] items-center">
             <div className="space-y-5 max-w-full lg:max-w-[56%]">
@@ -180,7 +337,6 @@ function IndexPage() {
                 Affronte tes amis, fais les bons pronos et deviens le champion incontesté de la saison.
               </p>
 
-              {/* Prochaine journée + compte à rebours */}
               <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 p-4">
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <span className="font-mono text-[10px] uppercase tracking-widest text-emerald-400 font-bold">
@@ -236,8 +392,7 @@ function IndexPage() {
               />
             )}
             <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-r from-[#0d1322]/90 from-0% via-[#0d1322]/60 via-35% to-transparent to-62%" />
-            <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-t from-[#0d1322]/70 from-0% via-transparent via-30% to-transparent" />
-            {/* Halo aux couleurs du club favori */}
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-[62%] z-0 bg-gradient-to-t from-[#0d1322]/70 from-0% via-transparent via-30% to-transparent" />
             <div
               aria-hidden
               className="pointer-events-none absolute -bottom-16 -left-16 z-0 h-64 w-64 rounded-full blur-[110px]"
@@ -246,7 +401,6 @@ function IndexPage() {
             <div className="absolute top-0 right-0 w-64 h-full bg-gradient-to-l from-amber-500/5 to-transparent pointer-events-none" />
 
             <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center md:pr-[30%] lg:pr-[34%]">
-              {/* Identité + niveau */}
               <div className="flex min-w-0 flex-1 items-center gap-5">
                 <div className="relative shrink-0">
                   <div className="size-36 md:size-40 rounded-full p-1 bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-500 shadow-[0_0_20px_rgba(245,158,11,0.3)]">
@@ -258,7 +412,7 @@ function IndexPage() {
                           className="size-full object-cover"
                         />
                       ) : (
-                        <span className="font-display text-3xl md:text-4xl font-extrabold text-red-500 tracking-wider">MU</span>
+                        <span className="font-display text-3xl md:text-4xl font-extrabold text-red-500 tracking-wider">{(profile?.pseudo || profile?.username || "JO").slice(0, 2).toUpperCase()}</span>
                       )}
                     </div>
                   </div>
@@ -284,14 +438,14 @@ function IndexPage() {
                   <span className="inline-flex items-center gap-1 mb-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[10px] font-bold tracking-widest">
                     <Star size={10} className="fill-amber-400" /> NIVEAU 12
                   </span>
-                  <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight truncate">Red evils</h3>
+                  <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight truncate">{profile?.pseudo || profile?.username || "Joueur"}</h3>
 
                   <div className="flex flex-wrap items-center gap-3 mt-4">
                     <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-sm font-bold">
-                      <Trophy size={14} /> #{me.rank} du classement
+                      <Trophy size={14} /> #{myStats.rank || "—"} du classement
                     </span>
                     <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 font-mono text-sm font-bold">
-                      {me.score} pts
+                      {myStats.points} pts
                     </span>
                   </div>
                 </div>
@@ -386,7 +540,7 @@ function IndexPage() {
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center opacity-60"
-              style={{ backgroundImage: "url('/stadium-gold-bg.png')" }}
+              style={{ backgroundImage: "url('/images/fond-bloc-accueil.png')" }}
             />
             <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#0d1322]/20 via-[#0d1322]/35 to-[#0d1322]/55" />
             <div className="absolute top-0 right-0 w-72 h-72 bg-gradient-to-bl from-amber-500/10 via-transparent to-transparent pointer-events-none" />
@@ -395,7 +549,7 @@ function IndexPage() {
               <div>
                 <div className="flex items-center gap-1.5 mb-1">
                   <Sparkles size={14} className="text-amber-400 animate-pulse" />
-                  <span className="font-mono text-[10px] uppercase text-amber-400 font-bold tracking-widest">À l'issue de la J5</span>
+                  <span className="font-mono text-[10px] uppercase text-amber-400 font-bold tracking-widest">À l'issue de la {currentMatchday}</span>
                 </div>
                 <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight">Classement général</h3>
               </div>
@@ -408,47 +562,47 @@ function IndexPage() {
             </div>
 
             <div className="relative z-10 grid grid-cols-3 gap-3 items-end pt-10 pb-2 text-center">
-              <div className="group relative rounded-2xl border border-slate-700 bg-gradient-to-b from-slate-800/40 via-[#060b16] to-[#060b16] p-4 flex flex-col items-center justify-end pb-6 h-36 transition-all hover:scale-105">
-                <span className="absolute -top-3 size-6 rounded-full bg-slate-700 text-white font-mono font-bold text-[10px] grid place-items-center shadow">
-                  #2
-                </span>
-                <span className="font-mono text-[10px] text-slate-400 uppercase tracking-wider mb-1">2ème</span>
-                <b className="font-display text-base text-white tracking-tight truncate w-full">Jo B</b>
-                <div className="mt-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-xs font-bold">
-                  142 pts
-                </div>
-              </div>
-
-              <div className="group relative rounded-2xl border border-amber-500/60 bg-gradient-to-b from-amber-500/25 via-[#0a0f1d] to-[#060b16] p-4 flex flex-col items-center justify-end pb-6 -translate-y-5 h-48 shadow-[0_0_35px_rgba(245,158,11,0.25)] transition-all hover:scale-105">
-                <div className="absolute -top-4 size-8 rounded-full bg-amber-400 text-slate-950 font-display font-black text-sm grid place-items-center shadow-xl">
-                  <Crown size={16} className="fill-slate-950" />
-                </div>
-                <span className="font-mono text-[10px] text-amber-400 font-bold uppercase tracking-wider mb-1">#1 ex-aequo</span>
-                <div className="flex flex-col items-center justify-center w-full">
-                  <b className="font-display text-sm md:text-base text-white tracking-tight truncate">Samuel</b>
-                  <span className="text-amber-400 font-mono text-[10px] my-0.5">&</span>
-                  <b className="font-display text-sm md:text-base text-white tracking-tight truncate">Éric</b>
-                </div>
-                <div className="mt-2 inline-flex items-center gap-1 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono text-xs font-bold">
-                  160 pts
-                </div>
-              </div>
-
-              <div className="group relative rounded-2xl border border-slate-700/80 bg-gradient-to-b from-amber-900/20 via-[#060b16] to-[#060b16] p-4 flex flex-col items-center justify-end pb-6 h-28 transition-all hover:scale-105">
-                <span className="absolute -top-3 size-6 rounded-full bg-amber-900/60 text-amber-200 font-mono font-bold text-[10px] grid place-items-center shadow">
-                  #3
-                </span>
-                <span className="font-mono text-[10px] text-amber-500/80 uppercase tracking-wider mb-1">3ème</span>
-                <b className="font-display text-base text-white tracking-tight truncate w-full">Hugo</b>
-                <div className="mt-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono text-xs font-bold">
-                  136 pts
-                </div>
-              </div>
+              {([0, 1, 2] as number[]).map((index) => {
+                const player = leaderboard[index];
+                const place = index + 1;
+                const isFirst = place === 1;
+                const height = isFirst ? "h-48 -translate-y-5" : place === 2 ? "h-36" : "h-28";
+                const positionOrder =
+                  place === 2 ? "order-1" :
+                  place === 1 ? "order-2" :
+                  "order-3";
+                return (
+                  <div
+                    key={player?.user_id || `place-${place}`}
+                    className={`group relative ${positionOrder} rounded-2xl border ${isFirst ? "border-amber-500/60 shadow-[0_0_35px_rgba(245,158,11,0.25)]" : "border-slate-700/80"} p-4 flex flex-col items-center justify-end pb-6 ${height} transition-all hover:scale-105`}
+                  >
+                    <div className="absolute inset-0 rounded-2xl overflow-hidden">
+                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: `url('/images/podium/podium-${place}.png')` }} />
+                      <div className="absolute inset-0 bg-black/50" />
+                    </div>
+                    <span className={`absolute -top-3 size-6 rounded-full ${isFirst ? "bg-amber-400 text-slate-950" : place === 2 ? "bg-slate-700 text-white" : "bg-amber-900/60 text-amber-200"} font-mono font-bold text-[10px] grid place-items-center shadow z-10`}>
+                      #{place}
+                    </span>
+                    <span className={`relative z-10 font-mono text-[10px] uppercase tracking-wider mb-1 ${isFirst ? "text-amber-400 font-bold" : "text-slate-300"}`}>
+                      {isFirst ? "1er" : `${place}ème`}
+                    </span>
+                    {player?.avatar_url ? (
+                      <img src={player.avatar_url} alt="" className="relative z-10 size-8 rounded-full object-cover border border-white/20 mb-1" />
+                    ) : null}
+                    <b className="relative z-10 font-display text-sm md:text-base text-white tracking-tight truncate w-full">
+                      {player?.name || "En attente"}
+                    </b>
+                    <div className={`relative z-10 mt-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full ${isFirst ? "bg-amber-500/10 border border-amber-500/30 text-amber-300" : "bg-slate-800/90 border border-slate-700 text-slate-300"} font-mono text-xs font-bold`}>
+                      {Number(player?.total_points || 0)} pts
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 font-mono">
               <span>Ligue ultra serrée en tête !</span>
-              <span className="text-amber-400 font-bold">Cagnotte : 50 €</span>
+              <span className="text-amber-400 font-bold">Cagnotte : {potAmount.toFixed(0)} €</span>
             </div>
           </div>
 
@@ -456,7 +610,7 @@ function IndexPage() {
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center opacity-60"
-              style={{ backgroundImage: "url('/stadium-gold-bg.png')" }}
+              style={{ backgroundImage: "url('/images/fond-bloc-accueil.png')" }}
             />
             <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#0d1322]/20 via-[#0d1322]/35 to-[#0d1322]/55" />
 
@@ -471,28 +625,44 @@ function IndexPage() {
             </div>
 
             <div className="relative z-10 grid grid-cols-2 gap-4">
-              <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
-                <span className="font-mono text-[10px] uppercase text-slate-500 block mb-1">Bons pronos</span>
-                <strong className="font-display text-3xl text-emerald-400">68%</strong>
-                <span className="text-[11px] text-slate-400 block mt-1">34 / 50 pronos</span>
+              <div
+                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                style={{ backgroundImage: "url('/images/stats/stat-bons-pronos.png')" }}
+              >
+                <div className="absolute inset-0 bg-black/45" />
+                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Bons pronos</span>
+                <strong className="relative block font-display text-3xl text-emerald-400">{myStats.successRate}%</strong>
+                <span className="relative text-[11px] text-slate-300 block mt-1">{myStats.totalPronos} pronos</span>
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
-                <span className="font-mono text-[10px] uppercase text-slate-500 block mb-1">Scores exacts</span>
-                <strong className="font-display text-3xl text-blue-400">2</strong>
-                <span className="text-[11px] text-slate-400 block mt-1">4% des pronos</span>
+              <div
+                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                style={{ backgroundImage: "url('/images/stats/stat-scores-exacts.png')" }}
+              >
+                <div className="absolute inset-0 bg-black/45" />
+                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Scores exacts</span>
+                <strong className="relative block font-display text-3xl text-blue-400">{myStats.exactScores}</strong>
+                <span className="relative text-[11px] text-slate-300 block mt-1">{myStats.totalPronos ? Math.round((myStats.exactScores / myStats.totalPronos) * 100) : 0}% des pronos</span>
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
-                <span className="font-mono text-[10px] uppercase text-slate-500 block mb-1">Points moyens</span>
-                <strong className="font-display text-3xl text-amber-400">22.4</strong>
-                <span className="text-[11px] text-slate-400 block mt-1">Par journée</span>
+              <div
+                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                style={{ backgroundImage: "url('/images/stats/stat-points-moyens.png')" }}
+              >
+                <div className="absolute inset-0 bg-black/45" />
+                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Points moyens</span>
+                <strong className="relative block font-display text-3xl text-amber-400">{myStats.avgPoints}</strong>
+                <span className="relative text-[11px] text-slate-300 block mt-1">Par journée</span>
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
-                <span className="font-mono text-[10px] uppercase text-slate-500 block mb-1">Meilleure journée</span>
-                <strong className="font-display text-3xl text-indigo-400">41</strong>
-                <span className="text-[11px] text-slate-400 block mt-1">Points • J3</span>
+              <div
+                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                style={{ backgroundImage: "url('/images/stats/stat-meilleure-journee.png')" }}
+              >
+                <div className="absolute inset-0 bg-black/45" />
+                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Meilleure journée</span>
+                <strong className="relative block font-display text-3xl text-indigo-400">{myStats.bestDayPoints}</strong>
+                <span className="relative text-[11px] text-slate-300 block mt-1">Points • {myStats.bestDay}</span>
               </div>
             </div>
           </div>
