@@ -16,6 +16,7 @@ import { useAuth } from "@/context/AuthContext";
 import { matchday as currentMatchday } from "@/lib/prono-data";
 import { calculateCareerScore } from "@/lib/careerLevel";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
+import { isFavoriteMatch as computeIsFavoriteMatch, scoreLigue1Prediction, scoreBonusPrediction } from "@/lib/predictionScoring";
 
 export const Route = createFileRoute("/classement")({
   head: () => ({
@@ -35,6 +36,10 @@ type PlayerProfile = {
   pseudo: string | null;
   avatar_url: string | null;
   favorite_team_id: string | null;
+  /** Ancienne colonne texte (nom du club, pré-datant favorite_team_id) —
+   * utilisée uniquement en repli si l'id ne permet pas de détecter le match
+   * de l'équipe favorite (voir isFavoriteMatch dans lib/predictionScoring.ts). */
+  favorite_team?: string | null;
 };
 
 type TeamRow = { id: string; name: string; short_name: string | null; logo_url: string | null };
@@ -49,14 +54,6 @@ type RankedPlayer = PlayerProfile & {
   careerLevel: number;
   careerTitle: string;
 };
-
-/** Résultat 1/N/2 réel d'un match terminé, à partir du score final. */
-function matchResult(home: number | null, away: number | null): "1" | "N" | "2" | null {
-  if (home == null || away == null) return null;
-  if (home > away) return "1";
-  if (home < away) return "2";
-  return "N";
-}
 
 /**
  * Réduit progressivement la taille d'un nom de joueur trop long au lieu de le
@@ -153,6 +150,11 @@ function ClassementPage() {
       matchday_id: string | null;
       home_team_id: string | null;
       away_team_id: string | null;
+      /** Noms bruts (colonnes texte de `matches`, indépendantes de `teams`) —
+       * servent de repli pour la détection de l'équipe favorite quand
+       * home_team_id/away_team_id est manquant/incohérent. */
+      home_team: string | null;
+      away_team: string | null;
       home_score: number | null;
       away_score: number | null;
       finished: boolean;
@@ -179,7 +181,7 @@ function ClassementPage() {
           { data: settingsData, error: settingsError },
           { data: matchdaysData, error: matchdaysError },
         ] = await Promise.all([
-          supabase.from("profiles").select("id, pseudo, avatar_url, favorite_team_id"),
+          supabase.from("profiles").select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
           supabase.from("teams").select("id, name, short_name, logo_url"),
           supabase.from("app_settings").select("season").eq("id", 1).maybeSingle(),
           supabase
@@ -268,7 +270,7 @@ function ClassementPage() {
           supabase
             .from("matches")
             .select(
-              "id, matchday_id, home_team_id, away_team_id, home_score, away_score, finished, is_bonus",
+              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, home_score, away_score, finished, is_bonus",
             )
             .eq("finished", true)
             .eq("is_bonus", false)
@@ -323,11 +325,20 @@ function ClassementPage() {
         // Les 4 matchs bonus sont rattachés à la journée Ligue 1 via
         // bonus_options.matchday_id. Le match bonus lui-même peut appartenir
         // à une autre compétition et avoir un autre matchday_id dans matches.
+        //
+        // IMPORTANT — CORRECTIF (bug du 9 au lieu de 13) : on récupère ICI
+        // toutes les lignes, actives ET historiques (plus de `.eq("is_active",
+        // true)`). Un joueur peut avoir pronostiqué sur le match bonus
+        // sélectionné AU MOMENT de son pronostic ; si l'admin change ensuite
+        // la sélection (bonusOptionsService.replaceBonusSelection désactive
+        // l'ancienne ligne sans y toucher), ce pronostic devenait invisible
+        // pour le calcul — silencieusement exclu au lieu d'être compté. Le
+        // pronostic du joueur reste rattaché au match qu'il a réellement
+        // joué, jamais à la sélection "active" au moment du calcul.
         const { data: bonusOptionsData, error: bonusOptionsError } = await supabase
           .from("bonus_options")
           .select("matchday_id, match_id, is_active")
-          .in("matchday_id", matchdayIds)
-          .eq("is_active", true);
+          .in("matchday_id", matchdayIds);
 
         if (cancelled) return;
         if (bonusOptionsError) throw bonusOptionsError;
@@ -341,7 +352,7 @@ function ClassementPage() {
           const { data: bonusMatchesData, error: bonusMatchesError } = await supabase
             .from("matches")
             .select(
-              "id, matchday_id, home_team_id, away_team_id, home_score, away_score, finished, is_bonus",
+              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, home_score, away_score, finished, is_bonus",
             )
             .eq("finished", true)
             .in("id", bonusMatchIds);
@@ -452,69 +463,69 @@ function ClassementPage() {
           const isBonus = bonusMatchdayByMatchId.has(matchId);
 
           // Pour un bonus, on ne compte que la ligne qui correspond au bonus
-          // effectivement sélectionné pour cette journée.
+          // que CE joueur a réellement pronostiqué pour cette journée (la
+          // plus récente s'il en a plusieurs — voir latestBonusPredictionByUserDay
+          // au-dessus). bonusMatchdayByMatchId couvre désormais aussi les
+          // sélections historiques (plus seulement l'actuellement active),
+          // donc un pronostic sur un match bonus depuis remplacé par l'admin
+          // reste reconnu et compté — jamais silencieusement perdu.
           if (isBonus) {
             const dayId = bonusMatchdayByMatchId.get(matchId)!;
             const selected = latestBonusPredictionByUserDay.get(`${userId}:${dayId}`);
             if (!selected || selected.matchId !== matchId) return;
 
-            const result = matchResult(match.home_score, match.away_score);
-            const pick = matchResult(homePrediction, awayPrediction);
-            const exact =
-              match.home_score === homePrediction && match.away_score === awayPrediction;
-            const correct = !!result && pick === result;
+            const { points: pts } = scoreBonusPrediction({
+              homeScore: match.home_score,
+              awayScore: match.away_score,
+              homePrediction,
+              awayPrediction,
+            });
 
             predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
 
-            if (exact) {
-              points[userId] = (points[userId] ?? 0) + 3;
+            if (pts > 0) {
+              points[userId] = (points[userId] ?? 0) + pts;
+              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+              pointsByMatchday[dayId] = (pointsByMatchday[dayId] ?? 0) + pts;
+            }
+            if (pts === 3) {
               exactScores[userId] = (exactScores[userId] ?? 0) + 1;
-              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
-              pointsByMatchday[dayId] = (pointsByMatchday[dayId] ?? 0) + 3;
-            } else if (correct) {
-              points[userId] = (points[userId] ?? 0) + 2;
-              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
-              pointsByMatchday[dayId] = (pointsByMatchday[dayId] ?? 0) + 2;
             }
 
             return;
           }
 
-          // Match Ligue 1 classique / club de cœur.
-          const isFavoriteMatch =
-            !!profile.favorite_team_id &&
-            (String(match.home_team_id) === String(profile.favorite_team_id) ||
-              String(match.away_team_id) === String(profile.favorite_team_id));
+          // Match Ligue 1 classique / club de cœur. Détection du favori :
+          // team_id en priorité, repli sur le nom normalisé si l'id du match
+          // est manquant/incohérent (voir CORRECTIF ci-dessus et
+          // lib/predictionScoring.ts).
+          const isFavorite = computeIsFavoriteMatch({
+            homeTeamId: match.home_team_id,
+            awayTeamId: match.away_team_id,
+            homeTeamName: match.home_team,
+            awayTeamName: match.away_team,
+            favoriteTeamId: profile.favorite_team_id,
+            favoriteTeamNames: [profile.favorite_team, teamsMap[String(profile.favorite_team_id ?? "")]?.name],
+          });
 
-          const result = matchResult(match.home_score, match.away_score);
-          const pick = matchResult(homePrediction, awayPrediction);
-          const correct = !!result && pick === result;
+          const { points: pts } = scoreLigue1Prediction({
+            homeScore: match.home_score,
+            awayScore: match.away_score,
+            homePrediction,
+            awayPrediction,
+            isFavoriteMatch: isFavorite,
+          });
 
           predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
           const matchDayId = String(match.matchday_id);
 
-          if (isFavoriteMatch) {
-            // Équipe de cœur : exact = 2, bon résultat = 1, sinon 0.
-            const exact =
-              match.home_score === homePrediction && match.away_score === awayPrediction;
-
-            if (exact) {
-              points[userId] = (points[userId] ?? 0) + 2;
-              exactScores[userId] = (exactScores[userId] ?? 0) + 1;
-              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
-              pointsByMatchday[matchDayId] = (pointsByMatchday[matchDayId] ?? 0) + 2;
-            } else if (correct) {
-              points[userId] = (points[userId] ?? 0) + 1;
-              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
-              pointsByMatchday[matchDayId] = (pointsByMatchday[matchDayId] ?? 0) + 1;
-            }
-          } else {
-            // Ligue 1 classique : 1N2 = 1 point si résultat correct.
-            if (correct) {
-              points[userId] = (points[userId] ?? 0) + 1;
-              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
-              pointsByMatchday[matchDayId] = (pointsByMatchday[matchDayId] ?? 0) + 1;
-            }
+          if (pts > 0) {
+            points[userId] = (points[userId] ?? 0) + pts;
+            regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+            pointsByMatchday[matchDayId] = (pointsByMatchday[matchDayId] ?? 0) + pts;
+          }
+          if (isFavorite && pts === 2) {
+            exactScores[userId] = (exactScores[userId] ?? 0) + 1;
           }
         });
 
@@ -525,6 +536,164 @@ function ClassementPage() {
             if (md) topMatchday = { number: Number(md.number ?? 0), points: total };
           }
         });
+
+        // ============================================================
+        // 🐛 DEBUG TEMPORAIRE — trace complète du calcul, par joueur et par
+        // match (journée, pronostic, résultat, type de règle appliquée,
+        // points). Lecture seule : ne touche à aucune valeur utilisée par
+        // l'app (points/pointsByMatchday/etc. déjà calculés au-dessus).
+        // Sert uniquement à diagnostiquer un écart entre le total attendu
+        // et le total affiché — à retirer une fois la cause confirmée.
+        // Voir la console du navigateur (un groupe repliable par joueur).
+        // ============================================================
+        try {
+          const matchdayNumberById = new Map<string, number>(
+            ligue1Matchdays.map((md: any) => [String(md.id), Number(md.number ?? 0)]),
+          );
+
+          profiles.forEach((profile) => {
+            const uid = profile.id;
+            const favoriteId = profile.favorite_team_id ? String(profile.favorite_team_id) : null;
+            const favoriteTeamNameResolved = teamsMap[favoriteId ?? ""]?.name ?? null;
+
+            type DebugRow = {
+              match_id: string;
+              journee: number | string;
+              home_team_id: string | null;
+              home_team_name: string | null;
+              away_team_id: string | null;
+              away_team_name: string | null;
+              real_home_score: number | null;
+              real_away_score: number | null;
+              prediction_user_id: string;
+              prediction_home_score: number;
+              prediction_away_score: number;
+              is_bonus: boolean;
+              is_favorite: boolean;
+              rule_used: string;
+              points: number;
+            };
+            const rows: DebugRow[] = [];
+            // Cumuls PAR JOURNÉE (et non un seul total plat), pour vérifier le
+            // cumul multi-journées : J1 = ..., J2 = ..., puis SEASON TOTAL = somme.
+            const byJournee = new Map<number | string, { classique: number; favori: number; bonus: number }>();
+            const bump = (journee: number | string, key: "classique" | "favori" | "bonus", pts: number) => {
+              const entry = byJournee.get(journee) ?? { classique: 0, favori: 0, bonus: 0 };
+              entry[key] += pts;
+              byJournee.set(journee, entry);
+            };
+
+            safePredictions.forEach((pred: any) => {
+              if (String(pred.user_id) !== uid) return;
+              const matchId = String(pred.match_id);
+              const match = matchById.get(matchId);
+              if (!match || match.home_score == null || match.away_score == null) return;
+
+              const homePrediction = Number(pred.home_prediction);
+              const awayPrediction = Number(pred.away_prediction);
+              if (!Number.isFinite(homePrediction) || !Number.isFinite(awayPrediction)) return;
+
+              const isBonusRow = bonusMatchdayByMatchId.has(matchId);
+              const homeTeamName = teamsMap[String(match.home_team_id)]?.name ?? match.home_team ?? null;
+              const awayTeamName = teamsMap[String(match.away_team_id)]?.name ?? match.away_team ?? null;
+
+              const baseRow = {
+                match_id: matchId,
+                home_team_id: match.home_team_id,
+                home_team_name: homeTeamName,
+                away_team_id: match.away_team_id,
+                away_team_name: awayTeamName,
+                real_home_score: match.home_score,
+                real_away_score: match.away_score,
+                prediction_user_id: uid,
+                prediction_home_score: homePrediction,
+                prediction_away_score: awayPrediction,
+                is_bonus: isBonusRow,
+              };
+
+              if (isBonusRow) {
+                const dayId = bonusMatchdayByMatchId.get(matchId)!;
+                const journee = matchdayNumberById.get(dayId) ?? "?";
+                const selected = latestBonusPredictionByUserDay.get(`${uid}:${dayId}`);
+                if (!selected || selected.matchId !== matchId) {
+                  rows.push({
+                    ...baseRow,
+                    journee,
+                    is_favorite: false,
+                    rule_used: "BONUS_IGNORE (pas le dernier pronostic bonus du joueur pour cette journée)",
+                    points: 0,
+                  });
+                  return;
+                }
+                const { points: pts, category } = scoreBonusPrediction({
+                  homeScore: match.home_score,
+                  awayScore: match.away_score,
+                  homePrediction,
+                  awayPrediction,
+                });
+                bump(journee, "bonus", pts);
+                rows.push({ ...baseRow, journee, is_favorite: false, rule_used: category, points: pts });
+                return;
+              }
+
+              const isFavorite = computeIsFavoriteMatch({
+                homeTeamId: match.home_team_id,
+                awayTeamId: match.away_team_id,
+                homeTeamName: match.home_team,
+                awayTeamName: match.away_team,
+                favoriteTeamId: profile.favorite_team_id,
+                favoriteTeamNames: [profile.favorite_team, favoriteTeamNameResolved],
+              });
+              const { points: pts, category } = scoreLigue1Prediction({
+                homeScore: match.home_score,
+                awayScore: match.away_score,
+                homePrediction,
+                awayPrediction,
+                isFavoriteMatch: isFavorite,
+              });
+              const journee = matchdayNumberById.get(String(match.matchday_id)) ?? "?";
+              bump(journee, isFavorite ? "favori" : "classique", pts);
+              rows.push({ ...baseRow, journee, is_favorite: isFavorite, rule_used: category, points: pts });
+            });
+
+            if (rows.length === 0) return;
+
+            const grandTotal = [...byJournee.values()].reduce((sum, j) => sum + j.classique + j.favori + j.bonus, 0);
+
+            console.groupCollapsed(`[DEBUG points] ${profile.pseudo ?? uid} — SEASON TOTAL = ${grandTotal}`);
+            console.log("USER ID          :", uid);
+            console.log("PSEUDO           :", profile.pseudo);
+            console.log("FAVORITE TEAM ID :", profile.favorite_team_id ?? "(aucun)");
+            console.log("FAVORITE TEAM NAME:", profile.favorite_team ?? favoriteTeamNameResolved ?? "(inconnu)");
+            console.table(rows);
+
+            const lensAuxerreRow = rows.find(
+              (r) => !r.is_bonus && /lens/i.test(String(r.home_team_name)) && /auxerre/i.test(String(r.away_team_name)),
+            );
+            if (lensAuxerreRow) {
+              console.log(
+                `Lens–Auxerre : isFavorite=${lensAuxerreRow.is_favorite} rule=${lensAuxerreRow.rule_used} points=${lensAuxerreRow.points}`,
+              );
+            }
+            const bonusRow = rows.find((r) => r.is_bonus && r.rule_used !== "BONUS_IGNORE");
+            if (bonusRow) {
+              console.log(`${bonusRow.home_team_name}–${bonusRow.away_team_name} (BONUS) : rule=${bonusRow.rule_used} points=${bonusRow.points}`);
+            }
+
+            [...byJournee.entries()]
+              .sort((a, b) => (typeof a[0] === "number" && typeof b[0] === "number" ? a[0] - b[0] : 0))
+              .forEach(([journee, j]) => {
+                console.log(
+                  `CLASSIQUE TOTAL = ${j.classique} | FAVORI TOTAL = ${j.favori} | BONUS TOTAL = ${j.bonus} | J${journee} TOTAL = ${j.classique + j.favori + j.bonus}`,
+                );
+              });
+            console.log(`SEASON TOTAL = ${grandTotal}`);
+            console.log(`pointsByUser["${uid}"] (valeur réellement utilisée par le podium) = ${points[uid]}`);
+            console.groupEnd();
+          });
+        } catch (debugError) {
+          console.warn("[DEBUG points] erreur pendant la trace de debug (sans impact sur le calcul réel) :", debugError);
+        }
 
         if (!cancelled) {
           setPlayers(profiles);
