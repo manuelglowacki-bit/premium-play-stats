@@ -1,17 +1,37 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
-import { 
-  User, Shield, LogOut, Check, Trophy, Target, Flame, 
-  Award, Sparkles, Activity, Star, Camera, Trash2, ChevronDown, Lock
+import {
+  User,
+  Shield,
+  Check,
+  Trophy,
+  Target,
+  Camera,
+  Trash2,
+  Lock,
+  Loader2,
+  Star,
+  Activity,
+  Sparkles,
+  Award,
+  TrendingUp,
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
-import TeamBadge from "@/components/TeamBadge";
+import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { supabase } from "@/lib/supabase";
+import { resizeImageToDataUrl } from "@/lib/resizeImage";
 import { useAuth } from "@/context/AuthContext";
-
-// 🌟 1. ON IMPORTE LE HOOK GLOBAL
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { getTeamWallpaperUrl, getTeamWallpaperSlug } from "@/lib/team-wallpapers";
+import {
+  calculateCareerScore,
+  aggregateCareerStatsByUser,
+  getCareerProgressPercent,
+  getCareerTitle,
+  type CareerResult,
+} from "@/lib/careerLevel";
+import { rankPlayers } from "@/lib/leaderboardRanking";
+import { computeLeagueStats } from "@/lib/leaderboardStats";
 
 export const Route = createFileRoute("/profil")({
   component: ProfilPage,
@@ -20,25 +40,24 @@ export const Route = createFileRoute("/profil")({
 function ProfilPage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  // Contexte auth partagé : même source de vérité que la carte profil de
-  // l'accueil. refreshProfile() propage tout changement d'avatar/pseudo
-  // sans attendre un rechargement de page.
+
+  // Contexte auth partagé
   const { refreshProfile } = useAuth();
-  
+
   // Profil classique
   const [username, setUsername] = useState("Red evils");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [savedProfile, setSavedProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 🌟 2. ON UTILISE LE HOOK AU LIEU DES USESTATE LOCAUX
+  // Équipe de cœur
   const { favoriteTeamId, saveFavoriteTeam } = useFavoriteTeam();
   const [teams, setTeams] = useState<any[]>([]);
   const [tempSelectedTeam, setTempSelectedTeam] = useState("");
-  const [isEditingTeam, setIsEditingTeam] = useState(false); // Pour le bouton "Modifier mon choix"
+  const [isEditingTeam, setIsEditingTeam] = useState(false);
 
-  // Le nom se calcule tout seul en croisant l'ID du hook et la liste des équipes
-  const favoriteTeamName = teams.find(t => t.id === favoriteTeamId)?.name || "";
+  const favoriteTeamName = teams.find((t) => t.id === favoriteTeamId)?.name || "";
 
   const [favoriteTeamOverride, setFavoriteTeamOverride] = useState(false);
   const [deadlineStr, setDeadlineStr] = useState("");
@@ -46,9 +65,9 @@ function ProfilPage() {
   const [autoLock, setAutoLock] = useState(true);
   const [savingTeam, setSavingTeam] = useState(false);
 
-  // Stats
-  const [userStats] = useState({
-    rank: 5,
+  // Statistiques personnelles — alimentées par Supabase.
+  const [userStats, setUserStats] = useState({
+    rank: 0,
     points: 0,
     exactScores: 0,
     successRate: "0%",
@@ -56,113 +75,506 @@ function ProfilPage() {
     bestDay: "-",
   });
 
+  // Niveau de carrière — même système que l'Accueil (src/lib/careerLevel.ts,
+  // partagé, jamais dupliqué) : points + scores exacts cumulés sur TOUTES
+  // les saisons (jamais réinitialisé). null tant que non chargé.
+  const [career, setCareer] = useState<CareerResult | null>(null);
+  const [careerPredictionsCount, setCareerPredictionsCount] = useState(0);
+
   useEffect(() => {
+    let cancelled = false;
+
     async function loadData() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          setUser(session.user);
-          
-          // 1. Charger le profil joueur
-          const { data: profile } = await supabase
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+
+        if (!session) {
+          if (!cancelled) setUser(null);
+          return;
+        }
+
+        if (cancelled) return;
+        setUser(session.user);
+
+        const [
+          { data: profile, error: profileError },
+          { data: teamsData, error: teamsError },
+          { data: settingsData, error: settingsError },
+          { data: allPredictionsData, error: predictionsError },
+          { data: matchesData, error: matchesError },
+          { data: matchdaysData, error: matchdaysError },
+          { data: allProfilesData, error: allProfilesError },
+        ] = await Promise.all([
+          supabase
             .from("profiles")
             .select("*")
             .eq("id", session.user.id)
-            .single();
-          
-          if (profile) {
-            setUsername(profile.username || profile.pseudo || "Red evils");
-            setFavoriteTeamOverride(profile.favorite_team_override || false);
-            setAvatarUrl(profile.avatar_url || "");
-          }
+            .maybeSingle(),
 
-          // 2. Récupérer la liste des équipes
-          const { data: teamsData } = await supabase
+          supabase
             .from("teams")
             .select("id,name,short_name,logo_url")
-            .order("name");
+            .order("name"),
 
-          if (teamsData) {
-            setTeams(teamsData);
-          }
+          supabase
+            .from("app_settings")
+            .select("favorite_team_deadline, favorite_team_auto_lock")
+            .eq("id", 1)
+            .maybeSingle(),
 
-          // 🌟 3. SUPPRESSION du vieux code qui assignait manuellement l'équipe favorite ici. Le hook gère ça !
+          supabase
+            .from("predictions")
+            // `points` n'est plus utilisé pour le calcul (voir plus bas) :
+            // cette colonne n'est jamais mise à jour par l'application
+            // (column_default 0, aucun trigger, vérifié en base) — les
+            // points sont recalculés depuis les résultats réels via
+            // computeLeagueStats, la même fonction que le Classement.
+            .select("user_id,match_id,home_prediction,away_prediction,created_at"),
 
-          // 4. Charger les réglages globaux
-          const { data: settingsData } = await supabase.from("app_settings").select("*");
-          if (settingsData) {
-            const d = settingsData.find(s => s.key === "favorite_team_deadline");
-            const l = settingsData.find(s => s.key === "favorite_team_auto_lock");
-            
-            if (d) {
-              const dateObj = new Date(d.value);
-              setDeadlineDate(dateObj);
-              setDeadlineStr(
-                dateObj.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) + 
-                " " + 
-                dateObj.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
-              );
-            }
-            if (l) setAutoLock(l.value === "true");
+          supabase
+            .from("matches")
+            .select(
+              "id,matchday,matchday_id,status,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
+            ),
+
+          // Niveau de carrière (cumulé toutes saisons) — même jointure que
+          // l'Accueil : predictions -> matches.matchday_id -> matchdays.season_id.
+          // competition_id en plus : nécessaire pour isoler les vraies
+          // journées Ligue 1 des journées bonus (PL/PD/SA/BL1), même logique
+          // que classement.tsx.
+          supabase
+            .from("matchdays")
+            .select("id,season_id,season,competition_id"),
+
+          // Pseudo + équipe favorite de tous les joueurs — nécessaire au
+          // départage du classement (rankPlayers) ET à la détection du match
+          // favori de chacun (computeLeagueStats), même besoin que sur
+          // l'Accueil et la page Classement.
+          supabase.from("profiles").select("id, pseudo, favorite_team_id, favorite_team"),
+        ]);
+
+        const [{ data: competitionsData, error: competitionsError }, { data: bonusOptionsData, error: bonusOptionsError }] =
+          await Promise.all([
+            supabase.from("competitions").select("id, code, external_code"),
+            // Actives ET historiques — même raison que classement.tsx.
+            supabase.from("bonus_options").select("matchday_id, match_id"),
+          ]);
+
+        if (profileError) throw profileError;
+        if (teamsError) throw teamsError;
+        if (settingsError) throw settingsError;
+        if (predictionsError) throw predictionsError;
+        if (matchesError) throw matchesError;
+        if (matchdaysError) console.warn("Erreur chargement journées (niveau de carrière) :", matchdaysError);
+        if (allProfilesError) console.warn("Erreur chargement pseudos (classement) :", allProfilesError);
+        if (competitionsError) console.warn("Erreur chargement compétitions :", competitionsError);
+        if (bonusOptionsError) console.warn("Erreur chargement bonus :", bonusOptionsError);
+
+        if (cancelled) return;
+
+        if (profile) {
+          setUsername(profile.pseudo || "Red evils");
+          setFavoriteTeamOverride(Boolean(profile.favorite_team_override));
+          setAvatarUrl(profile.avatar_url || "");
+        } else {
+          const { error: profileCreateError } = await supabase
+            .from("profiles")
+            .upsert({
+              id: session.user.id,
+              pseudo: "Red evils",
+              updated_at: new Date().toISOString(),
+            });
+
+          if (profileCreateError) {
+            console.warn("Profil absent et création automatique impossible :", profileCreateError);
           }
         }
+
+        setTeams(teamsData || []);
+
+        const settings = settingsData as {
+          favorite_team_deadline: string | null;
+          favorite_team_auto_lock: boolean | null;
+        } | null;
+
+        if (settings?.favorite_team_deadline) {
+          const dateObj = new Date(settings.favorite_team_deadline);
+          if (!Number.isNaN(dateObj.getTime())) {
+            setDeadlineDate(dateObj);
+            setDeadlineStr(
+              dateObj.toLocaleDateString("fr-FR", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              }) +
+                " à " +
+                dateObj.toLocaleTimeString("fr-FR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+            );
+          }
+        } else {
+          setDeadlineDate(null);
+          setDeadlineStr("");
+        }
+
+        setAutoLock(settings?.favorite_team_auto_lock ?? true);
+
+        // Classement : recalculé à partir de `predictions` (tous les joueurs)
+        const allPredictions = (allPredictionsData || []) as Array<{
+          user_id: string | null;
+          match_id: string | null;
+          home_prediction: number | null;
+          away_prediction: number | null;
+          created_at?: string | null;
+        }>;
+
+        const matchScoreById = new Map<string, { home_score: number | null; away_score: number | null }>();
+        (matchesData || []).forEach((match: any) => {
+          matchScoreById.set(String(match.id), {
+            home_score: match.home_score ?? null,
+            away_score: match.away_score ?? null,
+          });
+        });
+
+        const isExactPrediction = (prediction: { match_id: string | null; home_prediction: number | null; away_prediction: number | null }) => {
+          if (prediction.home_prediction == null || prediction.away_prediction == null) return false;
+          const result = matchScoreById.get(String(prediction.match_id));
+          if (!result || result.home_score == null || result.away_score == null) return false;
+          return (
+            Number(prediction.home_prediction) === Number(result.home_score) &&
+            Number(prediction.away_prediction) === Number(result.away_score)
+          );
+        };
+
+        // Points/scores exacts/régularité : même moteur que le Classement
+        // (computeLeagueStats, src/lib/leaderboardStats.ts) — plus de lecture
+        // de `predictions.points` (colonne jamais mise à jour par
+        // l'application, voir le commentaire dans leaderboardStats.ts).
+        const ligue1CompetitionIds = new Set(
+          (competitionsData || [])
+            .filter((c: any) => c.code === "FL1" || c.external_code === "FL1")
+            .map((c: any) => String(c.id)),
+        );
+        const ligue1MatchdayIds = new Set(
+          (matchdaysData || [])
+            .filter((md: any) => !md.competition_id || ligue1CompetitionIds.has(String(md.competition_id)))
+            .map((md: any) => String(md.id)),
+        );
+
+        const allMatches = (matchesData || []) as any[];
+        const ligue1Matches = allMatches.filter(
+          (m) =>
+            m.home_score != null &&
+            m.away_score != null &&
+            m.finished &&
+            !m.is_bonus &&
+            m.matchday_id &&
+            ligue1MatchdayIds.has(String(m.matchday_id)),
+        );
+
+        const bonusOptions = (bonusOptionsData || []) as { matchday_id: string; match_id: string }[];
+        const bonusMatchIds = new Set(bonusOptions.map((o) => String(o.match_id)));
+        const bonusMatches = allMatches.filter(
+          (m) => m.home_score != null && m.away_score != null && m.finished && bonusMatchIds.has(String(m.id)),
+        );
+
+        const teamNameById: Record<string, string | undefined> = {};
+        (teamsData || []).forEach((t: any) => {
+          teamNameById[t.id] = t.name;
+        });
+
+        const allProfilesForStats = (allProfilesData || []) as Array<{
+          id: string;
+          pseudo?: string | null;
+          favorite_team_id?: string | null;
+          favorite_team?: string | null;
+        }>;
+
+        const {
+          pointsByUser: rankingPointsByUser,
+          predictionsCountByUser: rankingCountByUser,
+          exactScoresByUser: rankingExactByUser,
+          regularitySuccessByUser: rankingRegularityByUser,
+          pointsByUserAndMatchday,
+          pointsByPredictionKey,
+        } = computeLeagueStats(
+          ligue1Matches,
+          bonusMatches,
+          bonusOptions,
+          allPredictions,
+          allProfilesForStats,
+          teamNameById,
+        );
+
+        // Niveau de carrière — cumulé sur TOUTES les saisons (jamais
+        // réinitialisé), même jointure predictions -> matches.matchday_id
+        // -> matchdays.season_id que sur l'Accueil, via la fonction partagée
+        // aggregateCareerStatsByUser (src/lib/careerLevel.ts). Points réels
+        // injectés depuis computeLeagueStats ci-dessus (pointsByPredictionKey) :
+        // aggregateCareerStatsByUser lit un champ `points` par pronostic, et
+        // `predictions.points` n'est jamais mis à jour par l'application
+        // (voir le commentaire dans leaderboardStats.ts).
+        const matchdayIdByMatchId = new Map<string, string>();
+        (matchesData || []).forEach((match: any) => {
+          if (match.matchday_id) {
+            matchdayIdByMatchId.set(String(match.id), String(match.matchday_id));
+          }
+        });
+
+        const seasonByMatchdayId = new Map<string, string>();
+        (matchdaysData || []).forEach((md: any) => {
+          if (!md?.id) return;
+          seasonByMatchdayId.set(String(md.id), String(md.season_id || md.season || "unknown"));
+        });
+
+        const predictionsWithRealPoints = allPredictions.map((p) => ({
+          ...p,
+          points: pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0,
+        }));
+
+        const careerByUser = aggregateCareerStatsByUser(
+          predictionsWithRealPoints,
+          isExactPrediction,
+          (matchId) => {
+            const matchdayId = matchdayIdByMatchId.get(matchId);
+            if (!matchdayId) return null;
+            return seasonByMatchdayId.get(matchdayId) ?? null;
+          },
+        );
+
+        const myCareerStats = careerByUser.get(session.user.id) || {
+          points: 0,
+          exactScores: 0,
+          predictionsCount: 0,
+        };
+        setCareer(calculateCareerScore(myCareerStats));
+        setCareerPredictionsCount(myCareerStats.predictionsCount || 0);
+
+        const pseudoById = new Map<string, string>(
+          (allProfilesData || []).map((row: any) => [row.id, row.pseudo || "Joueur"]),
+        );
+
+        const allUserIds = new Set(Object.keys(rankingPointsByUser));
+        allUserIds.add(session.user.id);
+
+        const rankedRows = Array.from(allUserIds).map((uid) => ({
+          user_id: uid,
+          total_points: rankingPointsByUser[uid] || 0,
+          exact_scores: rankingExactByUser[uid] || 0,
+          predictions_count: rankingCountByUser[uid] || 0,
+          // Champs canoniques pour rankPlayers (src/lib/leaderboardRanking.ts)
+          // — même classement que la page Classement et l'Accueil.
+          points: rankingPointsByUser[uid] || 0,
+          exactScores: rankingExactByUser[uid] || 0,
+          predictionsCount: rankingCountByUser[uid] || 0,
+          regularitySuccess: rankingRegularityByUser[uid] || 0,
+          pseudo: pseudoById.get(uid) || "Joueur",
+        }));
+
+        // Tri + attribution du rang : source unique de vérité, réutilisée
+        // telle quelle par la page Classement et l'Accueil.
+        const rankedWithPosition = rankPlayers(rankedRows);
+
+        const meRanking = rankedWithPosition.find(
+          (row) => row.user_id === session.user.id
+        );
+
+        const rank = meRanking?.rank || 0;
+        const totalPoints = Number(meRanking?.total_points || 0);
+        const exactScores = Number(meRanking?.exact_scores || 0);
+
+        const predictions = allPredictions.filter(
+          (prediction) => prediction.user_id === session.user.id
+        );
+
+        // Libellé de journée ("J5") par matchday_id — pur affichage.
+        const dayLabelByMatchdayId = new Map<string, string>();
+        allMatches.forEach((match) => {
+          if (!match.matchday_id || dayLabelByMatchdayId.has(String(match.matchday_id))) return;
+          if (match.matchday === null || match.matchday === undefined) return;
+          dayLabelByMatchdayId.set(String(match.matchday_id), `J${match.matchday}`);
+        });
+
+        const myPointsByDay = pointsByUserAndMatchday[session.user.id] ?? {};
+        const playedDays = Object.keys(myPointsByDay).length;
+
+        let bestDay = "-";
+        let bestDayPoints = -1;
+        Object.entries(myPointsByDay).forEach(([matchdayId, points]) => {
+          if (points > bestDayPoints) {
+            bestDayPoints = points;
+            bestDay = dayLabelByMatchdayId.get(matchdayId) ?? "-";
+          }
+        });
+
+        const successfulPredictions = rankingRegularityByUser[session.user.id] || 0;
+        const totalCounted = rankingCountByUser[session.user.id] || 0;
+        const successRate =
+          totalCounted > 0
+            ? `${Math.round((successfulPredictions / totalCounted) * 100)}%`
+            : "0%";
+
+        setUserStats({
+          rank,
+          points: totalPoints,
+          exactScores,
+          successRate,
+          totalPronos:
+            Number(meRanking?.predictions_count ?? predictions.length) || 0,
+          bestDay,
+        });
+
+        if (profile?.favorite_team_id) {
+          setTempSelectedTeam(profile.favorite_team_id);
+        }
       } catch (err) {
-        console.error("Erreur de chargement des données :", err);
+        console.error("Erreur de chargement Supabase du profil :", err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    loadData();
-  }, []);
 
+    loadData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const isLocked = autoLock && deadlineDate && new Date() > deadlineDate && !favoriteTeamOverride;
 
-  // Fond d'écran dynamique par équipe : un fichier par club dans
-  // public/team-wallpapers/, retrouvé par correspondance de nom (voir
-  // src/lib/team-wallpapers.ts). Tant qu'une image spécifique n'a pas été
-  // fournie pour un club, on retombe sur le fond stade générique déjà
-  // utilisé ailleurs sur le site.
+  // Fond d'écran dynamique par équipe
   const teamWallpaperUrl = getTeamWallpaperSlug(favoriteTeamName)
     ? getTeamWallpaperUrl(favoriteTeamName)
     : null;
   const [wallpaperFailed, setWallpaperFailed] = useState(false);
+
   useEffect(() => {
     setWallpaperFailed(false);
   }, [teamWallpaperUrl]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    e.target.value = "";
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAvatarUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    if (!file || !user) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Veuillez choisir une image.");
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("L'image est trop volumineuse. Choisissez une image de moins de 2 Mo.");
+      return;
+    }
+
+    setSavingProfile(true);
+
+    try {
+      const dataUrl = await resizeImageToDataUrl(file);
+
+      const { error } = await supabase
+        .from("profiles")
+        .upsert({
+          id: user.id,
+          avatar_url: dataUrl,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+
+      setAvatarUrl(dataUrl);
+      await refreshProfile();
+
+      setSavedProfile(true);
+      window.setTimeout(() => setSavedProfile(false), 3000);
+    } catch (err) {
+      console.error("Erreur lors de l'enregistrement de la photo :", err);
+      alert("Impossible d'enregistrer la photo de profil.");
+    } finally {
+      setSavingProfile(false);
+    }
   };
-
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    const cleanUsername = username.trim();
+
+    if (!cleanUsername) {
+      alert("Le pseudo ne peut pas être vide.");
+      return;
+    }
+
+    if (cleanUsername.length > 24) {
+      alert("Le pseudo doit contenir 24 caractères maximum.");
+      return;
+    }
+
+    setSavingProfile(true);
 
     try {
       const { error } = await supabase
         .from("profiles")
         .upsert({
           id: user.id,
-          username,
-          pseudo: username,
+          pseudo: cleanUsername,
           avatar_url: avatarUrl || null,
           updated_at: new Date().toISOString(),
         });
 
       if (error) throw error;
+
+      setUsername(cleanUsername);
       await refreshProfile();
+
       setSavedProfile(true);
-      setTimeout(() => setSavedProfile(false), 3000);
+      window.setTimeout(() => setSavedProfile(false), 3000);
     } catch (err) {
-      console.error("Erreur lors de la mise à jour :", err);
+      console.error("Erreur lors de la mise à jour du profil :", err);
       alert("Erreur lors de la mise à jour du profil.");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+  const handleDeleteAvatar = async () => {
+    if (!user || !avatarUrl) return;
+
+    const confirmed = window.confirm(
+      "Supprimer définitivement ta photo de profil ?"
+    );
+    if (!confirmed) return;
+
+    setSavingProfile(true);
+
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .upsert({
+          id: user.id,
+          avatar_url: null,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+
+      setAvatarUrl("");
+      await refreshProfile();
+
+      setSavedProfile(true);
+      window.setTimeout(() => setSavedProfile(false), 3000);
+    } catch (err) {
+      console.error("Erreur lors de la suppression de la photo :", err);
+      alert("Impossible de supprimer la photo de profil.");
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -171,10 +583,10 @@ function ProfilPage() {
     setSavingTeam(true);
 
     try {
-      // 🌟 4. ON UTILISE LE HOOK POUR SAUVEGARDER
-      // Le hook se charge d'alerter le reste du site !
       await saveFavoriteTeam(tempSelectedTeam);
+      setTempSelectedTeam(tempSelectedTeam);
       setIsEditingTeam(false);
+      await refreshProfile();
     } catch (err) {
       console.error("Erreur équipe favorite :", err);
       alert("Impossible d'enregistrer l'équipe.");
@@ -183,10 +595,19 @@ function ProfilPage() {
     }
   };
 
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <Loader2 className="size-8 animate-spin text-emerald-400" />
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl space-y-6 pb-32 p-4 text-slate-100 font-sans">
-        
+      <div className="relative z-10 mx-auto max-w-6xl space-y-8 pb-28 md:space-y-10 md:pb-20">
         <input
           type="file"
           ref={fileInputRef}
@@ -195,324 +616,465 @@ function ProfilPage() {
           className="hidden"
         />
 
-        {/* ================= SECTION PRINCIPALE DU PROFIL ================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 rounded-3xl border border-slate-800 bg-[#0d1322] p-6 md:p-8 shadow-2xl relative overflow-hidden">
+        {/* ================= NOTIFICATIONS ================= */}
+        <section
+          id="profile-push-notifications"
+          className="rounded-3xl border border-emerald-400/20 bg-[#0d1322]/75 p-5 shadow-[0_0_30px_rgba(0,0,0,0.45)] backdrop-blur-xl md:p-6"
+        >
+          <div className="mb-4">
+            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-300">
+              Notifications
+            </div>
+            <h2 className="mt-1 text-lg font-black text-white">
+              Rappels de pronostics
+            </h2>
+            <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">
+              Reçois une notification 1 h avant un match si tu n'as pas encore fait ton prono.
+            </p>
+          </div>
 
-          {/* Fond d'écran dynamique : couleurs/ambiance de l'équipe favorite.
-              Repli sur /stadium-bg.jpg (générique) si l'image du club n'a
-              pas encore été fournie ou ne charge pas. */}
+          <PushNotificationsButton />
+        </section>
+        {/* ================= MON PROFIL ================= */}
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-6 shadow-[0_0_40px_rgba(0,0,0,0.6)] backdrop-blur-xl md:p-8">
+          {/* Fond stade nocturne */}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center opacity-35"
-            style={{
-              backgroundImage: `url('${!wallpaperFailed && teamWallpaperUrl ? teamWallpaperUrl : "/stadium-bg.jpg"}')`,
-            }}
+            className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-60"
+            style={{ backgroundImage: "url('/profil-background-ligue1.png')" }}
           />
-          {teamWallpaperUrl && !wallpaperFailed && (
-            // Image cachée servant uniquement à détecter un 404 et basculer
-            // proprement sur le fond générique (onError ne marche pas sur
-            // un background-image CSS).
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#0d1322]/20 via-[#0d1322]/35 to-[#0d1322]/55" />
+          {/* Logo Ligue 1 décoratif élégant */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -right-6 -top-6 size-40 opacity-[0.07]"
+          >
             <img
-              src={teamWallpaperUrl}
+              src="/logo%20ligue%201%20white.png"
               alt=""
-              className="hidden"
-              onError={() => setWallpaperFailed(true)}
+              className="size-full object-contain"
             />
-          )}
-          <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#0d1322]/85 via-[#0d1322]/92 to-[#0d1322]/97" />
-
-          {/* Colonne Avatar */}
-          <div className="relative z-10 lg:col-span-4 flex flex-col items-center justify-center space-y-4 border-b lg:border-b-0 lg:border-r border-slate-800/80 pb-6 lg:pb-0 lg:pr-8">
-            <div className="relative">
-              <div className="size-36 md:size-40 rounded-full bg-gradient-to-tr from-purple-600 via-pink-500 to-amber-400 p-1 shadow-2xl shadow-purple-500/20">
-                <div className="flex size-full items-center justify-center rounded-full bg-[#060b16] overflow-hidden border-2 border-slate-900 relative">
-                  <div className="absolute pointer-events-none inset-0 bg-radial from-purple-500/20 to-transparent pointer-events-none" />
-                  
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="size-full object-cover" />
-                  ) : (
-                    <span className="font-display text-4xl font-bold text-white tracking-wider">
-                      {username ? username.substring(0, 2).toUpperCase() : "RE"}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col w-full gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#ccff00] text-slate-950 font-display font-bold text-xs uppercase tracking-wider hover:bg-[#b8eb00] transition-colors shadow-lg shadow-[#ccff00]/10 cursor-pointer"
-              >
-                <Camera className="size-4" /> Changer la photo
-              </button>
-              <button
-                type="button"
-                onClick={() => setAvatarUrl("")}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-800 bg-slate-900/60 text-slate-400 font-display text-xs uppercase tracking-wider hover:bg-slate-900 hover:text-white transition-colors cursor-pointer"
-              >
-                <Trash2 className="size-3.5" /> Supprimer
-              </button>
-            </div>
           </div>
 
-          {/* Colonne Informations et Mini-cartes */}
-          <div className="relative z-10 lg:col-span-8 flex flex-col justify-between space-y-6">
-            <div className="space-y-2">
-              <span className="text-xs font-mono uppercase tracking-widest text-blue-400 font-semibold">Mon Profil</span>
-              <h1 className="font-display text-3xl md:text-4xl uppercase tracking-tight text-white font-bold">
-                {username}
-              </h1>
-              <p className="text-xs text-slate-400 font-mono">Joueur actif de la Prono Ligue 1 LM</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-              <div className="rounded-2xl border border-slate-800/80 bg-[#060b16] p-4 space-y-1 shadow-inner">
-                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Classement actuel</span>
-                <div className="font-display text-2xl font-bold text-white">#{userStats.rank}</div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-800/80 bg-[#060b16] p-4 space-y-1 shadow-inner">
-                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Club de cœur</span>
-                <div className="font-display text-base font-bold text-white truncate">{favoriteTeamName || "Non renseigné"}</div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-800/80 bg-[#060b16] p-4 space-y-1 shadow-inner">
-                <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Compte</span>
-                <div className="text-xs font-mono text-slate-300 truncate pt-1">{user?.email || "manuelglowacki@gmail.com"}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ================= LIGNE DE STATISTIQUES ================= */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="rounded-2xl border border-slate-800 bg-[#0d1322] p-5 space-y-2 shadow-xl">
-            <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider block">Points</span>
-            <div className="font-display text-3xl font-bold text-white">{userStats.points}</div>
-            <p className="text-[11px] text-slate-500 font-mono">Total de la saison</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-[#0d1322] p-5 space-y-2 shadow-xl">
-            <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider block">Scores exacts</span>
-            <div className="font-display text-3xl font-bold text-white">{userStats.exactScores}</div>
-            <p className="text-[11px] text-slate-500 font-mono">Équipe favorite + bonus</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-[#0d1322] p-5 space-y-2 shadow-xl">
-            <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider block">Taux de réussite</span>
-            <div className="font-display text-3xl font-bold text-white">{userStats.successRate}</div>
-            <p className="text-[11px] text-slate-500 font-mono">{userStats.totalPronos} bons pronostics</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-[#0d1322] p-5 space-y-2 shadow-xl">
-            <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider block">Meilleure journée</span>
-            <div className="font-display text-3xl font-bold text-amber-400">{userStats.bestDay}</div>
-            <p className="text-[11px] text-slate-500 font-mono">Aucun résultat</p>
-          </div>
-        </div>
-
-        {/* ================= SECTION INFÉRIEURE : 2 COLONNES ================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* Colonne de gauche */}
-          <div className="lg:col-span-6 space-y-6">
-            
-            <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 shadow-xl space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-blue-400 tracking-wider">Répartition</span>
-                  <h2 className="font-display text-lg text-white uppercase tracking-tight">Origine des points</h2>
-                </div>
-                <span className="font-mono text-xs text-slate-400 font-bold">{userStats.points} pts</span>
-              </div>
-
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-slate-800/60 bg-[#060b16] p-4 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-slate-300 flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-bold text-[10px]">1N2</span> Points 1N2
-                    </span>
-                    <span className="text-white font-bold">0 pts</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="bg-blue-500 h-full w-0" />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800/60 bg-[#060b16] p-4 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-slate-300 flex items-center gap-2">
-                      <span className="size-2 rounded-full bg-pink-500" /> Équipe favorite
-                    </span>
-                    <span className="text-white font-bold">0 pts</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="bg-pink-500 h-full w-0" />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800/60 bg-[#060b16] p-4 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-slate-300 flex items-center gap-2">
-                      <Star className="size-3 text-amber-400 fill-amber-400" /> Matchs bonus
-                    </span>
-                    <span className="text-white font-bold">0 pts</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="bg-amber-400 h-full w-0" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-blue-400 tracking-wider">Distinctions</span>
-                  <h2 className="font-display text-lg text-white uppercase tracking-tight">Badges de leader</h2>
-                </div>
-                <span className="font-mono text-xs text-slate-400 font-bold">0</span>
-              </div>
-              <div className="rounded-2xl border border-dashed border-slate-800 bg-[#060b16] p-8 text-center">
-                <p className="text-xs text-slate-500 font-mono">Aucun badge de leader pour le moment.</p>
-              </div>
-            </div>
-
-          </div>
-
-          {/* Colonne de droite */}
-          <div className="lg:col-span-6 space-y-6">
-            
-            {/* ================= PHASE 3 : CARTE ÉQUIPE FAVORITE ================= */}
-            <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-amber-400 tracking-wider">Saison 2026-2027</span>
-                  <h2 className="font-display text-lg text-white uppercase tracking-tight flex items-center gap-2">
-                    ⭐ Mon équipe favorite
-                  </h2>
-                </div>
-              </div>
-
-              {!favoriteTeamId || isEditingTeam ? (
-                <div className="space-y-4 pt-2">
-                  <p className="text-sm text-slate-400">Choisis ton équipe de cœur :</p>
-                  
-                  {!isLocked ? (
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <div className="relative flex-1 w-full">
-                        <select
-                          value={tempSelectedTeam}
-                          onChange={(e) => setTempSelectedTeam(e.target.value)}
-                          className="relative z-50 block w-full rounded-xl border border-slate-800 bg-[#060b16] p-3 pr-10 text-base text-white font-mono appearance-auto cursor-pointer touch-manipulation"
-                        >
-                          <option value="" disabled>Sélectionne un club...</option>
-                          {teams.map((team) => (
-                            <option key={team.id} value={team.id}>{team.name}</option>
-                          ))}
-                        </select>
-                        
-                      </div>
-                      <button
-                        onClick={handleSaveFavoriteTeam}
-                        disabled={!tempSelectedTeam || savingTeam}
-                        className="w-full sm:w-auto px-4 py-3 rounded-xl bg-amber-400 text-slate-950 font-display font-bold text-xs uppercase tracking-wider hover:bg-amber-500 transition-colors shadow-lg shadow-amber-400/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                      >
-                        <Check size={14} /> {savingTeam ? "..." : "Valider"}
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="text-red-400 text-sm font-bold flex items-center gap-1.5 pt-2">
-                      <Lock size={16} /> Choix verrouillé
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4 pt-2">
-                  <div className="flex items-center justify-between p-4 rounded-xl border border-blue-500/30 bg-blue-500/10">
-
-                    <TeamBadge
-                      name={favoriteTeamName || "Aucune équipe"}
-                      shortName={teams.find((t) => t.id === favoriteTeamId)?.short_name ?? ""}
-                      logoUrl={teams.find((t) => t.id === favoriteTeamId)?.logo_url ?? null}
-                    />
-
-                    {!isLocked && (
-                      <span className="text-xs font-mono text-blue-400 flex items-center gap-1">
-                        <Check size={14} /> Choix enregistré.
+          <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center">
+            {/* Photo + actions */}
+            <div className="flex flex-col items-center gap-3 md:w-48 md:shrink-0">
+              <div className="relative">
+                <div className="absolute -inset-2 rounded-full bg-emerald-500/15 blur-xl" />
+                <div className="relative size-28 rounded-full bg-gradient-to-tr from-emerald-500 via-emerald-400 to-cyan-400 p-[3px] shadow-[0_0_30px_rgba(16,185,129,0.25)] md:size-32">
+                  <div className="flex size-full items-center justify-center overflow-hidden rounded-full border-4 border-[#0d1322] bg-[#060b16]">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="Avatar" className="size-full object-cover" />
+                    ) : (
+                      <span className="font-display text-3xl font-black tracking-wider text-white">
+                        {username ? username.substring(0, 2).toUpperCase() : "RE"}
                       </span>
                     )}
                   </div>
-                  
-                  <p className="text-xs text-slate-400 font-mono leading-relaxed">
-                    Date limite : <br />
-                    <strong className="text-slate-200">{deadlineStr}</strong>
-                  </p>
-
-                  {isLocked ? (
-                    <p className="text-red-400 text-sm font-bold flex items-center gap-1.5 pt-2">
-                      <Lock size={16} /> Choix verrouillé
-                    </p>
-                  ) : (
-                    <div className="pt-2 border-t border-slate-800/80">
-                      <button
-                        onClick={() => {
-                          setTempSelectedTeam(favoriteTeamId ?? "");
-                          setIsEditingTeam(true);
-                        }}
-                        className="text-xs font-mono text-slate-500 hover:text-white transition-colors"
-                      >
-                        Modifier mon choix
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Identité / Modification Profil (Pseudo uniquement) */}
-            <div className="rounded-3xl border border-slate-800 bg-[#0d1322] p-6 shadow-xl space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
-                <div>
-                  <span className="text-[10px] font-mono uppercase text-blue-400 tracking-wider">Identité</span>
-                  <h2 className="font-display text-lg text-white uppercase tracking-tight">Nom affiché</h2>
                 </div>
               </div>
 
-              <form onSubmit={handleUpdateProfile} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                    Pseudonyme visible sur le site
-                  </label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Ton pseudo"
-                    className="w-full rounded-xl border border-slate-800 bg-[#060b16] p-3.5 text-sm text-white focus:border-emerald-500 outline-none transition-colors font-mono"
-                  />
-                </div>
-
-                <div className="flex items-center gap-3 pt-2">
+              {/* Boutons discrets et secondaires */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={savingProfile}
+                  className="tap flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-300 transition hover:border-emerald-500/40 hover:text-emerald-400 disabled:opacity-50"
+                >
+                  {savingProfile ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Camera className="size-3" />
+                  )}
+                  {savingProfile ? "..." : "Photo"}
+                </button>
+                {avatarUrl && (
                   <button
-                    type="submit"
-                    className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#ccff00] text-slate-950 font-display font-bold text-xs uppercase tracking-wider hover:bg-[#b8eb00] transition-colors shadow-lg shadow-[#ccff00]/15 cursor-pointer"
+                    type="button"
+                    onClick={handleDeleteAvatar}
+                    disabled={savingProfile}
+                    className="tap flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-400 transition hover:border-red-400/30 hover:text-red-300 disabled:opacity-50"
                   >
-                    {savedProfile ? <Check className="size-4" /> : null}
-                    {savedProfile ? "Enregistré !" : "Enregistrer"}
+                    <Trash2 className="size-3" />
+                    Supprimer
                   </button>
-                </div>
-              </form>
+                )}
+              </div>
             </div>
 
+            {/* Identité + stats */}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]" />
+                Mon profil
+              </div>
+              <h1
+                className="mt-2 bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-4xl font-black uppercase leading-none tracking-tight text-transparent md:text-5xl"
+                style={{
+                  filter:
+                    "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
+                }}
+              >
+                {username}
+              </h1>
+              <p className="mt-2 text-sm text-slate-400">
+                Joueur actif de la Prono Ligue 1
+              </p>
+
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                <Activity className="size-3.5" />
+                Saison 2026–2027
+              </div>
+
+              {/* 4 stats compactes */}
+              <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Classement</span>
+                  <div className="mt-1 font-display text-3xl font-black text-white">
+                    {userStats.rank > 0 ? userStats.rank : "—"}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Points</span>
+                  <div
+                    className="mt-1 font-display text-3xl font-black text-white"
+                    style={{ filter: "drop-shadow(0 0 12px rgba(110,231,183,.35))" }}
+                  >
+                    {userStats.points}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Meilleure journée</span>
+                  <div className="mt-1 font-display text-3xl font-black text-white">
+                    {userStats.bestDay === "-" ? "—" : userStats.bestDay}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Équipe de cœur</span>
+                  <div className="mt-2 truncate font-display text-sm font-bold text-white">
+                    {favoriteTeamName || "Non renseignée"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ================= NIVEAU DE CARRIÈRE ================= */}
+        {/* Même système que le badge "Niveau" de l'Accueil (src/lib/careerLevel.ts,
+            source de vérité partagée, jamais dupliquée) : points + scores
+            exacts cumulés sur TOUTES les saisons, jamais réinitialisés. */}
+        <section className="relative overflow-hidden rounded-3xl border border-amber-400/20 bg-[#0d1322]/75 p-6 shadow-[0_0_40px_rgba(0,0,0,0.6)] backdrop-blur-xl md:p-8">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-amber-400">
+                <Award className="size-3.5" />
+                Progression joueur
+              </div>
+              <h2 className="mt-1.5 font-display text-2xl font-black uppercase tracking-tight text-white md:text-3xl">
+                Niveau de carrière
+              </h2>
+              <p className="mt-1 max-w-md text-xs text-slate-400">
+                Cumulé sur toutes les saisons, jamais réinitialisé.
+              </p>
+            </div>
+
+            {/* Badge niveau — même langage visuel que le badge "Niveau" de l'Accueil */}
+            <div className="relative inline-flex shrink-0 items-center gap-3 overflow-hidden rounded-2xl border border-amber-400/35 bg-[#060b16]/85 px-4 py-3 shadow-[0_0_24px_rgba(245,158,11,0.12)] backdrop-blur-md">
+              <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-amber-400/[0.10] via-transparent to-amber-200/[0.05]" />
+              <div className="relative grid size-11 shrink-0 place-items-center rounded-xl border border-amber-300/40 bg-gradient-to-br from-amber-300/20 via-amber-500/10 to-transparent shadow-[inset_0_0_16px_rgba(245,158,11,0.12)]">
+                <span className="font-display text-xl font-black leading-none text-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.35)]">
+                  {career?.level ?? 1}
+                </span>
+              </div>
+              <div className="relative min-w-0">
+                <span className="block font-mono text-[9px] font-bold uppercase tracking-[0.22em] text-amber-400/80">
+                  Niveau
+                </span>
+                <span className="block truncate font-display text-sm font-extrabold uppercase tracking-wide text-white sm:text-base">
+                  {getCareerTitle(career?.level ?? 1)}
+                </span>
+              </div>
+            </div>
           </div>
 
-        </div>
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {/* Points carrière cumulés */}
+            <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+              <div className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">
+                <Trophy className="size-3 text-amber-400" />
+                Points carrière cumulés
+              </div>
+              <div
+                className="mt-1.5 font-display text-3xl font-black text-white"
+                style={{ filter: "drop-shadow(0 0 12px rgba(245,158,11,.25))" }}
+              >
+                {career?.points ?? 0}
+              </div>
+            </div>
+
+            {/* Progression vers le niveau suivant — pourcentage relatif
+                uniquement, jamais les seuils bruts (voir careerLevel.ts). */}
+            <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+              <div className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">
+                <TrendingUp className="size-3 text-amber-400" />
+                Progression
+              </div>
+              {career && career.level >= 30 ? (
+                <div className="mt-2.5 text-sm font-bold text-amber-300">Niveau maximum atteint</div>
+              ) : (
+                <>
+                  <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-300 shadow-[0_0_10px_rgba(245,158,11,.5)] transition-all"
+                      style={{ width: `${career ? getCareerProgressPercent(career.careerScore) : 0}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 font-display text-sm font-bold text-white">
+                    {career ? getCareerProgressPercent(career.careerScore) : 0}%
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* % de scores exacts (carrière) */}
+            <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
+              <div className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">
+                <Target className="size-3 text-amber-400" />
+                % de scores exacts
+              </div>
+              <div className="mt-1.5 font-display text-3xl font-black text-white">
+                {careerPredictionsCount > 0 && career
+                  ? Math.round((career.exactScores / careerPredictionsCount) * 100)
+                  : 0}
+                %
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                {career?.exactScores ?? 0} sur {careerPredictionsCount} pronostic{careerPredictionsCount > 1 ? "s" : ""}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ================= MON ÉQUIPE DE CŒUR ================= */}
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 shadow-[0_0_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+          {/* Fond dynamique du club */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 bg-cover bg-center transition-all duration-700"
+            style={{
+              backgroundImage: `url('${!wallpaperFailed && teamWallpaperUrl ? teamWallpaperUrl : "/profil-background-ligue1.png"}')`,
+            }}
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1322]/95 via-[#0d1322]/80 to-[#0d1322]/40" />
+
+          <div className="relative z-10 p-6 md:p-8">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-amber-400">
+                  <Star className="size-3.5 fill-amber-400" />
+                  Saison 2026–2027
+                </div>
+                <h2 className="mt-1.5 font-display text-2xl font-black uppercase tracking-tight text-white md:text-3xl">
+                  Mon équipe de cœur
+                </h2>
+              </div>
+
+              {favoriteTeamId && !isEditingTeam && (
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.14em] text-emerald-300">
+                  <Check className="size-3.5" />
+                  Choix enregistré
+                </span>
+              )}
+            </div>
+
+            {!favoriteTeamId || isEditingTeam ? (
+              <div className="mt-6">
+                <p className="mb-4 text-sm text-slate-300">
+                  Sélectionne ton club de cœur pour personnaliser ton expérience :
+                </p>
+
+                {!isLocked ? (
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <select
+                      value={tempSelectedTeam}
+                      onChange={(e) => setTempSelectedTeam(e.target.value)}
+                      className="w-full flex-1 rounded-xl border border-slate-700 bg-[#060b16]/90 p-3.5 text-sm text-white outline-none transition focus:border-emerald-500/50"
+                    >
+                      <option value="" disabled>Sélectionne un club...</option>
+                      {teams.map((team) => (
+                        <option key={team.id} value={team.id}>{team.name}</option>
+                      ))}
+                    </select>
+
+                    <button
+                      onClick={handleSaveFavoriteTeam}
+                      disabled={!tempSelectedTeam || savingTeam}
+                      className="tap flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-6 py-3.5 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)] transition hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      {savingTeam ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Check className="size-4" />
+                      )}
+                      Valider
+                    </button>
+
+                    {isEditingTeam && favoriteTeamId && (
+                      <button
+                        onClick={() => setIsEditingTeam(false)}
+                        className="tap rounded-xl border border-slate-700 bg-slate-900/80 px-5 py-3.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800"
+                      >
+                        Annuler
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 rounded-xl border border-red-400/20 bg-red-500/10 p-4 text-sm font-bold text-red-300">
+                    <Lock className="size-4 shrink-0" />
+                    La période de modification est clôturée. Votre choix est verrouillé.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-6 flex flex-col gap-6 sm:flex-row sm:items-center">
+                {/* Logo du club */}
+                <div className="relative flex size-28 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-black/35 p-3 shadow-[0_20px_50px_rgba(0,0,0,.4)] backdrop-blur-md">
+                  <div className="absolute -inset-1.5 rounded-2xl bg-gradient-to-tr from-emerald-400/10 via-cyan-400/10 to-amber-300/10 blur-lg" />
+                  <div className="relative flex size-full items-center justify-center">
+                    {teams.find((t) => t.id === favoriteTeamId)?.logo_url ? (
+                      <img
+                        src={teams.find((t) => t.id === favoriteTeamId)?.logo_url ?? ""}
+                        alt={favoriteTeamName || "Équipe de cœur"}
+                        className="size-full object-contain drop-shadow-[0_0_20px_rgba(255,255,255,.15)]"
+                      />
+                    ) : (
+                      <span className="font-display text-2xl font-black text-white">
+                        {(favoriteTeamName || "FC").slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Infos club */}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[9px] font-mono font-bold uppercase tracking-[.2em] text-slate-400">
+                    Équipe de cœur
+                  </div>
+                  <h3 className="mt-1 truncate font-display text-3xl font-black tracking-tight text-white md:text-4xl">
+                    {favoriteTeamName}
+                  </h3>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-300">
+                      <Trophy className="size-3 text-amber-400" />
+                      Classement : {userStats.rank > 0 ? `#${userStats.rank}` : "—"}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-300">
+                      <Target className="size-3 text-emerald-400" />
+                      Saison 2026–2027
+                    </span>
+                  </div>
+
+                  {!isLocked && (
+                    <button
+                      onClick={() => {
+                        setTempSelectedTeam(favoriteTeamId ?? "");
+                        setIsEditingTeam(true);
+                      }}
+                      className="tap mt-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/80 px-4 py-2 text-[10px] font-bold uppercase tracking-[.14em] text-slate-300 transition hover:border-emerald-500/40 hover:text-emerald-400"
+                    >
+                      Modifier mon choix
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* ================= MON IDENTITÉ ================= */}
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-6 shadow-[0_0_40px_rgba(0,0,0,0.6)] backdrop-blur-xl md:p-8">
+          <div className="relative z-10">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-[.2em] text-emerald-400">
+                  Profil joueur
+                </span>
+                <h2 className="mt-1 font-display text-2xl font-black uppercase tracking-tight text-white md:text-3xl">
+                  Mon identité
+                </h2>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[9px] font-bold uppercase tracking-[.14em] text-slate-300">
+                <Shield className="size-3.5 text-emerald-400" />
+                Compte sécurisé
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-center">
+              {/* Pseudo actuel */}
+              <div className="min-w-0">
+                <div className="text-[9px] font-mono font-bold uppercase tracking-[.2em] text-slate-500">
+                  Pseudo actuel
+                </div>
+                <div className="mt-1 truncate font-display text-3xl font-black tracking-tight text-white md:text-4xl">
+                  {username || "Ton pseudo"}
+                </div>
+                <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                  <span className="size-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.7)]" />
+                  Visible dans les classements et sur le site
+                </div>
+              </div>
+
+              {/* Édition pseudo */}
+              <form onSubmit={handleUpdateProfile} className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-5">
+                <div className="mb-4">
+                  <label className="text-[9px] font-mono font-bold uppercase tracking-[.2em] text-slate-500">
+                    Modifier mon pseudo
+                  </label>
+                  <div className="relative mt-3">
+                    <User className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="text"
+                      value={username}
+                      maxLength={24}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="Ton pseudo"
+                      className="w-full rounded-xl border border-slate-700 bg-[#040a14]/90 py-3.5 pl-11 pr-14 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-500/50"
+                    />
+                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-mono text-slate-600">
+                      {username.length}/24
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="tap flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3.5 font-display text-[11px] font-black uppercase tracking-[.14em] text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.3)] transition hover:bg-emerald-500"
+                >
+                  {savingProfile ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="size-4 animate-spin" />
+                      Enregistrement...
+                    </span>
+                  ) : savedProfile ? (
+                    <span className="flex items-center gap-2">
+                      <Check className="size-4" />
+                      Modifications enregistrées
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Sparkles className="size-4" />
+                      Enregistrer les modifications
+                    </span>
+                  )}
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
       </div>
     </AppShell>
   );
 }
-
-

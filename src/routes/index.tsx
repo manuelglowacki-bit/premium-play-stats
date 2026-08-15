@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
@@ -19,6 +19,9 @@ import {
 } from "lucide-react";
 import { CountdownBlocks } from "@/components/prono/Countdown";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
+import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES } from "@/lib/careerLevel";
+import { rankPlayers } from "@/lib/leaderboardRanking";
+import { computeLeagueStats } from "@/lib/leaderboardStats";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -56,6 +59,8 @@ function IndexPage() {
   });
   const [currentMatchday, setCurrentMatchday] = useState("J1");
   const [potAmount, setPotAmount] = useState(0);
+  const [careerLevel, setCareerLevel] = useState(1);
+
 
   // 1. Liste des équipes
   useEffect(() => {
@@ -80,89 +85,211 @@ function IndexPage() {
           { data: profiles, error: profilesError },
           { data: predictions, error: predictionsError },
           { data: matches, error: matchesError },
-          { data: payments, error: paymentsError },
+          { data: settingsRow, error: settingsError },
+          { data: matchdays, error: matchdaysError },
+          { data: competitions, error: competitionsError },
+          { data: bonusOptionsData, error: bonusOptionsError },
         ] = await Promise.all([
           supabase
             .from("profiles")
-            // Si la colonne account_status n'existe pas, la 400 disparaît.
-            // Tu pourras la rajouter quand elle sera créée.
-            .select("id,pseudo,username,player_name,avatar_url,favorite_team_id"),
+            // `username`/`player_name`/`account_status` n'existent pas en
+            // base (confirmé via `supabase gen types typescript` : profiles
+            // n'a que id/pseudo/avatar_url/favorite_team/favorite_team_id/
+            // favorite_team_override/is_admin/created_at/updated_at).
+            .select("id,pseudo,avatar_url,favorite_team_id,favorite_team"),
           supabase
             .from("predictions")
-            .select("user_id,match_id,points,exact_score,updated_at"),
+            // `points` n'est plus utilisé pour le calcul (voir plus bas) :
+            // cette colonne n'est jamais mise à jour par l'application
+            // (column_default 0, aucun trigger, vérifié en base) — les
+            // points sont recalculés depuis les résultats réels via
+            // computeLeagueStats, la même fonction que le Classement.
+            .select("user_id,match_id,home_prediction,away_prediction,created_at"),
           supabase
             .from("matches")
-            .select("id,matchday_code,matchday,match_day,status,kickoff,kickoff_time")
+            .select(
+              "id,matchday_id,matchday_code,matchday,match_day,status,kickoff,kickoff_time,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
+            )
             .order("kickoff", { ascending: true }),
+          // Cagnotte théorique = nombre de joueurs inscrits × droit d'entrée
+          // configuré dans Admin → Réglages, JAMAIS basée sur qui a réellement
+          // payé (voir Admin → Paiements pour ce suivi individuel, inchangé).
+          // `app_settings` est déjà lisible par tout joueur connecté (même
+          // table que src/routes/profil.tsx) — pas de nouvelle table/policy.
           supabase
-            .from("payments")
-            .select("amount,paid"),
+            .from("app_settings")
+            .select("entry_fee")
+            .eq("id", 1)
+            .maybeSingle(),
+          supabase
+            .from("matchdays")
+            .select("id,season_id,season,competition_id"),
+          supabase.from("competitions").select("id, code, external_code"),
+          // Actives ET historiques — même raison que classement.tsx : un
+          // pronostic bonus reste valable même si l'admin a changé la
+          // sélection depuis.
+          supabase.from("bonus_options").select("matchday_id, match_id"),
         ]);
 
         // On logue les erreurs individuelles mais on continue
         if (profilesError) console.warn("Erreur chargement profils :", profilesError);
         if (predictionsError) console.warn("Erreur chargement pronostics :", predictionsError);
         if (matchesError) console.warn("Erreur chargement matchs :", matchesError);
-        if (paymentsError) console.warn("Cagnotte non accessible :", paymentsError);
+        if (settingsError) console.warn("Cagnotte non calculable (réglages) :", settingsError);
+        if (competitionsError) console.warn("Erreur chargement compétitions :", competitionsError);
+        if (bonusOptionsError) console.warn("Erreur chargement bonus :", bonusOptionsError);
 
         if (cancelled) return;
 
         const profileById = new Map((profiles || []).map((p: any) => [p.id, p]));
         const teamById = new Map((teams || []).map((t: any) => [t.id, t]));
+        const matchById = new Map((matches || []).map((m: any) => [String(m.id), m]));
 
-        // -------- Calcul du classement à partir des pronostics --------
-        const rankingMap = new Map<string, number>();
-        const exactMap = new Map<string, number>();
-        const countMap = new Map<string, number>();
+        // Pas de colonne `exact_score` en base : un pronostic est "exact"
+        // quand home_prediction/away_prediction correspondent exactement au
+        // score final du match (matches.home_score/away_score). Toujours
+        // utilisé tel quel plus bas pour le widget "stats personnelles".
+        const isExactPrediction = (p: any) => {
+          if (p.home_prediction == null || p.away_prediction == null) return false;
+          const m = matchById.get(String(p.match_id));
+          if (!m || m.home_score == null || m.away_score == null) return false;
+          return (
+            Number(p.home_prediction) === Number(m.home_score) &&
+            Number(p.away_prediction) === Number(m.away_score)
+          );
+        };
 
-        (predictions || []).forEach((p: any) => {
-          const uid = p.user_id;
-          const points = Number(p.points || 0);
-          rankingMap.set(uid, (rankingMap.get(uid) || 0) + points);
-          exactMap.set(uid, (exactMap.get(uid) || 0) + (p.exact_score ? 1 : 0));
-          countMap.set(uid, (countMap.get(uid) || 0) + 1);
+        // -------- Classement — même moteur que src/routes/classement.tsx --------
+        // Identifie les vraies journées Ligue 1 (FL1) de la saison courante,
+        // exactement comme classement.tsx, pour isoler les matchs Ligue 1
+        // classiques des matchs bonus (qui peuvent appartenir à PL/PD/SA/BL1).
+        const ligue1CompetitionIds = new Set(
+          (competitions || [])
+            .filter((c: any) => c.code === "FL1" || c.external_code === "FL1")
+            .map((c: any) => String(c.id)),
+        );
+        const ligue1MatchdayIds = new Set(
+          (matchdays || [])
+            .filter((md: any) => !md.competition_id || ligue1CompetitionIds.has(String(md.competition_id)))
+            .map((md: any) => String(md.id)),
+        );
+
+        const ligue1Matches = (matches || []).filter(
+          (m: any) =>
+            m.home_score != null &&
+            m.away_score != null &&
+            m.finished &&
+            !m.is_bonus &&
+            m.matchday_id &&
+            ligue1MatchdayIds.has(String(m.matchday_id)),
+        );
+
+        const bonusOptions = (bonusOptionsData || []) as { matchday_id: string; match_id: string }[];
+        const bonusMatchIds = new Set(bonusOptions.map((o) => String(o.match_id)));
+        const bonusMatches = (matches || []).filter(
+          (m: any) => m.home_score != null && m.away_score != null && m.finished && bonusMatchIds.has(String(m.id)),
+        );
+
+        const teamNameById: Record<string, string | undefined> = {};
+        (teams || []).forEach((t: any) => {
+          teamNameById[t.id] = t.name;
         });
+
+        const allProfilesForStats = (profiles || []) as Array<{
+          id: string;
+          favorite_team_id?: string | null;
+          favorite_team?: string | null;
+        }>;
+
+        const {
+          pointsByUser: rankingPointsByUser,
+          predictionsCountByUser: rankingCountByUser,
+          exactScoresByUser: rankingExactByUser,
+          regularitySuccessByUser: rankingRegularityByUser,
+          pointsByUserAndMatchday,
+          pointsByPredictionKey,
+        } = computeLeagueStats(
+          ligue1Matches,
+          bonusMatches,
+          bonusOptions,
+          predictions || [],
+          allProfilesForStats,
+          teamNameById,
+        );
 
         // On complète avec les profils manquants (pour les joueurs sans pronos)
-        const allUserIds = new Set(rankingMap.keys());
+        const allUserIds = new Set(Object.keys(rankingPointsByUser));
         (profiles || []).forEach((p: any) => allUserIds.add(p.id));
 
-        const normalizedRankings = Array.from(allUserIds)
-          .map((uid) => {
-            const p = profileById.get(uid) || {};
-            const team = teamById.get(p.favorite_team_id);
-            return {
-              user_id: uid,
-              total_points: rankingMap.get(uid) || 0,
-              exact_scores: exactMap.get(uid) || 0,
-              predictions_count: countMap.get(uid) || 0,
-              name: p.pseudo || "Joueur",
-              avatar_url: p.avatar_url || "",
-              favorite_team: team?.name || "",
-              favorite_logo: team?.logo_url || "",
-            };
-          })
-          // Tri : points décroissant, puis scores exacts, puis nb pronos
-          .sort((a, b) =>
-            b.total_points - a.total_points ||
-            b.exact_scores - a.exact_scores ||
-            a.predictions_count - b.predictions_count
-          );
-
-        // On attribue un rang (1er ex-aequo garde le même rang) via un
-        // compteur courant plutôt qu'en indexant le tableau en cours de
-        // construction (arr[idx-1].rank plantait le typage : `rank` n'existe
-        // pas encore sur les éléments de `arr` au moment de ce callback).
-        let previousPoints: number | null = null;
-        let currentRank = 0;
-
-        const rankedRankings = normalizedRankings.map((row, idx) => {
-          if (previousPoints !== row.total_points) currentRank = idx + 1;
-          previousPoints = row.total_points;
-          return { ...row, rank: currentRank };
+        const normalizedRankings = Array.from(allUserIds).map((uid) => {
+          const p = profileById.get(uid) || {};
+          const team = teamById.get(p.favorite_team_id);
+          const pseudo = p.pseudo || "Joueur";
+          return {
+            user_id: uid,
+            total_points: rankingPointsByUser[uid] || 0,
+            exact_scores: rankingExactByUser[uid] || 0,
+            predictions_count: rankingCountByUser[uid] || 0,
+            name: pseudo,
+            avatar_url: p.avatar_url || "",
+            favorite_team: team?.name || "",
+            favorite_logo: team?.logo_url || "",
+            // Champs canoniques pour rankPlayers (src/lib/leaderboardRanking.ts)
+            // — même classement que la page Classement et le Profil.
+            points: rankingPointsByUser[uid] || 0,
+            exactScores: rankingExactByUser[uid] || 0,
+            predictionsCount: rankingCountByUser[uid] || 0,
+            regularitySuccess: rankingRegularityByUser[uid] || 0,
+            pseudo,
+          };
         });
 
-        setLeaderboard(rankedRankings);
+        // Tri + attribution du rang : source unique de vérité, réutilisée
+        // telle quelle par la page Classement et le Profil.
+        const rankedRankings = rankPlayers(normalizedRankings);
+        // -------- Carriere multi-saisons --------
+        // prediction -> match -> matchday -> season.
+        // Toutes les saisons sont cumulees ; aucun reset annuel.
+        const seasonByMatchdayId = new Map<string, string>();
+
+        (matchdays || []).forEach((md: any) => {
+          if (!md?.id) return;
+          seasonByMatchdayId.set(
+            String(md.id),
+            String(md.season_id || md.season || "unknown"),
+          );
+        });
+
+        // Points réels injectés depuis computeLeagueStats (voir plus haut) —
+        // aggregateCareerStatsByUser lit un champ `points` par pronostic ;
+        // `predictions.points` n'est jamais mis à jour par l'application
+        // (voir le commentaire dans leaderboardStats.ts), donc on ne lui
+        // passe jamais cette colonne brute, mais la valeur recalculée.
+        const predictionsWithRealPoints = (predictions || []).map((p: any) => ({
+          ...p,
+          points: pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0,
+        }));
+
+        const careerByUser = aggregateCareerStatsByUser(
+          predictionsWithRealPoints,
+          isExactPrediction,
+          (matchId) => {
+            const match = matchById.get(matchId);
+            if (!match || !match.matchday_id) return null;
+            return seasonByMatchdayId.get(String(match.matchday_id)) ?? null;
+          },
+        );
+
+        if (user?.id) {
+          const mineCareer = careerByUser.get(user.id) || {
+            points: 0,
+            exactScores: 0,
+          };
+
+          const career = calculateCareerScore(mineCareer);
+          setCareerLevel(career.level);
+        }
+setLeaderboard(rankedRankings);
 
         // -------- Journée la plus récente terminée --------
         const finished = (matches || []).filter((m: any) =>
@@ -183,38 +310,42 @@ function IndexPage() {
         }
 
         // -------- Stats personnelles --------
+        // Mêmes valeurs que le Classement (computeLeagueStats ci-dessus) —
+        // plus de recalcul séparé ni de lecture de predictions.points.
         if (user?.id) {
           const mine = (predictions || []).filter((p: any) => p.user_id === user.id);
           const meRanking = rankedRankings.find((r: any) => r.user_id === user.id);
-          const matchById = new Map((matches || []).map((m: any) => [String(m.id), m]));
-          const points = mine.reduce((sum: number, p: any) => sum + Number(p.points || 0), 0);
-          const exacts = mine.reduce((sum: number, p: any) => sum + (p.exact_score ? 1 : 0), 0);
-          const bons = mine.filter((p: any) => Number(p.points || 0) > 0).length;
-          const days = new Set<string>();
-          const pointsByDay = new Map<string, number>();
+          const points = rankingPointsByUser[user.id] || 0;
+          const exacts = rankingExactByUser[user.id] || 0;
+          const bons = rankingRegularityByUser[user.id] || 0;
+          const totalCount = rankingCountByUser[user.id] || 0;
 
-          mine.forEach((p: any) => {
-            const m = matchById.get(String(p.match_id));
-            if (!m) return;
+          // Libellé de journée ("J5") par matchday_id — pur affichage, un
+          // seul match suffit pour retrouver le libellé de sa journée.
+          const dayLabelByMatchdayId = new Map<string, string>();
+          (matches || []).forEach((m: any) => {
+            if (!m.matchday_id || dayLabelByMatchdayId.has(String(m.matchday_id))) return;
             const rawDay = m.matchday_code || m.matchday || m.match_day;
             if (rawDay === null || rawDay === undefined || rawDay === "") return;
             const day = String(rawDay).toUpperCase().startsWith("J") ? String(rawDay).toUpperCase() : `J${rawDay}`;
-            days.add(day);
-            pointsByDay.set(day, (pointsByDay.get(day) || 0) + Number(p.points || 0));
+            dayLabelByMatchdayId.set(String(m.matchday_id), day);
           });
+
+          const myPointsByDay = pointsByUserAndMatchday[user.id] ?? {};
+          const daysPlayedCount = Object.keys(myPointsByDay).length;
 
           let bestDay = "-";
           let bestDayPoints = 0;
-          pointsByDay.forEach((value, day) => {
+          Object.entries(myPointsByDay).forEach(([matchdayId, value]) => {
             if (value > bestDayPoints) {
               bestDayPoints = value;
-              bestDay = day;
+              bestDay = dayLabelByMatchdayId.get(matchdayId) ?? "-";
             }
           });
 
           const finalPoints = points;
           const finalExacts = exacts;
-          const finalCount = mine.length;
+          const finalCount = totalCount;
           const rank = meRanking?.rank ?? 0;
 
           setMyStats({
@@ -223,18 +354,22 @@ function IndexPage() {
             exactScores: finalExacts,
             successRate: mine.length ? Math.round((bons / mine.length) * 100) : 0,
             totalPronos: finalCount,
-            avgPoints: days.size ? Number((points / days.size).toFixed(1)) : 0,
+            avgPoints: daysPlayedCount ? Number((points / daysPlayedCount).toFixed(1)) : 0,
             bestDay,
             bestDayPoints,
           });
         }
 
         // -------- Cagnotte --------
-        if (!paymentsError) {
-          const total = (payments || [])
-            .filter((p: any) => Boolean(p.paid))
-            .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
-          setPotAmount(total);
+        // Cagnotte théorique = nombre de joueurs inscrits × droit d'entrée
+        // (Admin → Réglages) — jamais basée sur qui a réellement payé (le
+        // statut de paiement individuel reste géré uniquement par
+        // Admin → Paiements, inchangé). Se met à jour automatiquement dès
+        // qu'un joueur s'inscrit ou que le droit d'entrée change.
+        if (!settingsError && !profilesError) {
+          const entryFee = Number(settingsRow?.entry_fee || 0);
+          const registeredPlayers = (profiles || []).length;
+          setPotAmount(registeredPlayers * entryFee);
         }
       } catch (error) {
         console.error("Erreur de chargement Supabase accueil :", error);
@@ -307,12 +442,34 @@ function IndexPage() {
     }
   };
 
+  const currentCareerTitle =
+    CAREER_LEVEL_TITLES[Math.max(0, Math.min(careerLevel - 1, CAREER_LEVEL_TITLES.length - 1))];
+
   return (
-    <AppShell>
-      <div className="relative z-10 mx-auto max-w-6xl pb-20 space-y-6">
-        
+
+  <AppShell>
+      {/* Animations discrètes, propres à cette page (n'affecte aucune autre
+          route) : légère apparition en fondu + translation, désactivée si
+          l'utilisateur préfère moins de mouvement. Même convention que la
+          page Trophées (voir trophees.tsx). */}
+      <style>{`
+        @keyframes dash-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .dash-fade-up { animation: dash-fade-up .55s cubic-bezier(.22,1,.36,1) both; }
+        @media (prefers-reduced-motion: reduce) {
+          .dash-fade-up { animation: none; }
+        }
+      `}</style>
+
+      {/* pb-28 (au lieu de pb-20) : plus de respiration au-dessus de la nav
+          mobile fixe, qui a elle-même grandi avec l'ajout de safe-area
+          (voir AppShell.tsx) — évite que la dernière carte stats se sente
+          collée à la nav sur téléphone. space-y-7/8 : sections plus
+          clairement séparées, cohérent avec la demande de blocs "qui
+          respirent" plutôt que compressés. */}
+      <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
+
         {/* HERO SECTION avec Effet Verre */}
-        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-8 md:p-12 shadow-[0_0_50px_rgba(0,0,0,0.7)]">
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-7 shadow-[0_0_50px_rgba(0,0,0,0.7)] sm:p-9 md:p-12">
           <div
             role="img"
             aria-label="Ligue 1"
@@ -330,23 +487,27 @@ function IndexPage() {
           />
 
           <div className="relative z-10 grid gap-8 lg:grid-cols-[1fr_auto] items-center">
-            <div className="space-y-5 max-w-full lg:max-w-[56%]">
+            <div className="dash-fade-up max-w-full space-y-6 lg:max-w-[56%]">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-1.5 font-mono text-[10px] font-bold text-emerald-400 tracking-wider">
                 <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
                 SAISON 2026—2027 • LIGUE 1 MCDONALD'S
               </div>
-              <h1 className="font-display text-4xl md:text-6xl text-white tracking-tight leading-none">
+              <h1
+                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[2.15rem] leading-[1.05] tracking-tight text-transparent sm:text-5xl md:text-6xl md:leading-none"
+                style={{
+                  filter:
+                    "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
+                }}
+              >
                 PRÉDIS LES RÉSULTATS <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-blue-400 to-indigo-400">
-                  DE LA LIGUE 1
-                </span>
+                DE LA LIGUE 1
               </h1>
-              <p className="text-sm md:text-base text-slate-400 max-w-xl">
+              <p className="max-w-xl text-[15px] leading-relaxed text-slate-400 md:text-base">
                 Affronte tes amis, fais les bons pronos et deviens le champion incontesté de la saison.
               </p>
 
-              <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 p-5">
+                <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
                   <span className="font-mono text-[10px] uppercase tracking-widest text-emerald-400 font-bold">
                     Prochaine journée · J1 • 21 août 2026
                   </span>
@@ -357,16 +518,20 @@ function IndexPage() {
                 <CountdownBlocks />
               </div>
 
-              <div className="flex flex-wrap items-center gap-4 pt-2">
+              {/* flex-col sur mobile : boutons pleine largeur, empilés
+                  proprement (grande cible tactile), plutôt qu'un flex-wrap
+                  qui les laissait retomber côte à côte de façon imprévisible
+                  selon la largeur exacte de l'écran. */}
+              <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:gap-4">
                 <Link
                   to="/pronostics"
-                  className="tap flex items-center gap-2 rounded-2xl bg-emerald-400 hover:bg-emerald-500 px-7 py-4 font-display text-sm font-bold text-slate-950 transition-all shadow-[0_0_25px_rgba(16,185,129,0.35)]"
+                  className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-7 py-4 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)] transition-all hover:bg-emerald-500"
                 >
                   <Medal size={18} /> Faire mes pronos <ArrowRight size={16} />
                 </Link>
                 <Link
                   to="/classement"
-                  className="tap flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800 px-7 py-4 font-display text-sm font-bold text-white transition-all"
+                  className="tap flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 px-7 py-4 font-display text-sm font-bold text-white transition-all hover:bg-slate-800"
                 >
                   <Trophy size={18} className="text-amber-400" /> Voir le classement
                 </Link>
@@ -376,7 +541,7 @@ function IndexPage() {
         </section>
 
         {/* LIGNE : PROFIL avec Effet Verre */}
-        <div className="w-full">
+        <div className="dash-fade-up w-full" style={{ animationDelay: "80ms" }}>
           <div
             className="relative overflow-hidden rounded-3xl border bg-[#0d1322]/75 backdrop-blur-xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)] transition-colors duration-500"
             style={{ borderColor: clubTheme.primary + "40" }}
@@ -408,10 +573,23 @@ function IndexPage() {
             />
             <div className="absolute top-0 right-0 w-64 h-full bg-gradient-to-l from-amber-500/5 to-transparent pointer-events-none" />
 
+            {/* Assombrissement supplémentaire, mobile uniquement : les dégradés
+                ci-dessus sont pensés pour le layout desktop (texte à gauche /
+                blason à droite sur toute la largeur restante) — sur une seule
+                colonne (mobile), le texte occupe toute la largeur et se
+                retrouve directement sur le fond du club, parfois trop clair/vif
+                (ex. rouge RC Lens) pour rester lisible. Purement additif,
+                masqué dès md: donc aucun changement du rendu desktop. */}
+            <div className="pointer-events-none absolute inset-0 z-0 bg-[#070c16]/50 md:hidden" />
+
             <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center md:pr-[30%] lg:pr-[34%]">
-              <div className="flex min-w-0 flex-1 items-center gap-5">
+              <div className="flex min-w-0 flex-1 items-center gap-4 sm:gap-5">
                 <div className="relative shrink-0">
-                  <div className="size-36 md:size-40 rounded-full p-1 bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-500 shadow-[0_0_20px_rgba(245,158,11,0.3)]">
+                  {/* Avatar nettement réduit sur mobile (96px au lieu de 144px) :
+                      à 144px il écrasait la colonne pseudo/niveau/classement
+                      contre le blason du club sur les écrans étroits (360-412px).
+                      Desktop inchangé (md:size-40). */}
+                  <div className="size-24 rounded-full bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-500 p-1 shadow-[0_0_20px_rgba(245,158,11,0.3)] sm:size-28 md:size-40">
                     <div className="size-full rounded-full bg-[#060b16] flex items-center justify-center overflow-hidden border border-slate-800">
                       {profile?.avatar_url ? (
                         <img
@@ -420,7 +598,7 @@ function IndexPage() {
                           className="size-full object-cover"
                         />
                       ) : (
-                        <span className="font-display text-3xl md:text-4xl font-extrabold text-red-500 tracking-wider">{(profile?.pseudo || user?.email?.split("@")[0] || "JO").slice(0, 2).toUpperCase()}</span>
+                        <span className="font-display text-xl font-extrabold text-red-500 tracking-wider sm:text-2xl md:text-4xl">{(profile?.pseudo || user?.email?.split("@")[0] || "JO").slice(0, 2).toUpperCase()}</span>
                       )}
                     </div>
                   </div>
@@ -436,23 +614,36 @@ function IndexPage() {
                     onClick={() => avatarInputRef.current?.click()}
                     disabled={avatarUploading}
                     title="Changer ma photo de profil"
-                    className="tap absolute -bottom-1 -right-1 grid size-10 place-items-center rounded-full bg-amber-400 text-slate-950 border-2 border-[#0d1322] shadow-[0_2px_10px_rgba(0,0,0,0.5)] hover:bg-amber-300 transition-colors disabled:opacity-60"
+                    className="tap absolute -bottom-1 -right-1 grid size-8 place-items-center rounded-full bg-amber-400 text-slate-950 border-2 border-[#0d1322] shadow-[0_2px_10px_rgba(0,0,0,0.5)] hover:bg-amber-300 transition-colors disabled:opacity-60 sm:size-9 md:size-10"
                   >
-                    <Camera size={18} className={avatarUploading ? "animate-pulse" : undefined} />
+                    <Camera size={16} className={avatarUploading ? "animate-pulse" : undefined} />
                   </button>
                 </div>
 
                 <div className="min-w-0">
-                  <span className="inline-flex items-center gap-1 mb-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[10px] font-bold tracking-widest">
-                    <Star size={10} className="fill-amber-400" /> NIVEAU 12
-                  </span>
-                  <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight truncate">{profile?.pseudo || user?.email?.split("@")[0] || "Joueur"}</h3>
+                  <div className="group relative mb-2.5 inline-flex items-center gap-3 overflow-hidden rounded-2xl border border-amber-400/35 bg-[#060b16]/85 px-3.5 py-2.5 shadow-[0_0_24px_rgba(245,158,11,0.12)] backdrop-blur-md transition-all duration-300 hover:border-amber-300/55 hover:shadow-[0_0_30px_rgba(245,158,11,0.18)]">
+  <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-amber-400/[0.10] via-transparent to-amber-200/[0.05]" />
+  <div className="relative grid size-10 shrink-0 place-items-center rounded-xl border border-amber-300/40 bg-gradient-to-br from-amber-300/20 via-amber-500/10 to-transparent shadow-[inset_0_0_16px_rgba(245,158,11,0.12)]">
+    <span className="font-display text-lg font-black leading-none text-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.35)]">
+      {careerLevel}
+    </span>
+  </div>
+  <div className="relative min-w-0 pr-1">
+    <span className="block font-mono text-[9px] font-bold uppercase tracking-[0.22em] text-amber-400/80">
+      Niveau
+    </span>
+    <span className="block truncate font-display text-sm font-extrabold uppercase tracking-wide text-white sm:text-base">
+      {currentCareerTitle}
+    </span>
+  </div>
+</div>
+                  <h3 className="font-display text-xl text-white tracking-tight truncate sm:text-2xl md:text-3xl">{profile?.pseudo || user?.email?.split("@")[0] || "Joueur"}</h3>
 
-                  <div className="flex flex-wrap items-center gap-3 mt-4">
-                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-sm font-bold">
+                  <div className="flex flex-wrap items-center gap-2 mt-3 sm:gap-3 sm:mt-4">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-xs font-bold sm:text-sm">
                       <Trophy size={14} /> #{myStats.rank || "—"} du classement
                     </span>
-                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 font-mono text-sm font-bold">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 font-mono text-xs font-bold sm:text-sm">
                       {myStats.points} pts
                     </span>
                   </div>
@@ -483,13 +674,13 @@ function IndexPage() {
               </div>
             </div>
 
-            <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex flex-wrap items-center gap-3 justify-between">
+            <div className="relative z-10 mt-6 pt-5 border-t border-slate-800/80 flex flex-wrap items-center gap-3 justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 {!isChangingTeam ? (
                   <button
                     type="button"
                     onClick={openTeamPicker}
-                    className="tap flex items-center gap-2 rounded-xl border bg-slate-900/80 px-4 py-2 text-xs font-display font-bold text-slate-200 hover:border-red-500/50 hover:text-red-400 transition-all"
+                    className="tap flex items-center gap-2 rounded-xl border bg-slate-900/80 px-4 py-2.5 text-[13px] font-display font-bold text-slate-200 hover:border-red-500/50 hover:text-red-400 transition-all"
                     style={{ borderColor: clubTheme.primary + "55" }}
                   >
                     <Heart size={14} style={{ color: clubTheme.primary }} /> Changer mon équipe
@@ -533,7 +724,7 @@ function IndexPage() {
               </div>
               <Link
                 to="/profil"
-                className="tap group flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2 text-xs font-display font-bold text-slate-200 hover:border-emerald-500/50 hover:text-emerald-400 transition-all"
+                className="tap group flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5 text-[13px] font-display font-bold text-slate-200 hover:border-emerald-500/50 hover:text-emerald-400 transition-all"
               >
                 <Camera size={14} className="text-emerald-400" /> Gérer mon profil <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
@@ -542,9 +733,9 @@ function IndexPage() {
         </div>
 
         {/* SECTION : PODIUM & STATS avec Effet Verre */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
-          <div className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_40px_rgba(0,0,0,0.6)]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-7">
+
+          <div className="dash-fade-up relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_40px_rgba(0,0,0,0.6)]" style={{ animationDelay: "140ms" }}>
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center opacity-60"
@@ -553,28 +744,30 @@ function IndexPage() {
             <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#0d1322]/20 via-[#0d1322]/35 to-[#0d1322]/55" />
             <div className="absolute top-0 right-0 w-72 h-72 bg-gradient-to-bl from-amber-500/10 via-transparent to-transparent pointer-events-none" />
 
-            <div className="relative z-10 flex items-center justify-between mb-6">
-              <div>
+            <div className="relative z-10 mb-6 flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Sparkles size={14} className="text-amber-400 animate-pulse" />
-                  <span className="font-mono text-[10px] uppercase text-amber-400 font-bold tracking-widest">À l'issue de la {currentMatchday}</span>
+                  <span className="font-mono text-[11px] uppercase text-amber-400 font-bold tracking-widest">À l'issue de la {currentMatchday}</span>
                 </div>
-                <h3 className="font-display text-2xl md:text-3xl text-white tracking-tight">Classement général</h3>
+                <h3 className="font-display text-[26px] font-black md:text-3xl text-white tracking-tight">Classement général</h3>
               </div>
-              <Link 
-                to="/classement" 
-                className="tap rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-2 font-mono text-xs text-slate-200 hover:text-white hover:border-amber-500/50 transition-all shadow-md"
+              <Link
+                to="/classement"
+                className="tap shrink-0 whitespace-nowrap rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-2 font-mono text-xs text-slate-200 hover:text-white hover:border-amber-500/50 transition-all shadow-md"
               >
                 Complet →
               </Link>
             </div>
 
-            <div className="relative z-10 grid grid-cols-3 gap-3 items-end pt-10 pb-2 text-center">
+            {/* pt-12 (au lieu de pt-10) : laisse la place à la couronne du 1er,
+                qui dépasse désormais au-dessus de sa carte. */}
+            <div className="relative z-10 grid grid-cols-3 items-end gap-2.5 pb-2 pt-12 text-center sm:gap-3">
               {([0, 1, 2] as number[]).map((index) => {
                 const player = leaderboard[index];
                 const place = index + 1;
                 const isFirst = place === 1;
-                const height = isFirst ? "h-48 -translate-y-5" : place === 2 ? "h-36" : "h-28";
+                const height = isFirst ? "h-52 -translate-y-6" : place === 2 ? "h-40" : "h-32";
                 const positionOrder =
                   place === 2 ? "order-1" :
                   place === 1 ? "order-2" :
@@ -582,8 +775,17 @@ function IndexPage() {
                 return (
                   <div
                     key={player?.user_id || `place-${place}`}
-                    className={`group relative ${positionOrder} rounded-2xl border ${isFirst ? "border-amber-500/60 shadow-[0_0_35px_rgba(245,158,11,0.25)]" : "border-slate-700/80"} p-4 flex flex-col items-center justify-end pb-6 ${height} transition-all hover:scale-105`}
+                    className={`dash-fade-up group relative ${positionOrder} rounded-2xl border ${isFirst ? "border-amber-500/60 shadow-[0_0_35px_rgba(245,158,11,0.25)]" : "border-slate-700/80"} p-3 flex flex-col items-center justify-end pb-5 sm:p-4 sm:pb-6 ${height} transition-all hover:scale-105`}
+                    style={{ animationDelay: `${200 + index * 90}ms` }}
                   >
+                    {isFirst && (
+                      <Crown
+                        size={22}
+                        className="absolute -top-7 left-1/2 -translate-x-1/2 text-amber-400 drop-shadow-[0_0_10px_rgba(245,158,11,0.7)]"
+                        strokeWidth={2}
+                        fill="currentColor"
+                      />
+                    )}
                     <div className="absolute inset-0 rounded-2xl overflow-hidden">
                       <div className="absolute inset-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: `url('/images/podium/podium-${place}.png')` }} />
                       <div className="absolute inset-0 bg-black/50" />
@@ -591,16 +793,20 @@ function IndexPage() {
                     <span className={`absolute -top-3 size-6 rounded-full ${isFirst ? "bg-amber-400 text-slate-950" : place === 2 ? "bg-slate-700 text-white" : "bg-amber-900/60 text-amber-200"} font-mono font-bold text-[10px] grid place-items-center shadow z-10`}>
                       #{place}
                     </span>
-                    <span className={`relative z-10 font-mono text-[10px] uppercase tracking-wider mb-1 ${isFirst ? "text-amber-400 font-bold" : "text-slate-300"}`}>
+                    <span className={`relative z-10 font-mono text-[11px] font-semibold uppercase tracking-wider mb-1 ${isFirst ? "text-amber-400 font-bold" : "text-slate-300"}`}>
                       {isFirst ? "1er" : `${place}ème`}
                     </span>
                     {player?.avatar_url ? (
-                      <img src={player.avatar_url} alt="" className="relative z-10 size-8 rounded-full object-cover border border-white/20 mb-1" />
+                      <img
+                        src={player.avatar_url}
+                        alt=""
+                        className={`relative z-10 mb-1 rounded-full object-cover border ${isFirst ? "size-11 border-amber-400/70 shadow-[0_0_12px_rgba(245,158,11,0.5)] sm:size-12" : "size-8 border-white/20 sm:size-9"}`}
+                      />
                     ) : null}
-                    <b className="relative z-10 font-display text-sm md:text-base text-white tracking-tight truncate w-full">
+                    <b className="relative z-10 font-display text-sm text-white tracking-tight truncate w-full sm:text-base md:text-lg">
                       {player?.name || "En attente"}
                     </b>
-                    <div className={`relative z-10 mt-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full ${isFirst ? "bg-amber-500/10 border border-amber-500/30 text-amber-300" : "bg-slate-800/90 border border-slate-700 text-slate-300"} font-mono text-xs font-bold`}>
+                    <div className={`relative z-10 mt-2 inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-0.5 rounded-full ${isFirst ? "bg-amber-500/10 border border-amber-500/30 text-amber-300" : "bg-slate-800/90 border border-slate-700 text-slate-300"} font-mono text-xs font-bold sm:text-sm`}>
                       {Number(player?.total_points || 0)} pts
                     </div>
                   </div>
@@ -608,13 +814,13 @@ function IndexPage() {
               })}
             </div>
 
-            <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 font-mono">
-              <span>Ligue ultra serrée en tête !</span>
-              <span className="text-amber-400 font-bold">Cagnotte : {potAmount.toFixed(0)} €</span>
+            <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between font-mono">
+              <span className="text-[13px] text-slate-300 font-medium">Ligue ultra serrée en tête !</span>
+              <span className="text-sm text-amber-400 font-black">Cagnotte : {potAmount.toFixed(0)} €</span>
             </div>
           </div>
 
-          <div className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+          <div className="dash-fade-up relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)]" style={{ animationDelay: "200ms" }}>
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center opacity-60"
@@ -622,54 +828,75 @@ function IndexPage() {
             />
             <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-[#0d1322]/20 via-[#0d1322]/35 to-[#0d1322]/55" />
 
-            <div className="relative z-10 flex items-center justify-between mb-6">
-              <div>
-                <span className="font-mono text-[10px] uppercase text-blue-400 font-bold">Tes performances</span>
-                <h3 className="font-display text-2xl text-white mt-0.5">Statistiques personnelles</h3>
+            <div className="relative z-10 mb-6 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-[.16em] text-emerald-400">Tes performances</span>
+                <h3 className="font-display text-2xl font-semibold text-white mt-0.5">Statistiques personnelles</h3>
               </div>
-              <Link to="/stats" className="tap rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2 font-mono text-xs text-slate-300 hover:text-white">
+              <Link to="/stats" className="tap shrink-0 whitespace-nowrap rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2 font-mono text-xs text-slate-300 hover:text-white">
                 Tout voir →
               </Link>
             </div>
 
-            <div className="relative z-10 grid grid-cols-2 gap-4">
+            <div className="relative z-10 grid grid-cols-2 gap-3.5 sm:gap-4">
               <div
-                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-bons-pronos.png')" }}
               >
                 <div className="absolute inset-0 bg-black/45" />
-                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Bons pronos</span>
-                <strong className="relative block font-display text-3xl text-emerald-400">{myStats.successRate}%</strong>
+                <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Bons pronos</span>
+                <strong
+                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  style={{ filter: "drop-shadow(0 0 14px rgba(110,231,183,.35))" }}
+                >
+                  {myStats.successRate}
+                  <span className="text-[0.6em] align-top">%</span>
+                </strong>
                 <span className="relative text-[11px] text-slate-300 block mt-1">{myStats.totalPronos} pronos</span>
               </div>
 
               <div
-                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-scores-exacts.png')" }}
               >
                 <div className="absolute inset-0 bg-black/45" />
-                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Scores exacts</span>
-                <strong className="relative block font-display text-3xl text-blue-400">{myStats.exactScores}</strong>
+                <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Scores exacts</span>
+                <strong
+                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  style={{ filter: "drop-shadow(0 0 14px rgba(96,165,250,.35))" }}
+                >
+                  {myStats.exactScores}
+                </strong>
                 <span className="relative text-[11px] text-slate-300 block mt-1">{myStats.totalPronos ? Math.round((myStats.exactScores / myStats.totalPronos) * 100) : 0}% des pronos</span>
               </div>
 
               <div
-                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-points-moyens.png')" }}
               >
                 <div className="absolute inset-0 bg-black/45" />
-                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Points moyens</span>
-                <strong className="relative block font-display text-3xl text-amber-400">{myStats.avgPoints}</strong>
+                <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Points moyens</span>
+                <strong
+                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  style={{ filter: "drop-shadow(0 0 14px rgba(252,211,77,.35))" }}
+                >
+                  {myStats.avgPoints}
+                </strong>
                 <span className="relative text-[11px] text-slate-300 block mt-1">Par journée</span>
               </div>
 
               <div
-                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat"
+                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-meilleure-journee.png')" }}
               >
                 <div className="absolute inset-0 bg-black/45" />
-                <span className="relative font-mono text-[10px] uppercase text-slate-300 block mb-1">Meilleure journée</span>
-                <strong className="relative block font-display text-3xl text-indigo-400">{myStats.bestDayPoints}</strong>
+                <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Meilleure journée</span>
+                <strong
+                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  style={{ filter: "drop-shadow(0 0 14px rgba(129,140,248,.35))" }}
+                >
+                  {myStats.bestDayPoints}
+                </strong>
                 <span className="relative text-[11px] text-slate-300 block mt-1">Points • {myStats.bestDay}</span>
               </div>
             </div>
@@ -681,3 +908,8 @@ function IndexPage() {
     </AppShell>
   );
 }
+
+
+
+
+

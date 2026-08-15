@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
+import { supabase } from "@/lib/supabase";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import AdminRoute from "@/components/auth/AdminRoute";
@@ -44,8 +45,22 @@ import {
 import {
   type BonusCandidate,
   type BonusCompetitionCode,
+  BONUS_SELECTION_WEIGHTS,
   selectBestBonusMatch,
+  isMatchInWindow,
+  parisLocalToUtcIso,
+  utcIsoToParisLocalInput,
+  formatParisWindow,
 } from "@/services/bonusSelectionService";
+import {
+  type BonusOption,
+  getBonusOptions,
+  replaceBonusSelection,
+  clearBonusSelections,
+} from "@/services/bonusOptionsService";
+import { type CompetitionStandings, getAllBonusStandings } from "@/services/standingsService";
+import { resolveBonusClubLogo, BONUS_LEAGUE_LOGO } from "@/services/bonusClubLogoService";
+import { sendManualReminder } from "@/services/pushReminderService";
 
 import {
   Users,
@@ -59,6 +74,7 @@ import {
   Save,
   Trash2,
   Plus,
+  Minus,
   Pencil,
   X,
   Lock,
@@ -74,12 +90,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  Bell,
+  Share2,
+  Newspaper,
 } from "lucide-react";
 
 /** Onglets de l'espace admin, adressables via le search param `tab`
  * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
  * partageable/bookmarkable. */
-const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "verrouillage", "reglages"] as const;
+const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "suivi", "verrouillage", "reglages"] as const;
 export type AdminTab = (typeof ADMIN_TAB_VALUES)[number];
 
 function isAdminTab(value: unknown): value is AdminTab {
@@ -385,6 +404,7 @@ const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
   { id: "paiements", label: "Paiements", icon: Wallet },
   { id: "matchs", label: "Matchs", icon: Calendar },
   { id: "bonus", label: "Bonus", icon: Gift },
+  { id: "suivi", label: "Suivi pronos", icon: Bell },
   { id: "verrouillage", label: "Verrouillage", icon: Lock },
   { id: "reglages", label: "Réglages", icon: SettingsIcon },
 ];
@@ -398,6 +418,20 @@ function AdminPage() {
   function setActiveTab(tab: AdminTab) {
     navigate({ search: (prev: AdminSearch) => ({ ...prev, tab }) });
   }
+
+  // activeTab change via un paramètre d'URL (search), pas un changement de
+  // route classique — TanStack Router ne réinitialise donc pas le scroll
+  // automatiquement (comportement voulu ailleurs : filtres, pagination...).
+  // Résultat concret : si on est scrollé plus bas en consultant un onglet
+  // plus long (ex. Bonus) puis qu'on bascule sur Suivi des pronostics (plus
+  // court), la page RESTE à cette position de scroll — le titre "Suivi des
+  // pronostics" se retrouve visuellement sous le header sticky, pas parce
+  // qu'il est mal positionné, mais parce qu'on est déjà scrollé plus bas
+  // que sa hauteur. Remonter en haut à chaque changement d'onglet corrige
+  // ça structurellement, sans aucun padding devinée.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeTab]);
 
   // Nettoie l'URL d'un ancien lien/bookmark `?tab=journees` (onglet fusionné
   // dans Bonus) vers `?tab=bonus`, une fois le routeur monté. validateSearch
@@ -423,6 +457,7 @@ function AdminPage() {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [adminPredictions, setAdminPredictions] = useState<AdminPredictionRow[]>([]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -476,6 +511,7 @@ function AdminPage() {
       seasonsResult,
       competitionsResult,
       settingsResult,
+      predictionsResult,
     ] = await Promise.allSettled([
       getPlayers(),
       getPayments(),
@@ -485,6 +521,9 @@ function AdminPage() {
       getSeasons(),
       getCompetitions(),
       getSettings(),
+      supabase
+        .from("predictions")
+        .select("user_id, match_id, home_prediction, away_prediction, created_at"),
     ]);
 
     if (playersResult.status === "fulfilled") {
@@ -550,6 +589,19 @@ function AdminPage() {
       addError(nextErrors, "reglages", TABLE_MISSING_HINT);
     }
 
+    if (predictionsResult.status === "fulfilled") {
+      const predictionResponse = predictionsResult.value;
+      if (predictionResponse.error) {
+        console.warn("predictions:", predictionResponse.error);
+        addError(nextErrors, "suivi", "Impossible de charger les pronostics.");
+      } else {
+        setAdminPredictions((predictionResponse.data ?? []) as AdminPredictionRow[]);
+      }
+    } else {
+      console.warn("predictions:", predictionsResult.reason);
+      addError(nextErrors, "suivi", "Impossible de charger les pronostics.");
+    }
+
     setErrors(nextErrors);
   }
 
@@ -604,7 +656,13 @@ function AdminPage() {
                   <Shield size={12} />
                   ESPACE ADMINISTRATEUR
                 </div>
-                <h1 className="font-display text-3xl font-black uppercase tracking-tight text-white sm:text-4xl">
+                <h1
+                  className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-3xl font-black uppercase tracking-tight text-transparent sm:text-4xl"
+                  style={{
+                    filter:
+                      "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
+                  }}
+                >
                   Gestion de la ligue
                 </h1>
                 <p className="mt-1 text-sm text-slate-400">
@@ -661,6 +719,7 @@ function AdminPage() {
           {activeTab === "joueurs" && (
             <PlayersTab
               players={players}
+              teams={teams}
               setPlayers={setPlayers}
               error={errors.joueurs}
               onChanged={async () => setPlayers(await getPlayers())}
@@ -717,6 +776,17 @@ function AdminPage() {
             />
           )}
 
+          {activeTab === "suivi" && (
+            <PronoFollowUpTab
+              players={players}
+              matchdays={matchdays}
+              matches={matches}
+              predictions={adminPredictions}
+              error={errors.suivi}
+              notify={notify}
+            />
+          )}
+
           {activeTab === "verrouillage" && (
             <MatchdayLockTab
               matchdays={matchdays}
@@ -747,16 +817,740 @@ function AdminPage() {
 }
 
 // ============================================================
+// 🔔 ONGLET SUIVI DES PRONOSTICS
+// ============================================================
+
+type AdminPredictionRow = {
+  user_id: string | null;
+  match_id: string | number | null;
+  home_prediction?: number | null;
+  away_prediction?: number | null;
+  created_at?: string | null;
+};
+
+function PronoFollowUpTab({
+  players,
+  matchdays,
+  matches,
+  predictions,
+  error,
+  notify,
+}: {
+  players: Player[];
+  matchdays: Matchday[];
+  matches: Match[];
+  predictions: AdminPredictionRow[];
+  error?: string;
+  notify: (message: string) => void;
+}) {
+  // BUG corrigé ici — `matchdays` (prop) contient TOUTES les journées, tous
+  // championnats confondus (Ligue 1 + les 4 championnats bonus PL/PD/SA/BL1
+  // synchronisés par l'onglet Bonus), qui partagent les mêmes numéros 1..38
+  // mais avec un `id` différent par championnat (voir syncCompetitionMatches
+  // dans adminService.ts, qui crée une ligne matchdays par compétition).
+  // Sans filtre, la journée "J1" pouvait donc résoudre vers le matchday_id
+  // d'un championnat étranger (0 match Ligue 1 dedans), d'où le 0/0 et le
+  // "COMPLET" incorrect pour tous les joueurs. Même filtre déjà utilisé et
+  // validé dans MatchesTab (ligue1MatchdayIds), réutilisé ici à l'identique
+  // plutôt que dupliqué sous un autre nom.
+  const ligue1MatchIdsForFollowUp = useMemo(
+    () =>
+      new Set(
+        matches
+          .filter((m) => (m.match_type ?? "LIGUE1") === "LIGUE1")
+          .map((m) => m.matchday_id)
+          .filter((id): id is string => !!id),
+      ),
+    [matches],
+  );
+  const ligue1Matchdays = useMemo(
+    () =>
+      matchdays
+        .filter((md) => ligue1MatchIdsForFollowUp.has(md.id))
+        .sort((a, b) => a.number - b.number),
+    [matchdays, ligue1MatchIdsForFollowUp],
+  );
+
+  const [selectedMatchdayId, setSelectedMatchdayId] = useState<string>("");
+  const [filter, setFilter] = useState<"all" | "complete" | "incomplete" | "none">("all");
+  const [reminded, setReminded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (selectedMatchdayId || ligue1Matchdays.length === 0) return;
+    setSelectedMatchdayId(computeDefaultMatchdayId(ligue1Matchdays, matches) ?? ligue1Matchdays[0].id);
+  }, [ligue1Matchdays, matches, selectedMatchdayId]);
+
+  const selectedMatchday = ligue1Matchdays.find((md) => md.id === selectedMatchdayId) ?? null;
+
+  const selectedMatches = useMemo(() => {
+    if (!selectedMatchdayId) return [];
+    return matches.filter(
+      (match) =>
+        String(match.matchday_id ?? "") === String(selectedMatchdayId) &&
+        (match.match_type ?? "LIGUE1") === "LIGUE1" &&
+        !match.is_bonus,
+    );
+  }, [matches, selectedMatchdayId]);
+
+  const selectedMatchIds = useMemo(
+    () => new Set(selectedMatches.map((match) => String(match.id))),
+    [selectedMatches],
+  );
+
+  const [bonusMatchIds, setBonusMatchIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBonusIds() {
+      if (!selectedMatchdayId) {
+        setBonusMatchIds(new Set());
+        return;
+      }
+
+      const { data, error: bonusError } = await supabase
+        .from("bonus_options")
+        .select("match_id")
+        .eq("matchday_id", selectedMatchdayId)
+        .eq("is_active", true);
+
+      if (cancelled) return;
+
+      if (bonusError) {
+        console.warn("Erreur chargement bonus_options pour le suivi :", bonusError);
+        setBonusMatchIds(new Set());
+        return;
+      }
+
+      setBonusMatchIds(
+        new Set(
+          (data ?? [])
+            .map((row) => row.match_id)
+            .filter(Boolean)
+            .map((id) => String(id)),
+        ),
+      );
+    }
+
+    void loadBonusIds();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMatchdayId]);
+
+  // IMPORTANT : `bonus_options` propose plusieurs matchs candidats (un par
+  // championnat bonus PL/PD/SA/BL1) pour la journée, mais le joueur n'en
+  // sélectionne qu'UN seul (voir pronostics.tsx : le save nettoie les
+  // predictions des candidats non retenus). Ces candidats ne doivent donc
+  // jamais compter comme autant de pronostics obligatoires : on distingue
+  // le nombre de matchs Ligue 1 attendus (l1Expected, un pronostic chacun)
+  // du fait qu'un bonus ait été sélectionné (bonusExpected/bonusSelected,
+  // un booléen, pas un décompte).
+  const l1Expected = selectedMatchIds.size;
+  // `bonusExpected` gère le cas robustesse "aucun bonus configuré" pour la
+  // journée (section 15) : si aucune option bonus n'existe, on ne bloque
+  // jamais un joueur sur un bonus qu'il ne peut pas sélectionner.
+  const bonusExpected = bonusMatchIds.size > 0;
+
+  const rows = useMemo(() => {
+    return players.map((player) => {
+      const uid = String(player.id);
+      const l1CompletedIds = new Set<string>();
+      let bonusSelected = false;
+
+      for (const prediction of predictions) {
+        if (String(prediction.user_id ?? "") !== uid) continue;
+        if (prediction.match_id == null) continue;
+        if (prediction.home_prediction == null || prediction.away_prediction == null) continue;
+
+        const matchId = String(prediction.match_id);
+        if (selectedMatchIds.has(matchId)) {
+          // Doublons éventuels (section 20, TEST 8) : un Set ne compte
+          // qu'une fois chaque match_id distinct.
+          l1CompletedIds.add(matchId);
+        } else if (bonusMatchIds.has(matchId)) {
+          // Une seule sélection bonus suffit à considérer le bonus "fait" —
+          // ce n'est jamais un décompte des 4 candidats.
+          bonusSelected = true;
+        }
+      }
+
+      const l1Completed = l1CompletedIds.size;
+      const l1Missing = Math.max(l1Expected - l1Completed, 0);
+
+      // Garde-fou explicite : l1Expected === 0 ne doit JAMAIS se traduire par
+      // "complet" (0/0 ne veut rien dire — soit la journée n'a pas encore de
+      // matchs synchronisés, soit — c'était le bug réel ici — le matchday_id
+      // résolu n'était pas celui de Ligue 1). Avec le filtre corrigé
+      // ci-dessus (ligue1Matchdays), ce cas ne devrait normalement plus se
+      // produire, mais on ne laisse jamais l1Expected === 0 lire "COMPLET".
+      const complete = l1Expected > 0 && l1Completed === l1Expected && (!bonusExpected || bonusSelected);
+      const none = l1Completed === 0 && !bonusSelected;
+
+      return {
+        player,
+        l1Completed,
+        l1Expected,
+        l1Missing,
+        bonusExpected,
+        bonusSelected,
+        status: complete ? "complete" : none ? "none" : "incomplete",
+      } as const;
+    });
+  }, [players, predictions, selectedMatchIds, bonusMatchIds, l1Expected, bonusExpected]);
+
+  const summary = useMemo(() => {
+    const total = rows.length;
+    const complete = rows.filter((row) => row.status === "complete").length;
+    const incomplete = rows.filter((row) => row.status === "incomplete").length;
+    const none = rows.filter((row) => row.status === "none").length;
+
+    // Moyenne de complétion (maquette Admin Suivi) : ratio pronos réalisés /
+    // attendus (Ligue 1 + bonus s'il y en a un pour la journée) moyenné sur
+    // tous les joueurs. 0 attendu (aucun match synchronisé) → 0% plutôt
+    // qu'une division par zéro / NaN affiché.
+    const totalExpected = l1Expected + (bonusExpected ? 1 : 0);
+    const average =
+      total === 0 || totalExpected === 0
+        ? 0
+        : Math.round(
+            (rows.reduce((sum, row) => sum + row.l1Completed + (row.bonusSelected ? 1 : 0), 0) /
+              (total * totalExpected)) *
+              100,
+          );
+
+    return { total, complete, incomplete, none, average };
+  }, [rows, l1Expected, bonusExpected]);
+
+  // Joueurs réellement ciblés par "Rappeler tous" / le partage groupé —
+  // jamais les complets (même logique que remindAll ci-dessous, calculée
+  // ici séparément pour pouvoir afficher le compte (X) dans le libellé).
+  const pendingRows = useMemo(() => rows.filter((row) => row.status !== "complete"), [rows]);
+
+  const filteredRows = useMemo(
+    () => rows.filter((row) => filter === "all" || row.status === filter),
+    [rows, filter],
+  );
+
+  // Message affiché dans la notification Push réelle (Phase 2). Variantes
+  // par statut reprises telles quelles du cahier des charges §9 — le
+  // statut "complete" ne devrait jamais atteindre cette fonction puisque le
+  // bouton Rappeler est masqué pour ces joueurs (§18), mais on garde un
+  // texte de repli cohérent au cas où.
+  function reminderBody(row: (typeof rows)[number]): string {
+    const dayLabel = selectedMatchday ? `la Journée ${selectedMatchday.number}` : "cette journée";
+    if (row.status === "none") {
+      return `🔔 Tu n'as pas encore fait tes pronostics pour ${dayLabel}.`;
+    }
+    if (row.status === "incomplete") {
+      return `🔔 Il te reste des pronostics à terminer pour ${dayLabel}.`;
+    }
+    return `🔔 N'oublie pas de terminer tes pronostics pour ${dayLabel} avant la deadline.`;
+  }
+
+  const [reminding, setReminding] = useState<Set<string>>(new Set());
+  const [remindingAll, setRemindingAll] = useState(false);
+
+  async function remind(row: (typeof rows)[number]) {
+    const playerId = String(row.player.id);
+    const label = row.player.pseudo ?? "ce joueur";
+
+    setReminding((previous) => new Set(previous).add(playerId));
+    try {
+      const result = await sendManualReminder({
+        userId: row.player.id,
+        matchdayId: selectedMatchdayId || null,
+        title: "Prono Ligue 1 LM",
+        body: reminderBody(row),
+      });
+
+      if (!result.ok) {
+        notify(`❌ Impossible d'envoyer le rappel à ${label}${result.error ? ` : ${result.error}` : "."}`);
+        return;
+      }
+
+      if (result.subscriptionsFound === 0) {
+        // Pas une erreur technique : le joueur n'a simplement jamais activé
+        // les notifications Push. Ne jamais afficher ça comme un succès (§13).
+        notify(`⚠️ ${label} n'a pas activé les notifications Push.`);
+        return;
+      }
+
+      if (result.sent > 0) {
+        notify(`✅ Rappel envoyé à ${label}`);
+        setReminded((previous) => new Set(previous).add(playerId));
+      } else {
+        notify(`❌ Impossible d'envoyer le rappel à ${label} (abonnement(s) invalide(s)).`);
+      }
+    } catch (e) {
+      notify(`❌ Impossible d'envoyer le rappel à ${label}${errorMessage(e, "") ? ` : ${errorMessage(e, "")}` : "."}`);
+    } finally {
+      setReminding((previous) => {
+        const next = new Set(previous);
+        next.delete(playerId);
+        return next;
+      });
+    }
+  }
+
+  // Partage manuel (WhatsApp, SMS, etc.) en plus du Push : certains joueurs
+  // n'ont jamais activé les notifications (voir `subscriptionsFound === 0`
+  // ci-dessus), ce bouton leur reste donc utile sans dépendre du Push ni
+  // créer un nouveau système de données — texte généré à la volée.
+  // `window.location.origin` plutôt qu'une URL codée en dur : reste juste
+  // que ce soit servi en local, preview Vercel ou domaine de prod.
+  const siteUrl = typeof window !== "undefined" ? window.location.origin : "";
+
+  function shareMessage(row: (typeof rows)[number]): string {
+    return `${reminderBody(row)}\n👉 ${siteUrl}`;
+  }
+
+  function groupShareMessage(): string {
+    const dayLabel = selectedMatchday ? `la Journée ${selectedMatchday.number}` : "cette journée";
+    const count = pendingRows.length;
+    return `🔔 ${count} joueur${count > 1 ? "s" : ""} n'${count > 1 ? "ont" : "a"} pas encore terminé ${count > 1 ? "leurs" : "son"} pronostics pour ${dayLabel}.\n👉 ${siteUrl}`;
+  }
+
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedGroup, setCopiedGroup] = useState(false);
+
+  // navigator.share (mobile, ouvre le sélecteur d'apps natif) en priorité,
+  // repli sur le presse-papiers ailleurs (desktop / navigateur sans
+  // support). L'annulation d'un partage (AbortError) n'est pas une erreur.
+  async function shareOrCopy(text: string, onCopied?: () => void) {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({ title: "Prono Ligue 1 LM", text });
+        return;
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") return;
+        // Repli presse-papiers si le partage natif échoue pour une autre raison.
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      onCopied?.();
+    } catch {
+      notify("❌ Impossible de copier le message. Copie-le manuellement :\n" + text);
+    }
+  }
+
+  async function shareReminder(row: (typeof rows)[number]) {
+    const playerId = String(row.player.id);
+    await shareOrCopy(shareMessage(row), () => {
+      setCopiedId(playerId);
+      notify(`📋 Message copié pour ${row.player.pseudo ?? "ce joueur"}`);
+      setTimeout(() => setCopiedId((current) => (current === playerId ? null : current)), 2000);
+    });
+  }
+
+  async function shareGroupReminder() {
+    await shareOrCopy(groupShareMessage(), () => {
+      setCopiedGroup(true);
+      notify("📋 Message groupé copié");
+      setTimeout(() => setCopiedGroup(false), 2000);
+    });
+  }
+
+  async function remindAll() {
+    // Cible EXCLUSIVEMENT les joueurs incomplete/none — jamais les complets
+    // (§4/§18, validé Phase 1 : `rows.filter(row => row.status !== "complete")`).
+    const pending = pendingRows;
+    if (pending.length === 0) {
+      notify("Aucun joueur à rappeler pour cette journée.");
+      return;
+    }
+
+    setRemindingAll(true);
+    try {
+      const outcomes = await Promise.allSettled(
+        pending.map(async (row) => ({
+          row,
+          result: await sendManualReminder({
+            userId: row.player.id,
+            matchdayId: selectedMatchdayId || null,
+            title: "Prono Ligue 1 LM",
+            body: reminderBody(row),
+          }),
+        })),
+      );
+
+      let sentCount = 0;
+      let noSubscriptionCount = 0;
+      let failedCount = 0;
+      const remindedIds = new Set<string>();
+
+      // Une erreur sur un joueur ne doit jamais empêcher le traitement des
+      // autres (§15) : Promise.allSettled + boucle sans early-return.
+      for (const outcome of outcomes) {
+        if (outcome.status !== "fulfilled") {
+          failedCount++;
+          continue;
+        }
+        const { row, result } = outcome.value;
+        if (result.ok && result.sent > 0) {
+          sentCount++;
+          remindedIds.add(String(row.player.id));
+        } else if (result.ok && result.subscriptionsFound === 0) {
+          noSubscriptionCount++;
+        } else {
+          failedCount++;
+        }
+      }
+
+      if (remindedIds.size > 0) {
+        setReminded((previous) => new Set([...previous, ...remindedIds]));
+      }
+
+      const parts = [`✅ ${sentCount} rappel${sentCount > 1 ? "s" : ""} envoyé${sentCount > 1 ? "s" : ""}`];
+      if (noSubscriptionCount > 0) {
+        parts.push(`⚠️ ${noSubscriptionCount} joueur${noSubscriptionCount > 1 ? "s" : ""} sans notification Push`);
+      }
+      if (failedCount > 0) {
+        parts.push(`❌ ${failedCount} échec${failedCount > 1 ? "s" : ""}`);
+      }
+      notify(parts.join(" · "));
+    } finally {
+      setRemindingAll(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* scroll-mt : marge de sécurité pour que le titre ne se retrouve
+          jamais juste sous le header sticky d'AppShell, quel que soit le
+          point de défilement d'où l'on arrive sur cet onglet. */}
+      <Card className="overflow-hidden scroll-mt-20">
+        <div className="border-b border-slate-800 bg-gradient-to-r from-emerald-500/10 to-transparent px-4 pb-4 pt-5 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div>
+              <div className="mb-1 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-400">
+                <Bell size={13} />
+                Suivi des pronostics
+              </div>
+              <h2 className="font-display text-lg font-black uppercase tracking-wide text-white sm:text-xl">
+                Qui a oublié ses pronos ?
+              </h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Vue admin par journée pour repérer immédiatement les joueurs à relancer.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={selectedMatchdayId}
+                onChange={(event) => {
+                  setSelectedMatchdayId(event.target.value);
+                  setReminded(new Set());
+                }}
+                className="rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+              >
+                {ligue1Matchdays.map((md) => (
+                  <option key={md.id} value={md.id}>
+                    Journée {md.number}
+                  </option>
+                ))}
+              </select>
+
+              <GhostButton
+                onClick={() => void shareGroupReminder()}
+                disabled={pendingRows.length === 0}
+                className="!px-3 !py-2 text-[11px] sm:!px-4 sm:!py-2.5 sm:text-xs"
+              >
+                {copiedGroup ? <Check size={12} /> : <Share2 size={12} />}
+                {copiedGroup ? "Copié !" : "Partager un rappel"}
+              </GhostButton>
+
+              {/* Compact sur mobile (padding/texte réduits) mais reste la
+                  priorité visuelle — même couleur, même position, juste
+                  moins volumineux sur petit écran. */}
+              <PrimaryButton
+                onClick={remindAll}
+                disabled={remindingAll || pendingRows.length === 0}
+                className="!px-3 !py-2 text-[11px] sm:!px-4 sm:!py-2 sm:text-xs"
+              >
+                <Bell size={13} className={remindingAll ? "animate-pulse" : ""} />
+                {remindingAll ? "Envoi en cours…" : `Rappeler tous (${pendingRows.length})`}
+              </PrimaryButton>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="p-5 pb-0">
+            <ErrorBanner message={error} />
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2.5 p-4 sm:grid-cols-5 sm:gap-3 sm:p-5">
+          <button
+            type="button"
+            onClick={() => setFilter("all")}
+            className={`rounded-2xl border p-3 text-left transition sm:p-4 ${
+              filter === "all" ? "border-emerald-500/50 bg-emerald-500/10" : "border-slate-800 bg-[#0d1322]"
+            }`}
+          >
+            <div className="font-display text-xl font-black text-white sm:text-2xl">{summary.total}</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Joueurs</div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilter("complete")}
+            className={`rounded-2xl border p-3 text-left transition sm:p-4 ${
+              filter === "complete" ? "border-emerald-500/50 bg-emerald-500/10" : "border-slate-800 bg-[#0d1322]"
+            }`}
+          >
+            <div className="font-display text-xl font-black text-emerald-400 sm:text-2xl">{summary.complete}</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Complets</div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilter("incomplete")}
+            className={`rounded-2xl border p-3 text-left transition sm:p-4 ${
+              filter === "incomplete" ? "border-amber-500/50 bg-amber-500/10" : "border-slate-800 bg-[#0d1322]"
+            }`}
+          >
+            <div className="font-display text-xl font-black text-amber-400 sm:text-2xl">{summary.incomplete}</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Incomplets</div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilter("none")}
+            className={`rounded-2xl border p-3 text-left transition sm:p-4 ${
+              filter === "none" ? "border-red-500/50 bg-red-500/10" : "border-slate-800 bg-[#0d1322]"
+            }`}
+          >
+            <div className="font-display text-xl font-black text-red-400 sm:text-2xl">{summary.none}</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Aucun prono</div>
+          </button>
+
+          {/* Moyenne : indicatif uniquement (pas un filtre — il n'y a rien
+              d'utile à filtrer par "moyenne de complétion" par joueur). */}
+          <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-3 text-left sm:p-4">
+            <div className="font-display text-xl font-black text-sky-300 sm:text-2xl">{summary.average}%</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Moyenne</div>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-2.5 sm:gap-3 sm:px-5 sm:py-3">
+            <div className="text-xs text-slate-400">
+              {selectedMatchday ? (
+                <>
+                  <span className="font-bold text-white">J{selectedMatchday.number}</span>
+                  {" · "}
+                  {selectedMatches.length} match{selectedMatches.length > 1 ? "s" : ""} Ligue 1
+                </>
+              ) : (
+                "Aucune journée sélectionnée"
+              )}
+            </div>
+            <div className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              {l1Expected} prono{l1Expected > 1 ? "s" : ""} Ligue 1{bonusExpected ? " + 1 bonus" : ""} attendu{l1Expected + (bonusExpected ? 1 : 0) > 1 ? "s" : ""}
+            </div>
+          </div>
+
+          {/* En-têtes de colonnes — desktop uniquement (même pattern que
+              BonusCompetitionRow dans l'onglet Bonus) : JOUEUR / LIGUE 1 /
+              BONUS / STATUT / ACTION, alignés sur la grille de chaque ligne. */}
+          <div className="hidden border-b border-slate-800/70 px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_110px_170px_auto] lg:items-center lg:gap-3">
+            <span>Joueur</span>
+            <span className="text-center">Ligue 1</span>
+            <span className="text-center">Bonus</span>
+            <span>Statut</span>
+            <span className="text-right">Action</span>
+          </div>
+
+          <div className="divide-y divide-slate-800/70">
+            {filteredRows.length === 0 ? (
+              <div className="p-10 text-center text-sm text-slate-500">
+                Aucun joueur dans ce filtre.
+              </div>
+            ) : (
+              filteredRows.map((row) => {
+                const playerId = String(row.player.id);
+                const wasReminded = reminded.has(playerId);
+                const isReminding = reminding.has(playerId);
+                const wasCopied = copiedId === playerId;
+
+                return (
+                  <div
+                    key={playerId}
+                    className={`flex flex-col gap-2.5 p-3.5 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_110px_170px_auto] lg:items-center lg:gap-3 lg:p-4 ${
+                      row.status === "none"
+                        ? "bg-red-500/[0.035]"
+                        : row.status === "incomplete"
+                          ? "bg-amber-500/[0.025]"
+                          : ""
+                    }`}
+                  >
+                    {/* Colonne JOUEUR */}
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="relative size-9 shrink-0 overflow-hidden rounded-full border border-slate-700 bg-slate-800 sm:size-10">
+                        {row.player.avatar_url ? (
+                          <img
+                            src={row.player.avatar_url}
+                            alt={row.player.pseudo ?? ""}
+                            className="size-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex size-full items-center justify-center font-display text-sm font-black text-slate-400">
+                            {(row.player.pseudo ?? "?").slice(0, 1).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 truncate font-semibold text-white">
+                        {row.player.pseudo ?? "Sans pseudo"}
+                      </div>
+                    </div>
+
+                    {/* Colonne LIGUE 1 — X/Y matches pronostiqués */}
+                    <div className="flex items-center gap-2 lg:justify-center">
+                      <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-500 lg:hidden">
+                        Ligue 1
+                      </span>
+                      <span
+                        className={`font-display text-sm font-black ${
+                          row.l1Completed === row.l1Expected && row.l1Expected > 0
+                            ? "text-emerald-400"
+                            : row.l1Completed === 0
+                              ? "text-red-400"
+                              : "text-amber-400"
+                        }`}
+                      >
+                        {row.l1Completed}/{row.l1Expected}
+                      </span>
+                    </div>
+
+                    {/* Colonne BONUS — sélectionné ou non (le cas "aucun bonus configuré
+                        pour la journée" reste un simple tiret, pas un statut manquant). */}
+                    <div className="flex items-center gap-2 lg:justify-center">
+                      <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-500 lg:hidden">
+                        Bonus
+                      </span>
+                      {row.bonusExpected ? (
+                        <span
+                          className={`font-mono text-[11px] font-bold ${
+                            row.bonusSelected ? "text-emerald-400" : "text-amber-400"
+                          }`}
+                        >
+                          🎁 {row.bonusSelected ? "Fait" : "Non fait"}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[11px] text-slate-600">—</span>
+                      )}
+                    </div>
+
+                    {/* Colonne STATUT */}
+                    <div>
+                      {row.status === "complete" ? (
+                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold text-emerald-400">
+                          <CheckCircle2 size={12} />
+                          🟢 COMPLET
+                        </span>
+                      ) : row.status === "incomplete" ? (
+                        <span className="font-mono text-[11px] font-bold text-amber-400">
+                          🟠 INCOMPLET
+                          {row.l1Missing > 0 && ` · ${row.l1Missing} manquant${row.l1Missing > 1 ? "s" : ""}`}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[11px] font-bold text-red-400">🔴 AUCUN PRONO</span>
+                      )}
+                    </div>
+
+                    {/* Colonne ACTION — Rappeler (Push) + Partager (copier/partager
+                        un texte avec le lien du site), uniquement pour les joueurs
+                        qui n'ont pas terminé. */}
+                    {row.status !== "complete" && (
+                      <div className="flex flex-wrap items-center gap-1.5 lg:justify-end lg:gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void remind(row)}
+                          disabled={isReminding}
+                          className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                            wasReminded
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                              : "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                          }`}
+                        >
+                          {isReminding ? (
+                            <RefreshCw size={13} className="animate-spin" />
+                          ) : wasReminded ? (
+                            <Check size={13} />
+                          ) : (
+                            <Bell size={13} />
+                          )}
+                          {isReminding ? "Envoi…" : wasReminded ? "Envoyé" : "Rappeler"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void shareReminder(row)}
+                          title="Copier / partager un rappel avec le lien du site"
+                          className={`inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-wide transition ${
+                            wasCopied
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                              : "border-slate-700 bg-[#0d1322] text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {wasCopied ? <Check size={13} /> : <Share2 size={13} />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex gap-3">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-400" />
+          <div className="text-xs leading-relaxed text-slate-400">
+            Le suivi utilise les lignes enregistrées dans <span className="font-semibold text-slate-200">predictions</span>.
+            Le bouton <span className="font-semibold text-slate-200">Rappeler</span> envoie une notification Push réelle au joueur ciblé (via l'Edge Function Supabase <span className="font-semibold text-slate-200">send-prono-reminders</span>) — s'il n'a jamais activé les notifications, tu seras prévenu au lieu d'un faux succès.
+            Le bouton <Share2 size={11} className="inline -mt-0.5" /> <span className="font-semibold text-slate-200">Partager</span> prépare un message avec le lien du site (ouvre le partage natif sur mobile, sinon le copie dans le presse-papiers) — utile pour relancer un joueur qui n'a pas activé le Push.
+            <span className="block mt-1 text-slate-500">
+              Les clés VAPID et la clé service_role restent côté Edge Function : le navigateur ne transporte que ta session admin, jamais de secret serveur.
+            </span>
+          </div>
+        </div>
+      </Card>
+
+      {/* Dégagement réel (mesuré, pas deviné) au-dessus de la nav flottante
+          d'AppShell — voir --app-nav-h dans AppShell.tsx (ResizeObserver sur
+          la nav réelle). S'ajoute au pb-32 déjà présent sur tout l'onglet
+          Admin : celui-ci reste un filet générique pour tous les onglets,
+          celui-ci garantit spécifiquement que le dernier joueur et son
+          bouton "Rappeler" ne finissent jamais sous la nav, quelle que soit
+          sa hauteur réelle (safe-area comprise). Mobile uniquement — le
+          rendu desktop n'a pas de nav flottante à dégager de cette façon. */}
+      <div
+        aria-hidden
+        className="sm:hidden"
+        style={{ height: "calc(var(--app-nav-h, 72px) + env(safe-area-inset-bottom) + 16px)" }}
+      />
+    </div>
+  );
+}
+
+// ============================================================
 // 👥 ONGLET JOUEURS (Mis à jour avec Équipe favorite et Dérogation admin - Phases 2, 3, 4)
 // ============================================================
 function PlayersTab({
   players,
+  teams,
   setPlayers,
   error,
   onChanged,
   notify,
 }: {
   players: Player[];
+  teams: Team[];
   setPlayers: React.Dispatch<React.SetStateAction<Player[]>>;
   error?: string;
   onChanged: () => Promise<void>;
@@ -765,12 +1559,12 @@ function PlayersTab({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Player | null>(null);
   const [editing, setEditing] = useState<Player | null>(null);
-  const [editForm, setEditForm] = useState({ pseudo: "", favorite_team: "" });
+  const [editForm, setEditForm] = useState({ pseudo: "", favorite_team_id: "" });
   const [saving, setSaving] = useState(false);
 
   function openEdit(player: Player) {
     setEditing(player);
-    setEditForm({ pseudo: player.pseudo ?? "", favorite_team: player.favorite_team ?? "" });
+    setEditForm({ pseudo: player.pseudo ?? "", favorite_team_id: player.favorite_team_id ?? "" });
   }
 
   async function submitEdit() {
@@ -779,7 +1573,7 @@ function PlayersTab({
     try {
       await updatePlayer(editing.id, {
         pseudo: editForm.pseudo.trim() || null,
-        favorite_team: editForm.favorite_team || null,
+        favorite_team_id: editForm.favorite_team_id || null,
         favorite_team_override: true, // Phase 4 : Dérogation admin active lors de la modification admin
       });
       setEditing(null);
@@ -856,7 +1650,9 @@ function PlayersTab({
               </tr>
             </thead>
             <tbody>
-              {players.map((player) => (
+              {players.map((player) => {
+                const favoriteTeam = teams.find((team) => team.id === player.favorite_team_id);
+                return (
                 <tr key={player.id} className="border-b border-slate-800/60 last:border-0 hover:bg-slate-900/40 transition-colors">
                   <td className="py-3 pr-3">
                     <div className="flex items-center gap-3">
@@ -876,10 +1672,10 @@ function PlayersTab({
                     </div>
                   </td>
                   <td className="py-3 pr-3">
-                    <ClubBadge value={player.favorite_team} />
+                    <ClubBadge value={favoriteTeam?.name ?? ""} />
                   </td>
                   <td className="py-3 pr-3">
-                    {player.favorite_team ? (
+                    {favoriteTeam ? (
                       <span className="inline-flex items-center gap-1 text-emerald-400 text-xs font-mono">
                         <Check size={14} /> {player.favorite_team_override ? "Modifié (Admin)" : "OK"}
                       </span>
@@ -928,7 +1724,8 @@ function PlayersTab({
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -952,12 +1749,12 @@ function PlayersTab({
                 Équipe favorite
               </label>
               <select
-                value={editForm.favorite_team}
-                onChange={(e) => setEditForm((f) => ({ ...f, favorite_team: e.target.value }))}
+                value={editForm.favorite_team_id}
+                onChange={(e) => setEditForm((f) => ({ ...f, favorite_team_id: e.target.value }))}
                 className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500/60"
               >
                 <option value="">— Aucune —</option>
-                {OFFICIAL_L1_CLUBS.map((c) => (
+                {teams.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -1611,88 +2408,95 @@ function MatchesTab({
             return (
             <div
               key={match.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3"
+              className="rounded-xl border border-slate-800 bg-[#0d1322] p-3.5 sm:px-4 sm:py-3"
             >
-              <div className="flex items-center gap-4">
+              {/* Ligne méta — journée / statut / horaire. Toujours en haut,
+                  compacte, avant le duel (repère rapide sur mobile où tout
+                  ne peut plus tenir sur une seule ligne comme avant). */}
+              <div className="mb-2.5 flex flex-wrap items-center gap-2 sm:mb-2">
                 <span className="rounded-lg border border-slate-700 bg-slate-800/60 px-2 py-1 font-mono text-[10px] font-bold text-slate-400">
                   {matchdayLabel(matchdaysById.get(match.matchday_id ?? ""))}
                 </span>
-                <div className="flex items-center gap-2">
+                <StatusBadge status={matchDisplayStatus(match)} />
+                <span className="font-mono text-[10px] text-slate-500 sm:text-xs sm:text-slate-400">
+                  {match.kickoff ? new Date(match.kickoff).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                </span>
+              </div>
+
+              {/* Duel + actions — empilés sur mobile (le duel centré d'abord,
+                  les actions ensuite, pleine largeur), côte à côte dès sm. */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center justify-center gap-2 sm:justify-start">
                   <TeamBadge teams={teams} teamId={match.home_team_id} />
                   <span className="text-slate-600">vs</span>
                   <TeamBadge teams={teams} teamId={match.away_team_id} />
                 </div>
-              </div>
 
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-xs text-slate-400">
-                  {match.kickoff ? new Date(match.kickoff).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—"}
-                </span>
-                <StatusBadge status={matchDisplayStatus(match)} />
+                <div className="flex items-center justify-center gap-1.5 sm:justify-end">
+                  {/* Score inline : éditable même sur un match "à venir" — la
+                      sauvegarde bascule automatiquement `finished` à true dès
+                      que les deux scores sont renseignés (voir saveScore). */}
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      value={draft.home}
+                      onChange={(e) => setScoreDraft(match, { home: e.target.value })}
+                      onBlur={() => hasDraftEdit && saveScore(match)}
+                      onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
+                      aria-label={`Score domicile ${teamOf(teams, match.home_team_id)?.name ?? "?"}`}
+                      className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+                    />
+                    <span className="text-slate-600">-</span>
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      value={draft.away}
+                      onChange={(e) => setScoreDraft(match, { away: e.target.value })}
+                      onBlur={() => hasDraftEdit && saveScore(match)}
+                      onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
+                      aria-label={`Score extérieur ${teamOf(teams, match.away_team_id)?.name ?? "?"}`}
+                      className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+                    />
+                    {hasDraftEdit && (
+                      <GhostButton
+                        onClick={() => saveScore(match)}
+                        title="Enregistrer le score"
+                        ariaLabel={`Enregistrer le score de ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                          teamOf(teams, match.away_team_id)?.name ?? "?"
+                        }`}
+                      >
+                        {savingScoreId === match.id ? (
+                          <RefreshCw size={12} className="animate-spin" />
+                        ) : (
+                          <Save size={12} />
+                        )}
+                      </GhostButton>
+                    )}
+                  </div>
 
-                {/* Score inline : éditable même sur un match "à venir" — la
-                    sauvegarde bascule automatiquement `finished` à true dès
-                    que les deux scores sont renseignés (voir saveScore). */}
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    value={draft.home}
-                    onChange={(e) => setScoreDraft(match, { home: e.target.value })}
-                    onBlur={() => hasDraftEdit && saveScore(match)}
-                    onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
-                    aria-label={`Score domicile ${teamOf(teams, match.home_team_id)?.name ?? "?"}`}
-                    className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
-                  />
-                  <span className="text-slate-600">-</span>
-                  <input
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    value={draft.away}
-                    onChange={(e) => setScoreDraft(match, { away: e.target.value })}
-                    onBlur={() => hasDraftEdit && saveScore(match)}
-                    onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
-                    aria-label={`Score extérieur ${teamOf(teams, match.away_team_id)?.name ?? "?"}`}
-                    className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
-                  />
-                  {hasDraftEdit && (
-                    <GhostButton
-                      onClick={() => saveScore(match)}
-                      title="Enregistrer le score"
-                      ariaLabel={`Enregistrer le score de ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
-                        teamOf(teams, match.away_team_id)?.name ?? "?"
-                      }`}
-                    >
-                      {savingScoreId === match.id ? (
-                        <RefreshCw size={12} className="animate-spin" />
-                      ) : (
-                        <Save size={12} />
-                      )}
-                    </GhostButton>
-                  )}
+                  <GhostButton
+                    onClick={() => openEdit(match)}
+                    title="Modifier"
+                    ariaLabel={`Modifier le match ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                      teamOf(teams, match.away_team_id)?.name ?? "?"
+                    }`}
+                  >
+                    <Pencil size={12} />
+                  </GhostButton>
+                  <GhostButton
+                    danger
+                    onClick={() => setConfirmDelete(match)}
+                    title="Supprimer"
+                    ariaLabel={`Supprimer le match ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                      teamOf(teams, match.away_team_id)?.name ?? "?"
+                    }`}
+                  >
+                    {busyId === match.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  </GhostButton>
                 </div>
-
-                <GhostButton
-                  onClick={() => openEdit(match)}
-                  title="Modifier"
-                  ariaLabel={`Modifier le match ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
-                    teamOf(teams, match.away_team_id)?.name ?? "?"
-                  }`}
-                >
-                  <Pencil size={12} />
-                </GhostButton>
-                <GhostButton
-                  danger
-                  onClick={() => setConfirmDelete(match)}
-                  title="Supprimer"
-                  ariaLabel={`Supprimer le match ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
-                    teamOf(teams, match.away_team_id)?.name ?? "?"
-                  }`}
-                >
-                  {busyId === match.id ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                </GhostButton>
               </div>
             </div>
             );
@@ -1835,25 +2639,22 @@ function StatusBadge({ status }: { status: string }) {
 // dans son propre onglet, voir MatchdayLockTab.
 /** Convertit un timestamp ISO en UTC (tel que renvoyé par Supabase pour un
  * `timestamptz`, ex. "2026-08-21T04:00:00+00:00") vers le format attendu
- * par <input type="datetime-local"> — en heure LOCALE du navigateur.
+ * par <input type="datetime-local"> — en heure locale Europe/Paris.
  *
- * BUG corrigé ici : un `.slice(0, 16)` naïf sur la chaîne UTC ("2026-08-
- * 21T04:00") réutilisait telles quelles les heures UTC comme si elles
- * étaient déjà en heure locale. `<input type="datetime-local">` n'a
- * aucune notion de fuseau — il affiche/interprète toujours sa valeur
- * comme de l'heure locale — donc un admin en France (UTC+2 l'été)
- * voyait "04:00" au lieu de "06:00", et si cette valeur (fausse) était
- * réenregistrée telle quelle, l'écart se creusait un peu plus à chaque
- * aller-retour (double conversion). La comparaison elle-même
- * (isWithinBonusPeriod) était correcte ; seul le réaffichage après
- * chargement des réglages était faux. */
-function toDatetimeLocalInput(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+ * BUG corrigé ici (historique) : un `.slice(0, 16)` naïf sur la chaîne UTC
+ * ("2026-08-21T04:00") réutilisait telles quelles les heures UTC comme si
+ * elles étaient déjà en heure locale. `<input type="datetime-local">` n'a
+ * aucune notion de fuseau — il affiche/interprète toujours sa valeur comme
+ * de l'heure locale.
+ *
+ * Le fix suivant utilisait `new Date(iso).getHours()`, donc l'heure LOCALE
+ * DU NAVIGATEUR — correct uniquement si l'admin est physiquement/OS réglé
+ * sur Europe/Paris. Remplacé par `utcIsoToParisLocalInput`
+ * (bonusSelectionService.ts), qui calcule l'heure de Paris via Intl quel
+ * que soit le fuseau de la machine qui exécute le code — cohérent avec
+ * `isWithinBonusPeriod`, qui compare désormais aussi en Europe/Paris
+ * explicite (voir isMatchInWindow / parisLocalToUtcIso). */
+const toDatetimeLocalInput = utcIsoToParisLocalInput;
 
 const BONUS_COMPETITION_LABELS: Record<BonusCompetitionCode, string> = {
   PL: "Premier League",
@@ -1861,6 +2662,365 @@ const BONUS_COMPETITION_LABELS: Record<BonusCompetitionCode, string> = {
   SA: "Serie A",
   BL1: "Bundesliga",
 };
+
+/** Pays + drapeau des 4 championnats bonus — fixes (PL/PD/SA/BL1 ne changent
+ * jamais), donc codés en dur plutôt que dépendants du chargement encore
+ * possiblement pas terminé de `availableCompetitions` (football-data.org).
+ * Le logo, lui, reste pris depuis `availableCompetitions` quand disponible
+ * (voir rendu de la sélection bonus) — jamais fabriqué. */
+const BONUS_COMPETITION_META: Record<BonusCompetitionCode, { country: string; flag: string }> = {
+  PL: { country: "Angleterre", flag: "🇬🇧" },
+  PD: { country: "Espagne", flag: "🇪🇸" },
+  SA: { country: "Italie", flag: "🇮🇹" },
+  BL1: { country: "Allemagne", flag: "🇩🇪" },
+};
+
+/** "sam. 23 août" + "16:00" (Europe/Paris) pour l'affiche d'un match bonus
+ * sélectionné — pur affichage, aucune conversion de fuseau écrite ici (voir
+ * parisLocalToUtcIso/utcIsoToParisLocalInput pour la partie formulaire). */
+function formatBonusKickoff(iso: string | null | undefined): { day: string; time: string } {
+  const date = iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return { day: "Date à confirmer", time: "" };
+  const day = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+  const time = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+  return { day, time };
+}
+
+/** "Aujourd'hui à 18:10" / "Hier à 09:40" / "23/08/26 à 18:10", toujours en
+ * heure de Paris — pour "Dernière modification" dans la sélection bonus. */
+function formatLastModified(iso: string | null | undefined): string {
+  const date = iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return "—";
+
+  const dayKey = (d: Date) =>
+    new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  const time = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" }).format(date);
+
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 86_400_000);
+
+  if (dayKey(date) === dayKey(now)) return `Aujourd'hui à ${time}`;
+  if (dayKey(date) === dayKey(yesterday)) return `Hier à ${time}`;
+
+  const shortDate = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", year: "2-digit" }).format(date);
+  return `${shortDate} à ${time}`;
+}
+
+// ============================================================
+// Sélection bonus actuelle — composants de présentation purs (aucun état,
+// aucun appel Supabase, aucune logique métier : uniquement le rendu). Toute
+// la donnée et les handlers restent calculés dans BonusTab, ces composants
+// se contentent de l'afficher.
+// ============================================================
+
+/** Résout le logo d'un club de match bonus : d'abord les vrais fichiers
+ * livrés dans public/logos/<championnat>/ (resolveBonusClubLogo — la
+ * source prévue pour ça, les clubs étrangers n'ont quasiment jamais de
+ * ligne dans `teams`), puis `teams.logo_url` en repli si jamais renseigné,
+ * jamais un chemin inventé. */
+function resolveBonusTeamLogo(
+  match: Match | null | undefined,
+  side: "home" | "away",
+  code: BonusCompetitionCode,
+  teams: Team[],
+): string | null {
+  if (!match) return null;
+  const name = side === "home" ? match.home_team : match.away_team;
+  const teamId = side === "home" ? match.home_team_id : match.away_team_id;
+  return resolveBonusClubLogo(name, code) ?? teamOf(teams, teamId)?.logo_url ?? null;
+}
+
+/** Logo d'un championnat — vrai fichier de public/logos/ (BONUS_LEAGUE_LOGO,
+ * bonusClubLogoService.ts), jamais le code interne brut "PL"/"PD"/"SA"/"BL1"
+ * affiché comme s'il s'agissait d'un élément de design. Repli propre en
+ * initiales uniquement si le fichier est réellement introuvable (onError). */
+function CompetitionLogo({ code, label, size = "size-12 sm:size-14" }: { code: BonusCompetitionCode; label: string; size?: string }) {
+  const [broken, setBroken] = useState(false);
+  const initials = label
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <div
+      className={`relative flex ${size} shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-sky-500/15 bg-gradient-to-br from-white/[0.07] to-black/30 shadow-[inset_0_1px_0_rgba(255,255,255,.08),0_6px_16px_rgba(0,0,0,.35)]`}
+    >
+      {broken ? (
+        <span className="font-display text-sm font-black tracking-tight text-sky-300">{initials}</span>
+      ) : (
+        <img src={BONUS_LEAGUE_LOGO[code]} alt="" className="h-full w-full object-contain p-2" onError={() => setBroken(true)} />
+      )}
+    </div>
+  );
+}
+
+/** Logo + nom d'un club — vrai logo (resolveBonusTeamLogo), repli initiales
+ * uniquement si le fichier est réellement introuvable (onError) ou si
+ * aucune source n'a pu être résolue. */
+function BonusTeamBadge({ logoUrl, name, size = "size-12 sm:size-14" }: { logoUrl: string | null; name: string; size?: string }) {
+  const [broken, setBroken] = useState(false);
+  const showFallback = broken || !logoUrl;
+
+  return (
+    <div className="flex min-w-0 flex-1 flex-col items-center gap-2 text-center">
+      {showFallback ? (
+        <span
+          className={`flex ${size} items-center justify-center rounded-full border border-slate-700 bg-slate-900 font-display text-xs font-black text-slate-400`}
+          title="Logo introuvable"
+        >
+          {name.slice(0, 2).toUpperCase()}
+        </span>
+      ) : (
+        <img
+          src={logoUrl}
+          alt=""
+          className={`${size} object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,.5)]`}
+          onError={() => setBroken(true)}
+        />
+      )}
+      <span className="max-w-[130px] truncate font-display text-sm font-black text-white sm:text-base">{name}</span>
+    </div>
+  );
+}
+
+/** Zone centrale "MATCH SÉLECTIONNÉ" — dominante visuellement, ou état
+ * d'attente (⚽ + "En attente du tirage") si aucun candidat pour ce
+ * championnat. */
+function BonusMatchDisplay({
+  candidate,
+  homeLogoUrl,
+  awayLogoUrl,
+  kickoff,
+}: {
+  candidate: BonusCandidate | undefined;
+  homeLogoUrl: string | null;
+  awayLogoUrl: string | null;
+  kickoff: { day: string; time: string };
+}) {
+  if (!candidate) {
+    return (
+      <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+        <span className="text-2xl opacity-40">⚽</span>
+        <span className="font-mono text-[11px] uppercase tracking-wider text-slate-500">En attente du tirage</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="flex items-center justify-center gap-4 sm:gap-8">
+        <BonusTeamBadge logoUrl={homeLogoUrl} name={candidate.match.home_team ?? "?"} />
+        <span className="shrink-0 font-display text-[11px] font-black uppercase tracking-[0.2em] text-sky-300 drop-shadow-[0_0_8px_rgba(56,189,248,.5)]">
+          VS
+        </span>
+        <BonusTeamBadge logoUrl={awayLogoUrl} name={candidate.match.away_team ?? "?"} />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 font-mono text-[10px] uppercase tracking-wide text-sky-200/60">
+        <span className="inline-flex items-center gap-1.5">
+          <Calendar size={11} className="text-sky-400/70" />
+          {kickoff.day}
+        </span>
+        {kickoff.time && (
+          <>
+            <span className="text-slate-700">•</span>
+            <span className="inline-flex items-center gap-1.5">
+              <Timer size={11} className="text-sky-400/70" />
+              {kickoff.time}
+            </span>
+          </>
+        )}
+      </div>
+
+      {candidate.match.finished && candidate.match.home_score != null && candidate.match.away_score != null && (
+        <div className="mt-2.5 rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-1 font-mono text-[11px] font-bold text-emerald-300">
+          Score enregistré : {candidate.match.home_score} – {candidate.match.away_score}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Zone droite "GESTION" — dernière modification, statut, bouton Modifier. */
+function BonusManagement({
+  lastModified,
+  onEdit,
+  disabled,
+}: {
+  lastModified: string;
+  onEdit: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex flex-col justify-center gap-3.5">
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-widest text-slate-500">Dernière modification</div>
+        <div className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-sky-100/80">
+          <Timer size={11} className="text-slate-500" />
+          {lastModified}
+        </div>
+      </div>
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-widest text-slate-500">Statut</div>
+        <div className="mt-1 inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+          <span className="relative flex size-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.7)]" />
+          </span>
+          Actif
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={disabled}
+        className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl border border-sky-400/40 bg-sky-500/[0.08] px-3 py-2.5 font-display text-xs font-bold uppercase tracking-wide text-sky-300 transition-all duration-300 hover:border-sky-300/70 hover:bg-sky-400/15 hover:text-sky-200 hover:shadow-[0_0_24px_rgba(56,189,248,.25)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:shadow-none disabled:hover:border-sky-400/40"
+      >
+        <Pencil size={12} />
+        Modifier
+      </button>
+    </div>
+  );
+}
+
+/** Une ligne premium complète (3 zones) pour un championnat bonus — desktop
+ * en ligne horizontale (grid 3 colonnes), mobile en carte verticale
+ * empilée (le grid retombe naturellement sur 1 colonne, `divide-y` au lieu
+ * de `divide-x`). */
+function BonusCompetitionRow({
+  code,
+  candidate,
+  discovered,
+  homeLogoUrl,
+  awayLogoUrl,
+  kickoff,
+  lastModified,
+  onEdit,
+}: {
+  code: BonusCompetitionCode;
+  candidate: BonusCandidate | undefined;
+  discovered: DiscoveredCompetition | undefined;
+  homeLogoUrl: string | null;
+  awayLogoUrl: string | null;
+  kickoff: { day: string; time: string };
+  lastModified: string;
+  onEdit: () => void;
+}) {
+  const meta = BONUS_COMPETITION_META[code];
+  const label = BONUS_COMPETITION_LABELS[code];
+
+  return (
+    <div className="group relative overflow-hidden rounded-2xl border border-sky-500/[0.08] bg-gradient-to-br from-[#0b1526]/95 via-[#0a1420]/90 to-[#060c16]/95 shadow-[0_18px_40px_rgba(0,0,0,.35)] backdrop-blur-xl transition-all duration-300 hover:border-sky-400/25 hover:shadow-[0_18px_50px_rgba(14,165,233,.08)]">
+      {/* Liseré supérieur cyan discret */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-400/40 to-transparent" />
+      {/* Léger halo intérieur pour la profondeur (glassmorphism) */}
+      <div className="pointer-events-none absolute -left-10 -top-10 h-40 w-40 rounded-full bg-sky-500/[0.05] blur-3xl" />
+      {/* Très léger accent doré dans le coin, à peine perceptible */}
+      <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-amber-300/[0.04] blur-2xl" />
+
+      <div className="relative grid grid-cols-1 divide-y divide-white/[0.05] lg:grid-cols-[260px_minmax(0,1fr)_230px] lg:divide-x lg:divide-y-0">
+        {/* ZONE GAUCHE — championnat */}
+        <div className="flex items-center gap-3.5 p-4 sm:p-5">
+          <CompetitionLogo code={code} label={label} />
+          <div className="min-w-0">
+            <div className="font-display text-base font-black text-white sm:text-lg">{label}</div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+              <span>{meta.flag}</span>
+              <span>{discovered?.country ?? meta.country}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ZONE CENTRALE — match sélectionné (dominante) */}
+        <div className="flex items-center justify-center p-4 sm:p-5">
+          <BonusMatchDisplay candidate={candidate} homeLogoUrl={homeLogoUrl} awayLogoUrl={awayLogoUrl} kickoff={kickoff} />
+        </div>
+
+        {/* ZONE DROITE — gestion */}
+        <div className="p-4 sm:p-5">
+          <BonusManagement lastModified={lastModified} onEdit={onEdit} disabled={!candidate} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Stepper de score premium pour la modal "Modifier le bonus" — grand
+ * chiffre central, boutons +/- larges (confortables au tactile), saisie
+ * clavier directe toujours possible. `value` reste la même chaîne brute que
+ * gère déjà le formulaire (editingBonus.home/away) : ce composant ne fait
+ * qu'afficher/normaliser, submitBonusEdit/saveBonusScore restent
+ * inchangés. Entier, jamais négatif — mêmes contraintes qu'avant. */
+function BonusScoreStepper({
+  value,
+  onChange,
+  label,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  label: string;
+}) {
+  const numeric = value.trim() === "" ? 0 : Math.max(0, Math.trunc(Number(value) || 0));
+
+  function commit(next: number) {
+    onChange(String(Math.max(0, Math.trunc(next))));
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={() => commit(numeric + 1)}
+        aria-label={`Augmenter le score ${label}`}
+        className="flex size-11 items-center justify-center rounded-xl border border-sky-400/30 bg-sky-500/10 text-sky-300 transition-all hover:border-sky-300/60 hover:bg-sky-400/20 active:scale-95"
+      >
+        <Plus size={18} strokeWidth={2.5} />
+      </button>
+
+      <input
+        type="number"
+        min={0}
+        step={1}
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === "") {
+            onChange("");
+            return;
+          }
+          const n = Number(raw);
+          if (!Number.isFinite(n)) return;
+          onChange(String(Math.max(0, Math.trunc(n))));
+        }}
+        placeholder="0"
+        aria-label={`Score ${label}`}
+        className="h-16 w-16 rounded-2xl border border-slate-700 bg-[#050913] text-center font-display text-3xl font-black text-white outline-none focus:border-sky-400/60 sm:h-20 sm:w-20 sm:text-4xl"
+      />
+
+      <button
+        type="button"
+        onClick={() => commit(Math.max(0, numeric - 1))}
+        aria-label={`Diminuer le score ${label}`}
+        className="flex size-11 items-center justify-center rounded-xl border border-slate-700 bg-white/[0.03] text-slate-300 transition-all hover:border-slate-500 hover:bg-white/[0.08] active:scale-95"
+      >
+        <Minus size={18} strokeWidth={2.5} />
+      </button>
+    </div>
+  );
+}
 
 function BonusTab({
   matchdays,
@@ -1890,8 +3050,46 @@ function BonusTab({
   // Sélection bonus : état local pour cette première étape.
   // La persistance Supabase sera branchée dans adminService après validation de l'UI.
   const [bonusSelections, setBonusSelections] = useState<Record<string, Partial<Record<BonusCompetitionCode, BonusCandidate>>>>({});
+  // Dernière date de modification (bonus_options.updated_at) par journée+championnat
+  // — uniquement pour l'affichage "Dernière modification" de la sélection bonus,
+  // hydraté dans le même effet que bonusSelections ci-dessous.
+  const [bonusMetaByKey, setBonusMetaByKey] = useState<Record<string, Partial<Record<BonusCompetitionCode, { updatedAt: string }>>>>({});
   const [generatingBonus, setGeneratingBonus] = useState(false);
-  const [replacingBonus, setReplacingBonus] = useState<BonusCompetitionCode | null>(null);
+
+  // Classement en direct des 4 championnats bonus — barème dynamique : la
+  // sélection juge l'équilibre d'un match sur la position RÉELLE des deux
+  // équipes au moment de la génération, pas sur une réputation figée (voir
+  // bonusSelectionService.ts). Rechargé à chaque montage de l'onglet et à
+  // chaque clic sur "Générer" (le classement peut avoir changé entre deux
+  // générations), jamais mis en cache au-delà de la session admin.
+  const [standingsByCompetition, setStandingsByCompetition] = useState<Partial<Record<BonusCompetitionCode, CompetitionStandings>>>({});
+  const [loadingStandings, setLoadingStandings] = useState(false);
+
+  // "2026-2027" -> "2026" (année de saison attendue par football-data.org).
+  const bonusSeasonYear = (settings?.season ?? "2026-2027").split(/[-–]/)[0]?.trim() || "2026";
+
+  // Retourne le classement fraîchement chargé (pas seulement mis en state) :
+  // generateBonusForDay a besoin d'une valeur garantie à jour au moment
+  // précis de la génération, pas de la valeur (potentiellement en retard
+  // d'un rendu) lue depuis le state React.
+  async function loadBonusStandings(): Promise<Partial<Record<BonusCompetitionCode, CompetitionStandings>>> {
+    setLoadingStandings(true);
+    try {
+      const result = await getAllBonusStandings(bonusSeasonYear);
+      setStandingsByCompetition(result);
+      return result;
+    } catch (e) {
+      console.error("Erreur chargement du classement pour la sélection bonus :", e);
+      return standingsByCompetition;
+    } finally {
+      setLoadingStandings(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadBonusStandings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bonusSeasonYear]);
 
   // Championnats (grandes ligues européennes hors Ligue 1) : la liste
   // disponible vient de football-data.org, pas d'une constante codée en dur.
@@ -1914,36 +3112,41 @@ function BonusTab({
     setPeriodEnd(toDatetimeLocalInput(settings?.bonus_period_end));
   }, [settings]);
 
+  // periodStart/periodEnd sont saisis en heure locale Europe/Paris (inputs
+  // datetime-local) ; on les convertit explicitement en ISO UTC via
+  // parisLocalToUtcIso (Intl, indépendant du fuseau de la machine) — jamais
+  // via `new Date(periodStart).toISOString()`, qui utiliserait le fuseau du
+  // navigateur exécutant le code.
+  const periodStartIso = useMemo(() => parisLocalToUtcIso(periodStart), [periodStart]);
+  const periodEndIso = useMemo(() => parisLocalToUtcIso(periodEnd), [periodEnd]);
+
   async function handleSavePeriod(requireBothDates = false): Promise<boolean> {
     if (requireBothDates && (!periodStart || !periodEnd)) {
       notify("Choisis une date de début ET une date de fin avant de générer les matchs bonus.");
       return false;
     }
 
-    if (periodStart && Number.isNaN(new Date(periodStart).getTime())) {
+    if (periodStart && !periodStartIso) {
       notify("La date de début bonus est invalide.");
       return false;
     }
 
-    if (periodEnd && Number.isNaN(new Date(periodEnd).getTime())) {
+    if (periodEnd && !periodEndIso) {
       notify("La date de fin bonus est invalide.");
       return false;
     }
 
-    if (periodStart && periodEnd && new Date(periodStart) >= new Date(periodEnd)) {
+    if (periodStartIso && periodEndIso && new Date(periodStartIso) >= new Date(periodEndIso)) {
       notify("La fin de la période doit être après le début.");
       return false;
     }
 
-    const startIso = periodStart ? new Date(periodStart).toISOString() : null;
-    const endIso = periodEnd ? new Date(periodEnd).toISOString() : null;
-
-    if (startIso === (settings?.bonus_period_start ?? null) && endIso === (settings?.bonus_period_end ?? null)) {
+    if (periodStartIso === (settings?.bonus_period_start ?? null) && periodEndIso === (settings?.bonus_period_end ?? null)) {
       return true;
     }
 
     try {
-      await updateSettings({ bonus_period_start: startIso, bonus_period_end: endIso });
+      await updateSettings({ bonus_period_start: periodStartIso, bonus_period_end: periodEndIso });
       await onSettingsChanged();
       return true;
     } catch (e) {
@@ -1953,17 +3156,13 @@ function BonusTab({
   }
 
   /** Un match est éligible au tirage s'il n'y a pas de période définie, ou
-   * si son coup d'envoi tombe dedans (bornes incluses). Pas de coup
-   * d'envoi connu = exclu dès qu'une période est active (on ne peut pas
-   * vérifier). */
+   * si son coup d'envoi (UTC, football-data.org) tombe dans la fenêtre
+   * [periodStartIso, periodEndIso] (bornes incluses, comparaison de vrais
+   * timestamps via isMatchInWindow — jamais une comparaison de chaînes).
+   * Pas de coup d'envoi connu = exclu dès qu'une période est active (on ne
+   * peut pas vérifier). */
   function isWithinBonusPeriod(match: Match): boolean {
-    if (!periodStart && !periodEnd) return true;
-    if (!match.kickoff) return false;
-    const kickoff = new Date(match.kickoff).getTime();
-    if (Number.isNaN(kickoff)) return false;
-    if (periodStart && kickoff < new Date(periodStart).getTime()) return false;
-    if (periodEnd && kickoff > new Date(periodEnd).getTime()) return false;
-    return true;
+    return isMatchInWindow(match.kickoff, periodStartIso, periodEndIso);
   }
 
   async function loadAvailableCompetitions() {
@@ -2043,8 +3242,16 @@ function BonusTab({
   }
 
   function toBonusMatch(match: Match): Match {
-    const home = teams.find((team) => team.id === match.home_team_id)?.name ?? "";
-    const away = teams.find((team) => team.id === match.away_team_id)?.name ?? "";
+    // BUG corrigé ici — `teams` ne contient que les clubs de Ligue 1
+    // (OFFICIAL_L1_CLUBS) : pour un match étranger (PL/PD/SA/BL1), la
+    // recherche par home_team_id/away_team_id échoue toujours et retombait
+    // sur "", écrasant le nom déjà correct enregistré lors de la synchro
+    // football-data.org (adminService.ts, syncCompetitionMatches). Résultat
+    // : scoreBonusCandidate rejetait chaque match étranger (home_team/
+    // away_team vides), donc aucun candidat n'était jamais retenu. On garde
+    // désormais la valeur déjà présente sur le match en repli.
+    const home = teams.find((team) => team.id === match.home_team_id)?.name ?? match.home_team ?? "";
+    const away = teams.find((team) => team.id === match.away_team_id)?.name ?? match.away_team ?? "";
     return { ...match, home_team: home, away_team: away };
   }
 
@@ -2058,47 +3265,106 @@ function BonusTab({
 
     setGeneratingBonus(true);
     try {
+      // Classement recalculé à CHAQUE génération, jamais un score de
+      // sélection qui daterait d'une journée précédente (consigne barème
+      // dynamique) — on ne réutilise pas standingsByCompetition tel quel,
+      // on le recharge et on travaille sur la valeur fraîche retournée.
+      const freshStandings = await loadBonusStandings();
+
       const key = `${md.season_id}:${md.number}`;
-      const next: Partial<Record<BonusCompetitionCode, BonusCandidate>> = {};
-      // Un message par championnat sans candidat, pour diagnostiquer sans
-      // repartir en chasse en base à chaque fois : absence totale de
+      // BUG corrigé ici — une génération partielle (ex. BL1 sans candidat
+      // éligible cette fois) écrasait toute la sélection de la journée par
+      // un objet ne contenant que les championnats retrouvés, et
+      // saveBonusSelections désactivait AUSSI en base les championnats
+      // absents de cet objet avant de ne réinsérer que les autres : un
+      // championnat sans nouveau candidat disparaissait purement et
+      // simplement, alors qu'il avait déjà une sélection valide. `next`
+      // part maintenant de la sélection déjà en place pour cette journée
+      // (bonusSelections[key]) et ne la modifie que championnat par
+      // championnat, uniquement quand un nouveau candidat est réellement
+      // trouvé — jamais un remplacement en bloc.
+      const existing = bonusSelections[key] ?? {};
+      const next: Partial<Record<BonusCompetitionCode, BonusCandidate>> = { ...existing };
+      // Championnats pour lesquels un NOUVEAU candidat a été trouvé cette
+      // fois — seuls ceux-là sont réellement (ré)écrits en base, via
+      // replaceBonusSelection (même fonction déjà utilisée par la modal
+      // "Modifier le bonus"), qui ne touche que la ligne
+      // (matchday_id, competition_code) concernée et laisse les autres
+      // championnats de la journée strictement intacts en base.
+      const toPersist: BonusCandidate[] = [];
+      // Un message par championnat sans NOUVEAU candidat, pour diagnostiquer
+      // sans repartir en chasse en base à chaque fois : absence totale de
       // synchronisation vs matchs existants mais hors de la période choisie
-      // (avec le prochain match connu dans ce dernier cas).
+      // (avec le prochain match connu dans ce dernier cas), et précise si
+      // l'ancienne sélection de ce championnat a été conservée telle quelle.
       const misses: string[] = [];
 
       (["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).forEach((code) => {
         const allForCompetition = bonusMatchesForCompetition(code);
         const eligible = allForCompetition.filter(isWithinBonusPeriod).map(toBonusMatch);
-        const best = selectBestBonusMatch(eligible, code);
+        const best = selectBestBonusMatch(eligible, code, freshStandings[code]);
         if (best) {
           next[code] = best;
+          toPersist.push(best);
           return;
         }
 
         const label = BONUS_COMPETITION_LABELS[code];
+        const kept = existing[code] ? " — sélection existante conservée" : "";
         if (allForCompetition.length === 0) {
-          misses.push(`${label} : aucun match synchronisé (onglet Bonus → Championnats)`);
+          misses.push(`${label} : aucun match synchronisé (onglet Bonus → Championnats)${kept}`);
           return;
         }
         const nextKickoff = allForCompetition
           .map((m) => m.kickoff)
           .filter((k): k is string => !!k && new Date(k).getTime() > Date.now())
           .sort()[0];
+        const nextKickoffLabel = nextKickoff
+          ? new Intl.DateTimeFormat("fr-FR", {
+              timeZone: "Europe/Paris",
+              day: "2-digit",
+              month: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            }).format(new Date(nextKickoff))
+          : null;
         misses.push(
           `${label} : ${allForCompetition.length} match(s) synchronisé(s), aucun dans la période` +
-            (nextKickoff ? ` (prochain : ${new Date(nextKickoff).toLocaleDateString("fr-FR")})` : ""),
+            (nextKickoffLabel ? ` (prochain : ${nextKickoffLabel} heure de Paris)` : "") +
+            kept,
         );
       });
 
       if (Object.keys(next).length === 0) {
-        notify(`Aucun match éligible pour J${md.number} — ${misses.join(" · ")}`);
+        const windowLabel = formatParisWindow(periodStartIso, periodEndIso);
+        notify(
+          `Aucun match éligible pour J${md.number} — fenêtre demandée${windowLabel ? ` ${windowLabel}` : ""} — ${misses.join(" · ")}`,
+        );
         return;
       }
 
+      // La base est la source de vérité : on sauvegarde d'abord (uniquement
+      // les championnats avec un nouveau candidat), puis on met à jour
+      // l'état local une fois Supabase confirmé.
+      if (toPersist.length > 0) {
+        await Promise.all(toPersist.map((candidate) => replaceBonusSelection(md.id, candidate)));
+      }
+
       setBonusSelections((prev) => ({ ...prev, [key]: next }));
-      setReplacingBonus(null);
+      const generatedAt = new Date().toISOString();
+      setBonusMetaByKey((prev) => {
+        const previousMeta = prev[key] ?? {};
+        const nextMeta = { ...previousMeta };
+        toPersist.forEach((candidate) => {
+          nextMeta[candidate.competitionCode] = { updatedAt: generatedAt };
+        });
+        return { ...prev, [key]: nextMeta };
+      });
+
       if (misses.length > 0) {
-        notify(`${Object.keys(next).length}/4 sélectionnés pour J${md.number}. Manquants — ${misses.join(" · ")}`);
+        notify(
+          `${Object.keys(next).length}/4 en place pour J${md.number} (${toPersist.length} nouveau${toPersist.length > 1 ? "x" : ""}). ${misses.join(" · ")}`,
+        );
       } else {
         notify(`${Object.keys(next).length}/4 Matchs bonus sélectionnés pour J${md.number}.`);
       }
@@ -2107,35 +3373,192 @@ function BonusTab({
     }
   }
 
-  function replaceBonusForDay(md: Matchday, code: BonusCompetitionCode, match: Match) {
-    const candidate = scoreBonusCandidateForAdmin(match, code);
-    if (!candidate) return;
+  // Remplace le match retenu pour un championnat. Ne notifie PAS elle-même
+  // et laisse l'erreur remonter : appelée à la fois par submitBonusEdit
+  // (modal "Modifier le bonus", qui gère son propre message de succès/échec
+  // unique pour tout le formulaire) — plus de caller indépendant à ce jour.
+  async function replaceBonusForDay(md: Matchday, code: BonusCompetitionCode, match: Match) {
+    const candidate = scoreBonusCandidateForAdmin(match, code, standingsByCompetition[code]);
+    if (!candidate) throw new Error("Ce match n'est pas éligible pour ce championnat bonus.");
 
     const key = `${md.season_id}:${md.number}`;
+    await replaceBonusSelection(md.id, candidate);
     setBonusSelections((prev) => ({
       ...prev,
       [key]: { ...(prev[key] ?? {}), [code]: candidate },
     }));
-    setReplacingBonus(null);
+    setBonusMetaByKey((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? {}), [code]: { updatedAt: new Date().toISOString() } },
+    }));
   }
 
-  function removeBonusDraw(md: Matchday) {
+  async function removeBonusDraw(md: Matchday) {
     const key = `${md.season_id}:${md.number}`;
-    setBonusSelections((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-    setReplacingBonus(null);
-    notify(`Tirage bonus de J${md.number} retiré.`);
+    try {
+      await clearBonusSelections(md.id);
+      setBonusSelections((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      notify(`Tirage bonus de J${md.number} retiré.`);
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors du retrait du tirage bonus."));
+    }
   }
 
   function scoreCandidateForMatch(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
     return scoreBonusCandidateForAdmin(match, code);
   }
 
-  function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
-    return selectBestBonusMatch([toBonusMatch(match)], code);
+  // Saisie du résultat (score réel du match, "2-1"...) pour le match bonus
+  // retenu de chaque championnat. Ne PAS confondre avec `candidate.score`
+  // (le score de PERTINENCE 0-100 de l'algorithme de sélection) — c'était
+  // l'ambiguïté de fond du bug signalé : l'onglet Matchs n'affiche que la
+  // Ligue 1 (`match_type === "LIGUE1"`), donc les matchs PL/PD/SA/BL1
+  // sélectionnés ici n'avaient tout simplement AUCUNE UI pour saisir leur
+  // résultat nulle part dans l'admin. Réutilise updateMatch et le même
+  // schéma que MatchesTab.saveScore (finished bascule à true seulement
+  // quand les deux scores sont renseignés).
+  //
+  // Éditée exclusivement depuis la modal "Modifier le bonus" (voir
+  // submitBonusEdit) — plus de saisie inline dans la ligne, donc plus de
+  // draft à suivre par match_id : les valeurs viennent directement du
+  // formulaire de la modal.
+  async function saveBonusScore(code: BonusCompetitionCode, match: Match, draft: { home: string; away: string }) {
+    const homeRaw = draft.home.trim();
+    const awayRaw = draft.away.trim();
+    const home = homeRaw === "" ? null : Number(homeRaw);
+    const away = awayRaw === "" ? null : Number(awayRaw);
+    if ((home !== null && Number.isNaN(home)) || (away !== null && Number.isNaN(away))) {
+      throw new Error("Le score doit être un nombre.");
+    }
+    if (home !== null && home < 0) throw new Error("Le score domicile ne peut pas être négatif.");
+    if (away !== null && away < 0) throw new Error("Le score extérieur ne peut pas être négatif.");
+
+    const bothPresent = home !== null && away !== null;
+    await updateMatch(match.id, {
+      home_score: home,
+      away_score: away,
+      finished: bothPresent ? true : match.finished,
+    });
+
+    // Reflète immédiatement le nouveau score dans l'état local de
+    // sélection (bonusSelections) — sinon la ligne resterait affichée
+    // avec l'ancien score jusqu'à une régénération complète du tirage,
+    // puisque ce state n'est ré-hydraté depuis Supabase qu'une fois par
+    // journée (voir l'effet plus haut).
+    if (selectedBonusKey) {
+      setBonusSelections((prev) => {
+        const sel = prev[selectedBonusKey];
+        const existing = sel?.[code];
+        if (!sel || !existing) return prev;
+        return {
+          ...prev,
+          [selectedBonusKey]: {
+            ...sel,
+            [code]: {
+              ...existing,
+              match: { ...existing.match, home_score: home, away_score: away, finished: bothPresent ? true : existing.match.finished },
+            },
+          },
+        };
+      });
+      setBonusMetaByKey((prev) => ({
+        ...prev,
+        [selectedBonusKey]: { ...(prev[selectedBonusKey] ?? {}), [code]: { updatedAt: new Date().toISOString() } },
+      }));
+    }
+
+    // Source de vérité Supabase : recharge matches (et donc, via l'effet
+    // de ré-hydratation ci-dessus, bonusSelections) pour que la page Pronos
+    // et un futur rechargement de l'Admin lisent exactement la même valeur.
+    await onChanged();
+  }
+
+  function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode, standings?: CompetitionStandings): BonusCandidate | null {
+    return selectBestBonusMatch([toBonusMatch(match)], code, standings);
+  }
+
+  // ============================================================
+  // Modal "Modifier le bonus" — championnat, match sélectionné (avec
+  // possibilité de changer de match parmi les alternatives éligibles),
+  // date/heure du coup d'envoi, et surtout le score exact. Un seul point
+  // d'entrée pour toutes les modifications d'un bonus, appelé par le
+  // bouton "Modifier" de chaque ligne.
+  // ============================================================
+  const [editingBonus, setEditingBonus] = useState<{
+    code: BonusCompetitionCode;
+    matchId: string;
+    kickoff: string;
+    home: string;
+    away: string;
+  } | null>(null);
+  const [savingBonusEdit, setSavingBonusEdit] = useState(false);
+
+  function openBonusEditor(code: BonusCompetitionCode) {
+    const candidate = selectedBonusSelection[code];
+    if (!candidate) return;
+    setEditingBonus({
+      code,
+      matchId: candidate.match.id,
+      kickoff: toDatetimeLocalInput(candidate.match.kickoff),
+      home: candidate.match.home_score == null ? "" : String(candidate.match.home_score),
+      away: candidate.match.away_score == null ? "" : String(candidate.match.away_score),
+    });
+  }
+
+  /** Change le match sélectionné DANS le formulaire (pas encore enregistré
+   * en base) — réinitialise date/heure et score sur ceux du nouveau match. */
+  function bonusEditorSelectMatch(match: Match) {
+    setEditingBonus((prev) =>
+      prev
+        ? {
+            ...prev,
+            matchId: match.id,
+            kickoff: toDatetimeLocalInput(match.kickoff),
+            home: match.home_score == null ? "" : String(match.home_score),
+            away: match.away_score == null ? "" : String(match.away_score),
+          }
+        : prev,
+    );
+  }
+
+  async function submitBonusEdit() {
+    if (!editingBonus || !selectedBonusMatchday) return;
+    const { code, matchId } = editingBonus;
+    const targetMatch = matches.find((m) => m.id === matchId);
+    if (!targetMatch) {
+      notify("Match introuvable.");
+      return;
+    }
+
+    setSavingBonusEdit(true);
+    try {
+      // 1) Changement de match sélectionné, si l'admin en a choisi un autre.
+      const currentCandidate = selectedBonusSelection[code];
+      if (!currentCandidate || currentCandidate.match.id !== matchId) {
+        await replaceBonusForDay(selectedBonusMatchday, code, targetMatch);
+      }
+
+      // 2) Date/heure du coup d'envoi, si modifiée.
+      const kickoffIso = parisLocalToUtcIso(editingBonus.kickoff);
+      if (kickoffIso && kickoffIso !== targetMatch.kickoff) {
+        await updateMatch(targetMatch.id, { kickoff: kickoffIso });
+      }
+
+      // 3) Score exact — la partie la plus importante de cette modal.
+      await saveBonusScore(code, targetMatch, { home: editingBonus.home, away: editingBonus.away });
+
+      setEditingBonus(null);
+      notify("Bonus modifié avec succès");
+    } catch (e) {
+      console.error("Erreur lors de la modification du bonus :", e);
+      notify(errorMessage(e, "Impossible de modifier le bonus"));
+    } finally {
+      setSavingBonusEdit(false);
+    }
   }
 
   // Sélection bonus : une seule journée Ligue 1 à la fois (dropdown),
@@ -2166,6 +3589,82 @@ function BonusTab({
   const selectedBonusMatchday = ligue1Matchdays.find((md) => md.id === selectedBonusMatchdayId) ?? null;
   const selectedBonusKey = selectedBonusMatchday ? `${selectedBonusMatchday.season_id}:${selectedBonusMatchday.number}` : null;
   const selectedBonusSelection = selectedBonusKey ? bonusSelections[selectedBonusKey] ?? {} : {};
+  const selectedBonusMeta = selectedBonusKey ? bonusMetaByKey[selectedBonusKey] ?? {} : {};
+
+  // Recharge toutes les sélections bonus actives depuis Supabase dès que
+  // les journées Ligue 1 et les matchs sont disponibles. Ainsi, un simple
+  // refresh de l'Admin ne remet jamais les cartes bonus à zéro.
+  useEffect(() => {
+    if (ligue1Matchdays.length === 0 || matches.length === 0) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const entries = await Promise.all(
+          ligue1Matchdays.map(async (md) => {
+            const rows = await getBonusOptions(md.id);
+            const hydrated: Partial<Record<BonusCompetitionCode, BonusCandidate>> = {};
+            const meta: Partial<Record<BonusCompetitionCode, { updatedAt: string }>> = {};
+
+            for (const row of rows) {
+              const rawMatch = matches.find((m) => m.id === row.match_id);
+              if (!rawMatch) continue;
+
+              const candidate = scoreCandidateForMatch(rawMatch, row.competition_code);
+              if (!candidate) continue;
+
+              hydrated[row.competition_code] = {
+                ...candidate,
+                score: {
+                  total: row.selection_score,
+                  // standings_balance_score/form_score peuvent être absentes
+                  // tant que la migration 20260815120000 n'a pas été
+                  // appliquée (voir bonusOptionsService.ts) — 0 par défaut,
+                  // jamais une valeur fabriquée.
+                  standingsBalance: row.standings_balance_score ?? 0,
+                  levelGap: row.balance_score,
+                  form: row.form_score ?? 0,
+                  prestige: row.prestige_score,
+                  rivalry: row.rivalry_score,
+                  schedule: row.schedule_score,
+                },
+                reasons: row.reasons ?? candidate.reasons,
+              };
+              meta[row.competition_code] = { updatedAt: row.updated_at };
+            }
+
+            return [`${md.season_id}:${md.number}`, hydrated, meta] as const;
+          }),
+        );
+
+        if (!cancelled) {
+          setBonusSelections(Object.fromEntries(entries.map(([key, hydrated]) => [key, hydrated])));
+          setBonusMetaByKey(Object.fromEntries(entries.map(([key, , meta]) => [key, meta])));
+        }
+      } catch (e) {
+        console.error("Erreur chargement des sélections bonus persistées :", e);
+        if (!cancelled) {
+          notify(errorMessage(e, "Impossible de charger les matchs bonus enregistrés."));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ligue1Matchdays, matches]);
+
+  // Validation explicite de la journée avant tirage : le dropdown reste
+  // librement modifiable, mais "Générer" ne doit consommer que la journée
+  // que l'admin a confirmée en cliquant "Valider" — jamais la valeur brute
+  // du dropdown au moment du clic. isBonusMatchdayValidated est dérivé (pas
+  // un state séparé) : il retombe à false automatiquement dès que le
+  // dropdown change, sans effet supplémentaire.
+  const [validatedBonusMatchdayId, setValidatedBonusMatchdayId] = useState<string | null>(null);
+  const validatedBonusMatchday = ligue1Matchdays.find((md) => md.id === validatedBonusMatchdayId) ?? null;
+  const isBonusMatchdayValidated =
+    selectedBonusMatchdayId !== null && selectedBonusMatchdayId === validatedBonusMatchdayId;
 
   return (
     <div className="space-y-4">
@@ -2273,25 +3772,120 @@ function BonusTab({
         </div>
       </Card>
 
+      {/* =====================================================
+          SÉLECTION BONUS ACTUELLE — sa propre carte, en tête (avant les
+          contrôles de génération) : c'est l'info que l'admin vient
+          vérifier en premier. Une ligne premium par championnat (zone
+          championnat / zone match / zone gestion), desktop en ligne
+          horizontale, mobile en carte verticale empilée. Rendu délégué à
+          BonusCompetitionRow (composants de présentation purs définis
+          juste au-dessus de BonusTab) — la donnée et les handlers
+          restent inchangés, seul l'emplacement dans la page bouge.
+         ===================================================== */}
       <Card className="p-5 border-sky-500/20">
-        <div className="mb-1 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
-          Sélection bonus premium
-        </div>
-        <h2 className="font-display text-xl font-black text-white">4 meilleures affiches, une par championnat</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Le site analyse automatiquement le prestige des équipes, l'équilibre du match, les rivalités et l'horaire.
-        </p>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1fr_auto_auto] lg:items-end">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Journée Ligue 1
-            </label>
+            <div className="mb-1 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
+              <Gift size={13} />
+              Sélection bonus actuelle
+            </div>
+            <p className="text-xs text-slate-500">
+              Les 4 bonus sélectionnés sont affichés aux joueurs sur la page Pronos.
+            </p>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+            <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.7)]" />
+            Actif · Affiché aux joueurs
+          </span>
+        </div>
+
+        {/* En-têtes de colonnes — desktop uniquement, alignés sur la même
+            grille que chaque ligne. */}
+        <div className="mb-2 mt-5 hidden px-1 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-sky-400/60 lg:grid lg:grid-cols-[260px_minmax(0,1fr)_230px]">
+          <span>Championnat</span>
+          <span className="text-center">Match sélectionné</span>
+          <span>Gestion</span>
+        </div>
+
+        <div className="mt-3 space-y-3.5 lg:mt-0">
+          {(["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).map((code) => {
+            const candidate = selectedBonusSelection[code];
+            const discovered = availableCompetitions.find((d) => d.code === code);
+            const kickoff = formatBonusKickoff(candidate?.match.kickoff);
+            const lastModified = formatLastModified(selectedBonusMeta[code]?.updatedAt);
+            const homeLogoUrl = candidate ? resolveBonusTeamLogo(candidate.match, "home", code, teams) : null;
+            const awayLogoUrl = candidate ? resolveBonusTeamLogo(candidate.match, "away", code, teams) : null;
+
+            return (
+              <BonusCompetitionRow
+                key={code}
+                code={code}
+                candidate={candidate}
+                discovered={discovered}
+                homeLogoUrl={homeLogoUrl}
+                awayLogoUrl={awayLogoUrl}
+                kickoff={kickoff}
+                lastModified={lastModified}
+                onEdit={() => openBonusEditor(code)}
+              />
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* =====================================================
+          GÉNÉRER LA SÉLECTION PREMIUM — contrôles de génération, en
+          dessous de la sélection actuelle. Même donnée/handlers
+          qu'avant (selectedBonusMatchdayId, periodStart/End,
+          generateBonusForDay, removeBonusDraw...), seule la mise en
+          page change : 3 colonnes dédiées (Générer / Journée / Période)
+          au lieu d'une grille combinée, plus proches des maquettes.
+         ===================================================== */}
+      <Card className="p-5 border-sky-500/20">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div>
+            <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
+              <Sparkles size={13} />
+              Générer la sélection premium
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Génère automatiquement 4 matches premium (1 par championnat).
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => isBonusMatchdayValidated && validatedBonusMatchday && void generateBonusForDay(validatedBonusMatchday)}
+                disabled={!isBonusMatchdayValidated || !validatedBonusMatchday || generatingBonus || !periodStart || !periodEnd}
+                title={!isBonusMatchdayValidated ? "Valide la journée choisie avant de générer." : undefined}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-500 px-4 py-2 font-display text-xs font-bold uppercase tracking-wide text-slate-950 shadow-[0_0_20px_rgba(14,165,233,0.3)] transition-all hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {generatingBonus ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                Générer la sélection
+              </button>
+              <GhostButton
+                danger
+                onClick={() => selectedBonusMatchday && void removeBonusDraw(selectedBonusMatchday)}
+                disabled={!selectedBonusMatchday || Object.keys(selectedBonusSelection).length === 0}
+              >
+                <Trash2 size={12} />
+                Retirer le tirage
+              </GhostButton>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
+              <Calendar size={13} />
+              Journée
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Sélectionne la journée pour laquelle les bonus seront affichés aux joueurs.
+            </p>
             <select
               value={selectedBonusMatchdayId ?? ""}
               onChange={(e) => setSelectedBonusMatchdayId(e.target.value)}
               disabled={ligue1Matchdays.length === 0}
-              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500/60 disabled:opacity-50"
+              className="mt-4 w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500/60 disabled:opacity-50"
             >
               {ligue1Matchdays.length === 0 && <option value="">Aucune journée synchronisée</option>}
               {ligue1Matchdays.map((md) => (
@@ -2300,134 +3894,237 @@ function BonusTab({
                 </option>
               ))}
             </select>
+            <div className="mt-2">
+              {isBonusMatchdayValidated ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-300">
+                  <CheckCircle2 size={12} />
+                  Journée {selectedBonusMatchday?.number} validée ✓
+                </span>
+              ) : (
+                <GhostButton
+                  onClick={() => setValidatedBonusMatchdayId(selectedBonusMatchdayId)}
+                  disabled={!selectedBonusMatchday}
+                >
+                  <CheckCircle2 size={12} />
+                  Valider journée {selectedBonusMatchday?.number ?? ""}
+                </GhostButton>
+              )}
+            </div>
           </div>
+
           <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Début de la période
-            </label>
-            <input
-              type="datetime-local"
-              value={periodStart}
-              onChange={(e) => setPeriodStart(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Fin de la période
-            </label>
-            <input
-              type="datetime-local"
-              value={periodEnd}
-              onChange={(e) => setPeriodEnd(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => selectedBonusMatchday && void generateBonusForDay(selectedBonusMatchday)}
-            disabled={!selectedBonusMatchday || generatingBonus || !periodStart || !periodEnd}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-500 px-4 py-2 font-display text-xs font-bold uppercase tracking-wide text-slate-950 shadow-[0_0_20px_rgba(14,165,233,0.3)] transition-all hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {generatingBonus ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            Générer la sélection premium
-          </button>
-          <GhostButton
-            danger
-            onClick={() => selectedBonusMatchday && removeBonusDraw(selectedBonusMatchday)}
-            disabled={!selectedBonusMatchday || Object.keys(selectedBonusSelection).length === 0}
-          >
-            <Trash2 size={12} />
-            Retirer le tirage
-          </GhostButton>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[10px] text-slate-500">
-            Le tirage prend en compte TOUS les matchs synchronisés dont le coup d'envoi est compris entre ces deux dates,
-            inclusivement. Les journées des championnats étrangers ne sont jamais utilisées pour filtrer.
-          </p>
-          <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-sky-300">
-            {periodStart && periodEnd ? "Période active" : "Dates obligatoires"}
-          </span>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {(["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).map((code) => {
-            const candidate = selectedBonusSelection[code];
-            const alternatives = selectedBonusMatchday
-              ? bonusMatchesForCompetition(code)
-                  .filter(isWithinBonusPeriod)
-                  .filter((match): match is Match & { kickoff: string } => !!match.kickoff)
-                  .sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())
-              : [];
-
-            return (
-              <div key={code} className="rounded-xl border border-slate-800 bg-[#0d1322] p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-sky-400">
-                    {BONUS_COMPETITION_LABELS[code]}
-                  </span>
-                  {candidate && (
-                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-sky-400">
-                      {candidate.score.total}/100
-                    </span>
-                  )}
-                </div>
-                <div className="mb-2 text-[11px] text-slate-500">
-                  {alternatives.length} match{alternatives.length > 1 ? "s" : ""} disponible{alternatives.length > 1 ? "s" : ""}
-                </div>
-
-                {candidate ? (
-                  <>
-                    <div className="text-sm font-bold text-white">
-                      {candidate.match.home_team} <span className="text-slate-600">—</span> {candidate.match.away_team}
-                    </div>
-                    <div className="mt-1 text-[10px] text-slate-500">
-                      {candidate.match.kickoff
-                        ? new Date(candidate.match.kickoff).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
-                        : "Date inconnue"}
-                      {candidate.reasons.length ? ` · ${candidate.reasons.join(" · ")}` : " · Affiche retenue automatiquement"}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-xs text-slate-500">En attente du tirage.</div>
-                )}
-
-                {alternatives.length > 0 && (
-                  <div className="mt-3">
-                    <GhostButton onClick={() => setReplacingBonus(replacingBonus === code ? null : code)}>
-                      <Pencil size={11} />
-                      {replacingBonus === code ? "Fermer" : "Remplacer"}
-                    </GhostButton>
-
-                    {replacingBonus === code && (
-                      <div className="mt-2 space-y-1.5">
-                        {alternatives.map((match) => {
-                          const scored = scoreCandidateForMatch(match, code);
-                          if (!scored) return null;
-                          return (
-                            <button
-                              key={match.id}
-                              type="button"
-                              onClick={() => selectedBonusMatchday && replaceBonusForDay(selectedBonusMatchday, code, match)}
-                              className="flex w-full items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-left hover:border-sky-500/40 hover:bg-sky-500/5"
-                            >
-                              <span className="text-xs font-semibold text-slate-200">
-                                {scored.match.home_team} — {scored.match.away_team}
-                              </span>
-                              <span className="font-mono text-[10px] font-bold text-sky-400">{scored.score.total}/100</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
+            <div className="flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
+              <Timer size={13} />
+              Période de sélection
+            </div>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Définit la période durant laquelle les bonus sont modifiables.
+            </p>
+            <div className="mt-4 space-y-2.5">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">Début</label>
+                <input
+                  type="datetime-local"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
+                />
               </div>
-            );
-          })}
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">Fin</label>
+                <input
+                  type="datetime-local"
+                  value={periodEnd}
+                  onChange={(e) => setPeriodEnd(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
+                />
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-sky-300">
+                {periodStart && periodEnd ? "Période active" : "Dates obligatoires"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-3 border-t border-slate-800 pt-5 lg:grid-cols-2">
+          <div className="flex items-start gap-2.5 rounded-xl border border-sky-500/15 bg-sky-500/[0.04] p-3">
+            <Globe size={14} className="mt-0.5 shrink-0 text-sky-400" />
+            <p className="text-[11px] text-slate-400">
+              <span className="font-bold uppercase tracking-wide text-sky-300">Informations · </span>
+              Les bonus sont automatiquement affichés aux joueurs dès leur génération ou modification.
+            </p>
+          </div>
+          <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/15 bg-amber-500/[0.04] p-3">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+            <p className="text-[11px] text-slate-400">
+              <span className="font-bold uppercase tracking-wide text-amber-300">Important · </span>
+              Le tirage prend uniquement en compte TOUS les matchs synchronisés dont le coup d'envoi est compris entre les
+              deux dates. Les 4 bonus doivent obligatoirement provenir de 4 championnats différents.
+            </p>
+          </div>
         </div>
       </Card>
+
+      {editingBonus && (() => {
+        const currentMatch = matches.find((m) => m.id === editingBonus.matchId) ?? null;
+        const alternatives = selectedBonusMatchday
+          ? bonusMatchesForCompetition(editingBonus.code)
+              .filter(isWithinBonusPeriod)
+              .filter((match): match is Match & { kickoff: string } => !!match.kickoff)
+              .sort((a, b) => new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime())
+          : [];
+        const options =
+          currentMatch && !alternatives.some((m) => m.id === currentMatch.id) ? [currentMatch, ...alternatives] : alternatives;
+        const editingMeta = BONUS_COMPETITION_META[editingBonus.code];
+        const editHomeLogoUrl = resolveBonusTeamLogo(currentMatch, "home", editingBonus.code, teams);
+        const editAwayLogoUrl = resolveBonusTeamLogo(currentMatch, "away", editingBonus.code, teams);
+
+        return (
+          <Modal
+            title="Modifier le bonus"
+            onClose={() => !savingBonusEdit && setEditingBonus(null)}
+            maxWidthClassName="max-w-xl"
+            footer={
+              <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
+                <GhostButton onClick={() => setEditingBonus(null)} disabled={savingBonusEdit} className="w-full sm:w-auto">
+                  Annuler
+                </GhostButton>
+                <button
+                  type="button"
+                  onClick={submitBonusEdit}
+                  disabled={savingBonusEdit}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-500 px-6 py-3 font-display text-xs font-bold uppercase tracking-wide text-white shadow-[0_0_20px_rgba(14,165,233,0.25)] transition-all hover:bg-sky-400 hover:shadow-[0_0_30px_rgba(14,165,233,0.45)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-[0_0_20px_rgba(14,165,233,0.25)] sm:w-auto"
+                >
+                  {savingBonusEdit ? <RefreshCw size={16} className="animate-spin" /> : <Check size={16} />}
+                  Enregistrer les modifications
+                </button>
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              <div>
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Championnat</div>
+                <div className="flex items-center gap-2.5">
+                  <CompetitionLogo code={editingBonus.code} label={BONUS_COMPETITION_LABELS[editingBonus.code]} size="size-9" />
+                  <span className="text-sm font-bold text-white">
+                    {editingMeta.flag} {BONUS_COMPETITION_LABELS[editingBonus.code]}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">Match</label>
+                <select
+                  value={editingBonus.matchId}
+                  onChange={(e) => {
+                    const match = matches.find((m) => m.id === e.target.value);
+                    if (match) bonusEditorSelectMatch(match);
+                  }}
+                  className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
+                >
+                  {options.map((m) => {
+                    const k = formatBonusKickoff(m.kickoff);
+                    return (
+                      <option key={m.id} value={m.id}>
+                        {m.home_team} VS {m.away_team} {m.kickoff ? `· ${k.day} ${k.time}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* "Pourquoi ce match ?" — détail du barème dynamique qui a
+                  mené à cette sélection (classement en direct en premier,
+                  prestige seulement en critère secondaire). */}
+              {(() => {
+                const score = selectedBonusSelection[editingBonus.code]?.score;
+                if (!score) return null;
+                const rows: Array<[string, number, number]> = [
+                  ["Équilibre", score.standingsBalance, BONUS_SELECTION_WEIGHTS.standingsBalance],
+                  ["Écart au classement", score.levelGap, BONUS_SELECTION_WEIGHTS.levelGap],
+                  ["Forme", score.form, BONUS_SELECTION_WEIGHTS.form],
+                  ["Prestige", score.prestige, BONUS_SELECTION_WEIGHTS.prestige],
+                  ["Affiche", score.rivalry, BONUS_SELECTION_WEIGHTS.rivalry],
+                  ["Horaire", score.schedule, BONUS_SELECTION_WEIGHTS.schedule],
+                ];
+                return (
+                  <div className="rounded-xl border border-sky-500/15 bg-sky-500/[0.03] p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        Pourquoi ce match ?
+                      </span>
+                      <span className="font-mono text-xs font-bold text-sky-300">Score de sélection {score.total} / 100</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                      {rows.map(([label, value, max]) => (
+                        <div key={label} className="flex items-center justify-between gap-2 font-mono text-[10px] text-slate-400">
+                          <span className="uppercase tracking-wider">{label}</span>
+                          <span className="font-bold text-slate-200">
+                            {value} / {max}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                    Date &amp; heure du coup d'envoi
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editingBonus.kickoff}
+                    onChange={(e) => setEditingBonus((prev) => (prev ? { ...prev, kickoff: e.target.value } : prev))}
+                    className="w-full rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-2 text-sm text-white outline-none focus:border-sky-500/60"
+                  />
+                </div>
+              </div>
+
+              {/* SCORE EXACT — vraie interface premium : gros logos, gros
+                  chiffres, boutons +/- larges (confortables au tactile),
+                  saisie clavier toujours possible. Mêmes bornes qu'avant
+                  (entier, jamais négatif) — voir BonusScoreStepper. */}
+              <div className="rounded-2xl border border-sky-500/15 bg-gradient-to-b from-[#0d1826]/80 to-[#070d16]/80 p-4 sm:p-6">
+                <div className="mb-4 text-center font-mono text-[10px] font-black uppercase tracking-[0.3em] text-sky-400">
+                  Score exact
+                </div>
+
+                <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-start sm:justify-center sm:gap-5">
+                  <div className="flex flex-col items-center gap-3">
+                    <BonusTeamBadge logoUrl={editHomeLogoUrl} name={currentMatch?.home_team ?? "?"} size="size-14" />
+                    <BonusScoreStepper
+                      value={editingBonus.home}
+                      onChange={(v) => setEditingBonus((prev) => (prev ? { ...prev, home: v } : prev))}
+                      label={currentMatch?.home_team ?? "domicile"}
+                    />
+                  </div>
+
+                  <div className="flex shrink-0 flex-col items-center gap-2 pt-2 sm:pt-16">
+                    <span className="font-display text-xs font-black uppercase tracking-[0.3em] text-sky-300 drop-shadow-[0_0_10px_rgba(56,189,248,.6)]">
+                      VS
+                    </span>
+                    <span className="font-mono text-lg font-bold text-slate-400">
+                      {editingBonus.home || "0"} — {editingBonus.away || "0"}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-3">
+                    <BonusTeamBadge logoUrl={editAwayLogoUrl} name={currentMatch?.away_team ?? "?"} size="size-14" />
+                    <BonusScoreStepper
+                      value={editingBonus.away}
+                      onChange={(v) => setEditingBonus((prev) => (prev ? { ...prev, away: v } : prev))}
+                      label={currentMatch?.away_team ?? "extérieure"}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
     </div>
   );
@@ -3059,26 +4756,31 @@ function SettingsTab({
   const [timezone, setTimezone] = useState(settings?.timezone ?? "Europe/Paris");
   const [registrationDeadline, setRegistrationDeadline] = useState(settings?.registration_deadline?.slice(0, 16) ?? "");
 
-  // Barème de points
-  const [scoreExact, setScoreExact] = useState(String(settings?.bonus_exact_score ?? 5));
-  const [correctResult, setCorrectResult] = useState(String(settings?.points_correct_result ?? 1));
-  const [goalDiffBonus, setGoalDiffBonus] = useState(String(settings?.points_goal_diff_bonus ?? 0));
+  // Blocage des pronostics — règle réelle : 1 minute avant le coup d'envoi
+  // (voir setMatchdayAutoMinusOne, qui applique déjà ce calcul indépendamment
+  // de ce réglage). Repli à 1 (et non 0) pour refléter cette valeur réelle
+  // tant que settings n'est pas chargé.
+  const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 1));
 
-  // Blocage des pronostics
-  const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 0));
-
-  // Équipe de cœur
+  // Équipe de cÅ“ur
   const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState(settings?.favorite_team_deadline?.slice(0, 16) ?? "");
   const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(settings?.favorite_team_auto_lock ?? true);
-  const [favoriteTeamBonusPoints, setFavoriteTeamBonusPoints] = useState(String(settings?.favorite_team_bonus_points ?? 0));
 
-  // Bonus
-  const [bonusDrawsPerPeriod, setBonusDrawsPerPeriod] = useState(String(settings?.bonus_draws_per_period ?? 1));
-  const [bonusMatchPoints, setBonusMatchPoints] = useState(settings?.bonus_match_points != null ? String(settings.bonus_match_points) : "");
+  // Bonus — période de disponibilité (mêmes colonnes bonus_period_start/end
+  // et mêmes helpers de conversion Paris<->UTC que l'onglet Bonus, pour
+  // rester la même source de vérité qu'il s'agisse de generateBonusForDay
+  // ou de ce formulaire ; réutilisé ici, pas dupliqué).
+  const [periodStart, setPeriodStart] = useState(toDatetimeLocalInput(settings?.bonus_period_start));
+  const [periodEnd, setPeriodEnd] = useState(toDatetimeLocalInput(settings?.bonus_period_end));
 
   // Mode maintenance
   const [maintenanceMode, setMaintenanceMode] = useState(settings?.maintenance_mode ?? false);
   const [maintenanceMessage, setMaintenanceMessage] = useState(settings?.maintenance_message ?? "");
+
+  // Gazette — bascule Mercato / Rubrique du moment (voir migration
+  // 20260817090000). Pas de date de fenêtre mercato inventée : c'est
+  // l'admin qui active/désactive, comme le mode maintenance.
+  const [mercatoActive, setMercatoActive] = useState(settings?.mercato_active ?? false);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -3091,17 +4793,14 @@ function SettingsTab({
     setEntryFee(String(settings.entry_fee));
     setTimezone(settings.timezone);
     setRegistrationDeadline(settings.registration_deadline?.slice(0, 16) ?? "");
-    setScoreExact(String(settings.bonus_exact_score));
-    setCorrectResult(String(settings.points_correct_result));
-    setGoalDiffBonus(String(settings.points_goal_diff_bonus));
-    setClosingDelay(String(settings.closing_delay_minutes));
+    setClosingDelay(String(settings.closing_delay_minutes ?? 1));
     setFavoriteTeamDeadline(settings.favorite_team_deadline?.slice(0, 16) ?? "");
     setFavoriteTeamAutoLock(settings.favorite_team_auto_lock);
-    setFavoriteTeamBonusPoints(String(settings.favorite_team_bonus_points));
-    setBonusDrawsPerPeriod(String(settings.bonus_draws_per_period));
-    setBonusMatchPoints(settings.bonus_match_points != null ? String(settings.bonus_match_points) : "");
+    setPeriodStart(toDatetimeLocalInput(settings.bonus_period_start));
+    setPeriodEnd(toDatetimeLocalInput(settings.bonus_period_end));
     setMaintenanceMode(settings.maintenance_mode);
     setMaintenanceMessage(settings.maintenance_message ?? "");
+    setMercatoActive(settings.mercato_active ?? false);
   }, [settings]);
 
   async function handleSave() {
@@ -3112,17 +4811,14 @@ function SettingsTab({
         entry_fee: toNumber(entryFee, 0),
         timezone: timezone.trim() || "Europe/Paris",
         registration_deadline: registrationDeadline ? new Date(registrationDeadline).toISOString() : null,
-        bonus_exact_score: toNumber(scoreExact, 0),
-        points_correct_result: toNumber(correctResult, 0),
-        points_goal_diff_bonus: toNumber(goalDiffBonus, 0),
-        closing_delay_minutes: Math.max(0, Math.round(toNumber(closingDelay, 0))),
+        closing_delay_minutes: Math.max(0, Math.round(toNumber(closingDelay, 1))),
         favorite_team_deadline: favoriteTeamDeadline ? new Date(favoriteTeamDeadline).toISOString() : null,
         favorite_team_auto_lock: favoriteTeamAutoLock,
-        favorite_team_bonus_points: toNumber(favoriteTeamBonusPoints, 0),
-        bonus_draws_per_period: Math.max(0, Math.round(toNumber(bonusDrawsPerPeriod, 1))),
-        bonus_match_points: bonusMatchPoints.trim() === "" ? null : toNumber(bonusMatchPoints, 0),
+        bonus_period_start: parisLocalToUtcIso(periodStart),
+        bonus_period_end: parisLocalToUtcIso(periodEnd),
         maintenance_mode: maintenanceMode,
         maintenance_message: maintenanceMessage.trim() || null,
+        mercato_active: mercatoActive,
       });
       await onChanged();
       setSaved(true);
@@ -3156,158 +4852,6 @@ function SettingsTab({
   return (
     <div className="space-y-4">
       {error && <ErrorBanner message={error} />}
-
-      {/* ================= BARÈME DE POINTS ================= */}
-      <Card className="p-5">
-        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Gift size={18} className="text-emerald-400" />
-          Barème de points
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">
-          Ces valeurs sont sauvegardées, mais aucun moteur de calcul de points n'existe encore dans le code ni en
-          base à ce jour (vérifié) — elles ne s'appliquent pas encore automatiquement aux pronostics.
-        </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <NumberField label="Score exact (points)" value={scoreExact} onChange={setScoreExact} icon={CheckCircle2} />
-          <NumberField
-            label="Bon résultat 1N2 (points)"
-            value={correctResult}
-            onChange={setCorrectResult}
-            icon={Check}
-            hint="Bon sens du résultat, sans le score exact."
-          />
-          <NumberField
-            label="Bonus bon nombre de buts (points)"
-            value={goalDiffBonus}
-            onChange={setGoalDiffBonus}
-            icon={Plus}
-            hint="Nombre de buts d'une des deux équipes deviné juste."
-          />
-        </div>
-      </Card>
-
-      {/* ================= ÉQUIPE DE CŒUR ================= */}
-      <Card className="p-5 border-amber-500/30 bg-[#0d1322]">
-        <div className="mb-4 flex items-center gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-amber-500/30 bg-amber-500/15 text-amber-400">
-            ⭐
-          </span>
-          <div>
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cœur</h2>
-            <p className="text-xs text-slate-400">
-              Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div>
-            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              <Calendar size={11} className="text-emerald-400" /> Date limite de choix
-            </label>
-            <input
-              type="datetime-local"
-              value={favoriteTeamDeadline}
-              onChange={(e) => setFavoriteTeamDeadline(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
-            />
-          </div>
-          <NumberField
-            label="Bonus points (matchs équipe de cœur)"
-            value={favoriteTeamBonusPoints}
-            onChange={setFavoriteTeamBonusPoints}
-            icon={Gift}
-            hint="0 = aucun bonus. Non appliqué automatiquement aujourd'hui (voir barème de points)."
-          />
-          <div className="flex flex-col justify-end">
-            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] p-2.5 transition-colors hover:border-slate-700">
-              <input
-                type="checkbox"
-                checked={favoriteTeamAutoLock}
-                onChange={(e) => setFavoriteTeamAutoLock(e.target.checked)}
-                className="size-4 rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-0"
-              />
-              <span className="flex items-center gap-1.5 text-sm font-medium text-white">
-                <Lock size={14} className="text-amber-400" /> Verrouillage automatique à la date limite
-              </span>
-            </label>
-          </div>
-        </div>
-      </Card>
-
-      {/* ================= BONUS ================= */}
-      <Card className="p-5">
-        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Gift size={18} className="text-emerald-400" />
-          Bonus
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">
-          Les championnats couverts se pilotent depuis l'onglet Bonus (activer/désactiver) — ici, la cadence des
-          tirages et un barème spécifique optionnel pour les matchs bonus.
-        </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <NumberField
-            label="Tirages bonus par période"
-            value={bonusDrawsPerPeriod}
-            onChange={setBonusDrawsPerPeriod}
-            icon={RefreshCw}
-          />
-          <NumberField
-            label="Points pronostic bonus (si différent du barème standard)"
-            value={bonusMatchPoints}
-            onChange={setBonusMatchPoints}
-            icon={Gift}
-            hint="Laisser vide pour appliquer le barème standard ci-dessus."
-          />
-        </div>
-      </Card>
-
-      {/* ================= BLOCAGE DES PRONOSTICS ================= */}
-      <Card className="p-5">
-        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Timer size={18} className="text-emerald-400" />
-          Blocage des pronostics
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">
-          Valeur par défaut utilisée par le verrouillage automatique « Auto −1 min » des journées (onglet Bonus).
-        </p>
-        <div className="max-w-xs">
-          <NumberField
-            label="Minutes avant le coup d'envoi"
-            value={closingDelay}
-            onChange={setClosingDelay}
-            icon={Lock}
-          />
-        </div>
-      </Card>
-
-      {/* ================= MODE MAINTENANCE ================= */}
-      <Card className={`p-5 ${maintenanceMode ? "border-red-500/40 bg-red-500/[0.03]" : ""}`}>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-            <AlertTriangle size={18} className={maintenanceMode ? "text-red-400" : "text-emerald-400"} />
-            Mode maintenance
-          </h2>
-          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] px-3 py-2 transition-colors hover:border-slate-700">
-            <input
-              type="checkbox"
-              checked={maintenanceMode}
-              onChange={(e) => setMaintenanceMode(e.target.checked)}
-              className="size-4 rounded border-slate-800 bg-slate-900 text-red-500 focus:ring-0"
-            />
-            <span className="text-sm font-medium text-white">Geler les pronostics</span>
-          </label>
-        </div>
-        <p className="mb-3 text-xs text-slate-500">
-          Réglage sauvegardé — à brancher côté page Pronostics si tu veux qu'il bloque réellement les saisies (pas
-          encore lu par le code aujourd'hui).
-        </p>
-        <TextInput
-          value={maintenanceMessage}
-          onChange={(e) => setMaintenanceMessage(e.target.value)}
-          placeholder="Message affiché aux joueurs pendant la maintenance (optionnel)"
-        />
-      </Card>
 
       {/* ================= SAISON & PARAMÈTRES GÉNÉRAUX ================= */}
       <Card className="p-5">
@@ -3360,6 +4904,157 @@ function SettingsTab({
         </div>
       </Card>
 
+      {/* ================= ÉQUIPE DE CÅ’UR ================= */}
+      <Card className="p-5 border-amber-500/30 bg-[#0d1322]">
+        <div className="mb-4 flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-amber-500/30 bg-amber-500/15 text-amber-400">
+            ⭐
+          </span>
+          <div>
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cÅ“ur</h2>
+            <p className="text-xs text-slate-400">
+              Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <Calendar size={11} className="text-emerald-400" /> Date limite de choix
+            </label>
+            <input
+              type="datetime-local"
+              value={favoriteTeamDeadline}
+              onChange={(e) => setFavoriteTeamDeadline(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
+            />
+          </div>
+          <div className="flex flex-col justify-end">
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] p-2.5 transition-colors hover:border-slate-700">
+              <input
+                type="checkbox"
+                checked={favoriteTeamAutoLock}
+                onChange={(e) => setFavoriteTeamAutoLock(e.target.checked)}
+                className="size-4 rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-0"
+              />
+              <span className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <Lock size={14} className="text-amber-400" /> Verrouillage automatique à la date limite
+              </span>
+            </label>
+          </div>
+        </div>
+      </Card>
+
+      {/* ================= BLOCAGE DES PRONOSTICS ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Timer size={18} className="text-emerald-400" />
+          Blocage des pronostics
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Valeur par défaut utilisée par le verrouillage automatique « Auto −1 min » des journées (onglet Bonus) —
+          règle réelle du site : 1 minute avant le coup d'envoi.
+        </p>
+        <div className="max-w-xs">
+          <NumberField
+            label="Minutes avant le coup d'envoi"
+            value={closingDelay}
+            onChange={setClosingDelay}
+            icon={Lock}
+          />
+        </div>
+      </Card>
+
+      {/* ================= BONUS ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Gift size={18} className="text-emerald-400" />
+          Bonus
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Période de disponibilité des bonus — mêmes dates que celles utilisées par l'onglet Bonus pour générer et
+          filtrer la sélection premium (une seule et même source, modifiable ici ou là-bas).
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <Calendar size={11} className="text-emerald-400" /> Début de période
+            </label>
+            <input
+              type="datetime-local"
+              value={periodStart}
+              onChange={(e) => setPeriodStart(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
+            />
+          </div>
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <Calendar size={11} className="text-emerald-400" /> Fin de période
+            </label>
+            <input
+              type="datetime-local"
+              value={periodEnd}
+              onChange={(e) => setPeriodEnd(e.target.value)}
+              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* ================= MODE MAINTENANCE ================= */}
+      <Card className={`p-5 ${maintenanceMode ? "border-red-500/40 bg-red-500/[0.03]" : ""}`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+            <AlertTriangle size={18} className={maintenanceMode ? "text-red-400" : "text-emerald-400"} />
+            Mode maintenance
+          </h2>
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] px-3 py-2 transition-colors hover:border-slate-700">
+            <input
+              type="checkbox"
+              checked={maintenanceMode}
+              onChange={(e) => setMaintenanceMode(e.target.checked)}
+              className="size-4 rounded border-slate-800 bg-slate-900 text-red-500 focus:ring-0"
+            />
+            <span className="text-sm font-medium text-white">Geler les pronostics</span>
+          </label>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Réglage sauvegardé — à brancher côté page Pronostics si tu veux qu'il bloque réellement les saisies (pas
+          encore lu par le code aujourd'hui).
+        </p>
+        <TextInput
+          value={maintenanceMessage}
+          onChange={(e) => setMaintenanceMessage(e.target.value)}
+          placeholder="Message affiché aux joueurs pendant la maintenance (optionnel)"
+        />
+      </Card>
+
+      {/* ================= GAZETTE — MERCATO ================= */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+            <Newspaper size={18} className="text-emerald-400" />
+            Gazette — Mercato
+          </h2>
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] px-3 py-2 transition-colors hover:border-slate-700">
+            <input
+              type="checkbox"
+              checked={mercatoActive}
+              onChange={(e) => setMercatoActive(e.target.checked)}
+              className="size-4 rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-0"
+            />
+            <span className="text-sm font-medium text-white">Période de mercato active</span>
+          </label>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Aucune date de fenêtre de mercato n'est calculée automatiquement (les dates officielles sont fixées chaque
+          saison par la LFP/FFF, jamais stockées ni devinées ici). Active ce réglage manuellement pendant le mercato
+          — la Gazette affiche alors la rubrique "Mercato" ; sinon, elle affiche automatiquement une "Rubrique du
+          moment" basée sur les données réelles de la saison en cours.
+        </p>
+      </Card>
+
       {/* ================= FOOTBALL-DATA.ORG ================= */}
       <Card className="p-5">
         <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
@@ -3400,18 +5095,32 @@ function Modal({
   title,
   children,
   onClose,
+  maxWidthClassName = "max-w-lg",
+  footer,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
+  /** Largeur max de la modal — "max-w-lg" par défaut (comportement inchangé
+   * pour tous les appelants existants). Optionnel, pour les modals qui ont
+   * besoin de plus de place (ex. la saisie de score bonus premium). */
+  maxWidthClassName?: string;
+  /** Pied de modal optionnel (ex. Annuler / Enregistrer), rendu HORS de la
+   * zone de contenu défilable — reste toujours visible en bas, séparé par
+   * une bordure fine. Absent par défaut : les modals existantes qui posent
+   * déjà leurs propres boutons dans `children` gardent un rendu identique,
+   * seule la hauteur globale est maintenant plafonnée (max-h-[85vh]) avec
+   * défilement interne du contenu si besoin — filet de sécurité qui ne
+   * change rien tant que le contenu tient déjà à l'écran. */
+  footer?: React.ReactNode;
 }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0b1325] p-6 shadow-2xl"
+        className={`flex max-h-[85vh] w-full ${maxWidthClassName} flex-col rounded-2xl border border-slate-800 bg-[#0b1325] shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-5 flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between p-6 pb-5">
           <h3 className="font-display text-lg font-bold uppercase tracking-wide text-white">{title}</h3>
           <button
             onClick={onClose}
@@ -3421,7 +5130,8 @@ function Modal({
             <X size={16} />
           </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">{children}</div>
+        {footer && <div className="shrink-0 border-t border-slate-800 p-4 sm:p-5">{footer}</div>}
       </div>
     </div>
   );
@@ -3486,3 +5196,6 @@ function ConfirmDialog({
     </div>
   );
 }
+
+
+

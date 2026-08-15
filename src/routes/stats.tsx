@@ -1,17 +1,20 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/prono/AppShell";
 import {
   BarChart3,
   CalendarDays,
+  ChevronRight,
   Crosshair,
-  Minus,
+  PieChart,
+  Target,
   Trophy,
   TrendingUp,
   Users,
-  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { computeLeagueStats, type LeagueMatch, type LeagueProfile, type LeagueBonusOption } from "@/lib/leaderboardStats";
+import { rankPlayers } from "@/lib/leaderboardRanking";
 
 export const Route = createFileRoute("/stats")({
   head: () => ({
@@ -27,23 +30,62 @@ export const Route = createFileRoute("/stats")({
   component: StatsPage,
 });
 
-type Supporter = {
-  team: string;
-  count: number;
-};
-
 type MatchRow = {
   id: string;
   matchday: string | null;
+  matchday_id?: string | null;
   status: string | null;
+  home_score: number | null;
+  away_score: number | null;
+  // Vraie colonne de `matches` (confirmée via le schéma Supabase réel) :
+  // identifie les 4 matchs bonus (un par championnat PL/PD/SA/BL1) proposés
+  // à la journée. Aucune colonne équivalente n'existe sur `predictions` —
+  // voir isBonusPrediction ci-dessous.
+  is_bonus: boolean | null;
+  // Ajoutés pour le recalcul réel des points (voir computeLeagueStats plus
+  // bas) — nécessaires pour détecter un match favori.
+  home_team_id?: string | null;
+  away_team_id?: string | null;
+  home_team?: string | null;
+  away_team?: string | null;
 };
 
 type PredictionRow = {
+  user_id: string | null;
   match_id: string;
-  points: number | null;
-  exact_score: boolean | null;
-  bonus_used: boolean | null;
+  // `points` n'est plus lu : cette colonne n'est jamais mise à jour par
+  // l'application (column_default 0, aucun trigger, vérifié en base — voir
+  // le commentaire dans src/lib/leaderboardStats.ts). Les points affichés
+  // viennent désormais de computeLeagueStats(), même moteur que le
+  // Classement/Accueil/Profil.
+  // Il n'existe pas de colonne `exact_score` en base : un score exact se
+  // déduit en comparant home_prediction/away_prediction au score réel du
+  // match (voir isExactPrediction ci-dessous).
+  home_prediction: number | null;
+  away_prediction: number | null;
 };
+
+// Un pronostic est "exact" quand le score prédit (home_prediction/
+// away_prediction) correspond exactement au score final du match
+// (matches.home_score/away_score). Les deux doivent être renseignés.
+function isExactPrediction(prediction: PredictionRow, match: MatchRow | undefined): boolean {
+  if (!match) return false;
+  if (prediction.home_prediction == null || prediction.away_prediction == null) return false;
+  if (match.home_score == null || match.away_score == null) return false;
+  return (
+    Number(prediction.home_prediction) === Number(match.home_score) &&
+    Number(prediction.away_prediction) === Number(match.away_score)
+  );
+}
+
+// Il n'existe pas de colonne `bonus_used` (ni `prediction_type` /
+// `bonus_option_id`) sur `predictions` : un pronostic est "bonus" quand le
+// match pronostiqué est lui-même marqué bonus, via `matches.is_bonus` (seule
+// colonne réelle qui porte cette information — confirmée par
+// `supabase gen types typescript`).
+function isBonusPrediction(match: MatchRow | undefined): boolean {
+  return Boolean(match?.is_bonus);
+}
 
 type DayStat = {
   day: string;
@@ -71,6 +113,16 @@ type StatsState = {
   standardPoints: number;
   exactPoints: number;
   bonusPoints: number;
+  bonusSuccessful: number;
+};
+
+type LeaderboardPlayer = {
+  userId: string;
+  rank: number;
+  name: string;
+  avatarUrl: string;
+  totalPoints: number;
+  exactScores: number;
 };
 
 const EMPTY_STATS: StatsState = {
@@ -90,15 +142,149 @@ const EMPTY_STATS: StatsState = {
   standardPoints: 0,
   exactPoints: 0,
   bonusPoints: 0,
+  bonusSuccessful: 0,
 };
 
+// Sélecteur de plage du graphique d'évolution — nombre de journées affichées
+// (présentation uniquement, la donnée affichée reste `stats.dayStats`,
+// calcul inchangé ; visibleDays = stats.dayStats.slice(-selectedRange) gère
+// déjà nativement le cas où moins de journées existent que la valeur
+// choisie, sans donnée fictive).
+const RANGE_OPTIONS = [
+  { value: 5, label: "5" },
+  { value: 10, label: "10" },
+  { value: 15, label: "15" },
+  { value: 20, label: "20" },
+  { value: 25, label: "25" },
+  { value: 30, label: "30" },
+  { value: 34, label: "34" },
+];
+
+// Chiffre principal d'une carte statistique : blanc, dégradé très léger,
+// glow discret assorti à la carte — même principe que la Gazette (StatValue)
+// pour rester cohérent avec la nouvelle direction artistique du site.
+function StatValue({
+  value,
+  accent = "emerald",
+  size = "text-4xl md:text-[40px]",
+}: {
+  value: string | number;
+  accent?: "emerald";
+  size?: string;
+}) {
+  const glow = "drop-shadow(0 0 16px rgba(52,211,153,.30))";
+  return (
+    <span
+      className={`bg-gradient-to-b from-white to-white/85 bg-clip-text font-display ${size} font-black leading-none text-transparent`}
+      style={{ filter: glow }}
+    >
+      {value}
+    </span>
+  );
+}
+
+
+function SectionHeader({
+  icon: Icon,
+  eyebrow,
+  title,
+}: {
+  icon: typeof BarChart3;
+  eyebrow: string;
+  title: string;
+}) {
+  return (
+    <div className="mb-5 flex items-center gap-3">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300">
+        <Icon size={16} strokeWidth={1.8} />
+      </span>
+      <div>
+        <div className="font-mono text-[9px] font-semibold uppercase tracking-[.2em] text-emerald-300/80">
+          {eyebrow}
+        </div>
+        <h2 className="mt-0.5 text-base font-bold uppercase tracking-[.08em] text-white">
+          {title}
+        </h2>
+      </div>
+    </div>
+  );
+}
+
+function PodiumPlayer({
+  player,
+  place,
+}: {
+  player: LeaderboardPlayer;
+  place: 1 | 2 | 3;
+}) {
+  const medal =
+    place === 1
+      ? {
+          label: "🥇 1ER",
+          accent: "border-amber-300/45 bg-amber-300/[0.08] text-amber-200",
+          glow: "shadow-[0_0_34px_rgba(251,191,36,.14)]",
+        }
+      : place === 2
+        ? {
+            label: "🥈 2E",
+            accent: "border-slate-300/25 bg-slate-300/[0.06] text-slate-200",
+            glow: "shadow-[0_0_28px_rgba(148,163,184,.10)]",
+          }
+        : {
+            label: "🥉 3E",
+            accent: "border-orange-300/30 bg-orange-300/[0.06] text-orange-200",
+            glow: "shadow-[0_0_28px_rgba(251,146,60,.10)]",
+          };
+
+  return (
+    <article
+      className={`group relative min-w-[170px] flex-1 overflow-hidden rounded-[18px] border ${medal.accent} ${medal.glow} bg-black/25 p-3 backdrop-blur-xl transition-transform duration-300 hover:-translate-y-1`}
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(52,211,153,.10),transparent_58%)]" />
+      <div className="relative flex items-center gap-2.5">
+        <div className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06]">
+          {player.avatarUrl ? (
+            <img
+              src={player.avatarUrl}
+              alt=""
+              className="size-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <Users size={16} className="text-slate-500" />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[8px] font-bold uppercase tracking-[.16em] text-slate-500">
+            {medal.label}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-bold text-white">
+            {player.name}
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-[9px] text-slate-500">
+            <span>{player.exactScores} exact{player.exactScores > 1 ? "s" : ""}</span>
+          </div>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <div className="text-lg font-black text-white">{player.totalPoints}</div>
+          <div className="font-mono text-[8px] uppercase tracking-widest text-emerald-300/70">
+            pts
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+
 function StatsPage() {
-  const [supporters, setSupporters] = useState<Supporter[]>([]);
   const [stats, setStats] = useState<StatsState>(EMPTY_STATS);
   const [selectedRange, setSelectedRange] = useState(5);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [userEmail, setUserEmail] = useState("");
+  const [leaderboard, setLeaderboard] = useState<LeaderboardPlayer[]>([]);
 
   async function loadStats() {
     setLoading(true);
@@ -114,43 +300,102 @@ function StatsPage() {
 
       if (!user) {
         setStats(EMPTY_STATS);
+        setLeaderboard([]);
         setErrorMessage("Connecte-toi pour afficher tes statistiques personnelles.");
         return;
       }
 
-      setUserEmail(user.email || "");
-
       const [
         { data: matches, error: matchesError },
-        { data: predictions, error: predictionsError },
-        { data: supportersData, error: supportersError },
+        { data: allPredictionsData, error: predictionsError },
+        { data: profiles, error: profilesError },
+        { data: bonusOptionsData, error: bonusOptionsError },
       ] = await Promise.all([
         supabase
           .from("matches")
-          .select("id, matchday, status")
+          .select(
+            "id, matchday, matchday_id, status, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
+          )
           .eq("status", "finished"),
+        // Tous les joueurs (pas seulement le compte connecté) : nécessaire
+        // pour recalculer le Top joueurs via computeLeagueStats(), même
+        // moteur que le Classement — remplace l'ancienne requête sur la vue
+        // `user_rankings` (inexistante en base, confirmée HTTP 404) et sur
+        // des colonnes `profiles.username/player_name/account_status` qui
+        // n'existent pas non plus (confirmée HTTP 400).
         supabase
           .from("predictions")
-          .select("match_id, points, exact_score, bonus_used")
-          .eq("user_id", user.id),
+          .select("user_id, match_id, home_prediction, away_prediction, created_at"),
         supabase
           .from("profiles")
-          .select("favorite_team")
-          .not("favorite_team", "is", null),
+          .select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
+        supabase.from("bonus_options").select("matchday_id, match_id"),
       ]);
 
       if (matchesError) throw matchesError;
       if (predictionsError) throw predictionsError;
+      if (profilesError) console.warn("Erreur chargement profils (Top joueurs) :", profilesError);
+      if (bonusOptionsError) console.warn("Erreur chargement bonus (recalcul points) :", bonusOptionsError);
 
       const finishedMatches = (matches || []) as MatchRow[];
-      const userPredictions = (predictions || []) as PredictionRow[];
+      const allPredictions = (allPredictionsData || []) as PredictionRow[];
+      const userPredictions = allPredictions.filter((p) => p.user_id === user.id);
 
       const matchDayById = new Map<string, string>();
+      const matchById = new Map<string, MatchRow>();
+
       finishedMatches.forEach((match) => {
+        matchById.set(String(match.id), match);
         if (match.matchday) {
           matchDayById.set(String(match.id), String(match.matchday));
         }
       });
+
+      // Points réels — même moteur que Classement/Accueil/Profil. Matchs
+      // Ligue 1 classiques (non-bonus) d'un côté, matchs bonus réellement
+      // sélectionnés (via bonus_options) de l'autre, exactement comme
+      // computeLeagueStats l'attend.
+      const bonusOptions = (bonusOptionsData || []) as LeagueBonusOption[];
+      const bonusMatchIdSet = new Set(bonusOptions.map((o) => String(o.match_id)));
+      const ligue1MatchesForScoring: LeagueMatch[] = finishedMatches
+        .filter((m) => !m.is_bonus && m.home_score != null && m.away_score != null)
+        .map((m) => ({
+          id: m.id,
+          matchday_id: m.matchday_id ?? m.matchday,
+          home_team_id: m.home_team_id ?? null,
+          away_team_id: m.away_team_id ?? null,
+          home_team: m.home_team ?? null,
+          away_team: m.away_team ?? null,
+          home_score: m.home_score,
+          away_score: m.away_score,
+        }));
+      const bonusMatchesForScoring: LeagueMatch[] = finishedMatches
+        .filter((m) => bonusMatchIdSet.has(String(m.id)) && m.home_score != null && m.away_score != null)
+        .map((m) => ({
+          id: m.id,
+          matchday_id: m.matchday_id ?? m.matchday,
+          home_team_id: m.home_team_id ?? null,
+          away_team_id: m.away_team_id ?? null,
+          home_team: m.home_team ?? null,
+          away_team: m.away_team ?? null,
+          home_score: m.home_score,
+          away_score: m.away_score,
+          is_bonus: true,
+        }));
+
+      const allProfilesForStats = (profiles || []) as LeagueProfile[];
+
+      const leagueStats = computeLeagueStats(
+        ligue1MatchesForScoring,
+        bonusMatchesForScoring,
+        bonusOptions,
+        allPredictions,
+        allProfilesForStats,
+        {},
+      );
+
+      const realPointsFor = (prediction: PredictionRow) =>
+        leagueStats.pointsByPredictionKey[`${user.id}:${prediction.match_id}`] ?? 0;
 
       const byDay = new Map<string, DayStat>();
 
@@ -161,14 +406,16 @@ function StatsPage() {
       let standardPoints = 0;
       let exactPoints = 0;
       let bonusPoints = 0;
+      let bonusSuccessful = 0;
 
       userPredictions.forEach((prediction) => {
         const day = matchDayById.get(String(prediction.match_id));
         if (!day) return;
 
-        const points = Number(prediction.points || 0);
-        const exact = Boolean(prediction.exact_score);
-        const bonus = Boolean(prediction.bonus_used);
+        const points = realPointsFor(prediction);
+        const match = matchById.get(String(prediction.match_id));
+        const exact = isExactPrediction(prediction, match);
+        const bonus = isBonusPrediction(match);
 
         if (!byDay.has(day)) {
           byDay.set(day, {
@@ -192,10 +439,10 @@ function StatsPage() {
         if (points > 0) successfulPredictions += 1;
         if (exact) exactScores += 1;
 
-        // Exclusive breakdown so the donut always totals exactly totalPoints.
         if (bonus) {
           current.bonusPoints += points;
           bonusPoints += points;
+          if (points > 0) bonusSuccessful += 1;
         } else if (exact) {
           exactPoints += points;
         } else {
@@ -207,25 +454,22 @@ function StatsPage() {
       const dayStats = Array.from(byDay.values()).sort(
         (a, b) =>
           Number(a.day.replace(/\D/g, "")) -
-          Number(b.day.replace(/\D/g, ""))
+          Number(b.day.replace(/\D/g, "")),
       );
 
       const playedDays = dayStats.length;
       const average = playedDays ? totalPoints / playedDays : 0;
-      const bestDayEntry =
-        dayStats.reduce<DayStat | null>(
-          (best, item) => (!best || item.points > best.points ? item : best),
-          null
-        );
+      const bestDayEntry = dayStats.reduce<DayStat | null>(
+        (best, item) => (!best || item.points > best.points ? item : best),
+        null,
+      );
 
-      // "Victoires / Nuls / Défaites" are performance states for each
-      // completed matchday, based on the player's own average.
       const epsilon = 0.0001;
       const wins = dayStats.filter(
-        (item) => item.points > average + epsilon
+        (item) => item.points > average + epsilon,
       ).length;
       const draws = dayStats.filter(
-        (item) => Math.abs(item.points - average) <= epsilon
+        (item) => Math.abs(item.points - average) <= epsilon,
       ).length;
       const losses = Math.max(0, playedDays - wins - draws);
 
@@ -246,31 +490,47 @@ function StatsPage() {
         standardPoints,
         exactPoints,
         bonusPoints,
+        bonusSuccessful,
       });
 
-      if (!supportersError && supportersData) {
-        const counts: Record<string, number> = {};
+      // Top joueurs — même moteur que Classement/Accueil/Profil
+      // (computeLeagueStats + rankPlayers, calculées plus haut), au lieu de
+      // l'ancienne vue `user_rankings` (inexistante en base — voir le
+      // commentaire sur le fetch plus haut pour la preuve HTTP 404/400).
+      if (!profilesError) {
+        const rankableRows = allProfilesForStats.map((profile) => ({
+          userId: profile.id,
+          avatarUrl: profile.avatar_url || "",
+          pseudo: profile.pseudo || "Joueur",
+          points: leagueStats.pointsByUser[profile.id] ?? 0,
+          exactScores: leagueStats.exactScoresByUser[profile.id] ?? 0,
+          predictionsCount: leagueStats.predictionsCountByUser[profile.id] ?? 0,
+          regularitySuccess: leagueStats.regularitySuccessByUser[profile.id] ?? 0,
+        }));
 
-        supportersData.forEach((row: { favorite_team: string | null }) => {
-          if (row.favorite_team) {
-            counts[row.favorite_team] =
-              (counts[row.favorite_team] || 0) + 1;
-          }
-        });
+        const ranked = rankPlayers(rankableRows).slice(0, 5);
 
-        setSupporters(
-          Object.entries(counts)
-            .map(([team, count]) => ({ team, count }))
-            .sort((a, b) => b.count - a.count)
+        setLeaderboard(
+          ranked.map((row) => ({
+            userId: row.userId,
+            rank: row.rank,
+            name: row.pseudo,
+            avatarUrl: row.avatarUrl,
+            totalPoints: row.points,
+            exactScores: row.exactScores,
+          })),
         );
+      } else {
+        setLeaderboard([]);
       }
     } catch (error: any) {
       console.error("Erreur chargement statistiques:", error);
       setErrorMessage(
         error?.message ||
-          "Impossible de charger les statistiques depuis Supabase."
+          "Impossible de charger les statistiques depuis Supabase.",
       );
       setStats(EMPTY_STATS);
+      setLeaderboard([]);
     } finally {
       setLoading(false);
     }
@@ -288,20 +548,14 @@ function StatsPage() {
     };
   }, []);
 
-  const visibleDays = useMemo(() => {
-    return stats.dayStats.slice(-selectedRange);
-  }, [stats.dayStats, selectedRange]);
+  const visibleDays = useMemo(
+    () => stats.dayStats.slice(-selectedRange),
+    [stats.dayStats, selectedRange],
+  );
 
   const maxPoints = Math.max(
     50,
-    Math.ceil(
-      Math.max(...visibleDays.map((item) => item.points), 0) / 10
-    ) * 10
-  );
-
-  const progress = Math.min(
-    100,
-    Math.round((stats.playedDays / stats.seasonDays) * 100)
+    Math.ceil(Math.max(...visibleDays.map((item) => item.points), 0) / 10) * 10,
   );
 
   const totalPointsForDistribution =
@@ -309,25 +563,24 @@ function StatsPage() {
 
   const distribution = useMemo(() => {
     const total = totalPointsForDistribution || 1;
-
     return [
       {
-        label: "Résultats L1 / autres",
+        label: "Résultats 1N2",
         value: stats.standardPoints,
-        color: "cyan",
         percent: Math.round((stats.standardPoints / total) * 100),
+        color: "#34d399",
       },
       {
         label: "Scores exacts",
         value: stats.exactPoints,
-        color: "green",
         percent: Math.round((stats.exactPoints / total) * 100),
+        color: "#a7f3d0",
       },
       {
         label: "Match bonus",
         value: stats.bonusPoints,
-        color: "blue",
         percent: Math.round((stats.bonusPoints / total) * 100),
+        color: "#10b981",
       },
     ];
   }, [
@@ -337,616 +590,535 @@ function StatsPage() {
     totalPointsForDistribution,
   ]);
 
-  const metrics = [
+  const successRatePct = stats.totalPredictions
+    ? Math.round(
+        (stats.successfulPredictions / stats.totalPredictions) * 100,
+      )
+    : 0;
+
+  // Pourcentage de scores exacts — dérivé des mêmes champs déjà calculés
+  // (stats.exactScores / stats.totalPredictions), aucune nouvelle logique
+  // de calcul, juste un ratio d'affichage pour le bloc "Scores exacts".
+  const exactRatePct = stats.totalPredictions
+    ? Math.round((stats.exactScores / stats.totalPredictions) * 100)
+    : 0;
+
+  // Colonne "Total" du tableau des dernières journées : cumul des points
+  // journée après journée (somme glissante de stats.dayStats, déjà calculé
+  // plus haut, dans l'ordre chronologique) — pas une nouvelle règle de
+  // score, juste un total cumulé affiché en plus de la colonne "Points"
+  // (qui reste le score de la seule journée concernée).
+  const dayStatsWithCumulative = useMemo(() => {
+    let running = 0;
+    return stats.dayStats.map((day) => {
+      running += day.points;
+      return { ...day, cumulative: running };
+    });
+  }, [stats.dayStats]);
+
+  const latestDays = [...dayStatsWithCumulative].slice(-5).reverse();
+
+  const kpis = [
     {
-      label: "Points total",
+      label: "Total points",
       value: stats.totalPoints,
-      sub: stats.bestDay
-        ? `Meilleur score : ${stats.bestDay} pts`
-        : "Aucune journée",
+      sub: `${stats.playedDays} journée${stats.playedDays > 1 ? "s" : ""} jouée${stats.playedDays > 1 ? "s" : ""}`,
       icon: Crosshair,
-      tone: "violet",
     },
     {
-      label: "Moyenne / journée",
-      value: stats.average.toFixed(2),
-      sub: `Sur ${stats.playedDays} journées`,
-      icon: TrendingUp,
-      tone: "green",
+      label: "Scores exacts",
+      value: stats.exactScores,
+      sub: `${stats.totalPredictions} pronostic${stats.totalPredictions > 1 ? "s" : ""}`,
+      icon: Target,
     },
     {
-      label: "Victoires",
-      value: stats.wins,
-      sub: `${stats.playedDays ? Math.round((stats.wins / stats.playedDays) * 100) : 0}% des journées`,
+      label: "Bonus réussis",
+      value: stats.bonusSuccessful,
+      sub: `${stats.bonusPoints} point${stats.bonusPoints > 1 ? "s" : ""} bonus`,
       icon: Trophy,
-      tone: "cyan",
     },
     {
-      label: "Nuls",
-      value: stats.draws,
-      sub: `${stats.playedDays ? Math.round((stats.draws / stats.playedDays) * 100) : 0}% des journées`,
-      icon: Minus,
-      tone: "blue",
-    },
-    {
-      label: "Défaites",
-      value: stats.losses,
-      sub: `${stats.playedDays ? Math.round((stats.losses / stats.playedDays) * 100) : 0}% des journées`,
-      icon: X,
-      tone: "violet",
+      label: "Meilleure journée",
+      value: stats.bestDay,
+      sub: stats.bestDayLabel !== "—" ? stats.bestDayLabel : "Aucune donnée",
+      icon: TrendingUp,
     },
   ];
 
-  // `supporters` est trié par count décroissant (voir loadStats) : le
-  // premier élément porte donc le maximum, utilisé pour calibrer la largeur
-  // relative des barres de la section "Communauté".
-  const maxSupporter = supporters[0]?.count || 1;
+  // Top joueurs : uniquement le podium (3 premiers) sur cette page — le
+  // classement complet reste la page dédiée /classement (lien "Voir le
+  // classement" plus bas), pas question de la reconstruire ici.
+  const podium = leaderboard.slice(0, 3);
 
   return (
     <AppShell>
-      <div className="relative min-h-full overflow-hidden bg-[#020914]">
-        <main className="relative z-10 mx-auto max-w-[1500px] space-y-5 px-3 pb-20 sm:px-5 lg:px-7">
-          {/* HERO */}
+      {/* overflow-hidden retiré : depuis qu'AppShell donne à <main> une
+          hauteur réellement définie (--app-vh, voir AppShell.tsx — nécessaire
+          pour le Vestiaire), ce wrapper n'avait plus une hauteur "auto" qui
+          grandit avec le contenu mais une hauteur fixe héritée de <main> —
+          combiné à overflow-hidden, tout ce qui dépassait (Précision,
+          Dernières journées, Top joueurs, Répartition, Indicateurs) était
+          silencieusement DÉCOUPÉ au lieu de faire défiler la page. Rien à
+          voir avec le JSX (toutes les sections étaient bien là) : c'était
+          un vrai bug d'overflow, corrigé ici sans toucher au CSS pour
+          "faire semblant" — la vraie cause était cette règle. */}
+      <div className="relative min-h-full">
+
+        <main className="relative z-10 mx-auto max-w-[1400px] space-y-4 px-3 pb-14 sm:space-y-5 sm:px-5 lg:px-7">
+          {/* HERO — compact : plus de badges saison/J1 dupliqués depuis le
+              header d'AppShell (déjà là, voir logo/Saison 2026-2027/J1•2026
+              en haut de toutes les pages), juste titre + sous-titre + fond
+              stade, comme demandé. */}
           <section
-            className="relative min-h-[330px] overflow-hidden rounded-[28px] border border-white/[0.09] shadow-[0_25px_80px_rgba(0,0,0,.22)] md:min-h-[390px]"
+            className="relative overflow-hidden rounded-[22px] border border-white/[0.08] shadow-[0_16px_50px_rgba(0,0,0,.35)]"
             style={{
               backgroundImage:
-                "linear-gradient(90deg, rgba(3,12,24,.17) 0%, rgba(3,12,24,.08) 52%, rgba(3,12,24,.19) 100%), url('/page%20statistique%20bloc%20stat.png')",
-              backgroundPosition: "center center",
+                "linear-gradient(90deg, rgba(2,9,20,.90) 0%, rgba(2,9,20,.52) 55%, rgba(2,9,20,.90) 100%), url('/arriere%20plan%20general.png')",
+              backgroundPosition: "center",
               backgroundSize: "cover",
-              backgroundRepeat: "no-repeat",
             }}
           >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_58%_42%,rgba(34,211,238,.05),transparent_25%),radial-gradient(circle_at_68%_50%,rgba(16,185,129,.08),transparent_35%)]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_15%,rgba(52,211,153,.20),transparent_36%)]" />
+            <img
+              src="/logo%20ligue%201%20white.png"
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute right-4 top-4 h-10 w-10 object-contain opacity-[0.08] md:h-14 md:w-14"
+            />
 
-            <div className="relative flex min-h-[330px] flex-col justify-center px-7 py-8 md:min-h-[390px] md:px-10 lg:px-12">
-              <div className="max-w-[780px]">
-                <div className="mb-5 flex items-center gap-3 font-mono text-[10px] font-bold uppercase tracking-[0.34em] text-emerald-300">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,.9)]" />
-                  Saison en cours
-                </div>
-
-                <h1 className="bg-gradient-to-r from-emerald-400 via-cyan-400 to-indigo-400 bg-clip-text text-[48px] font-medium leading-[0.95] tracking-[-0.045em] text-transparent sm:text-6xl md:text-7xl lg:text-[78px]">
-                  Mes statistiques
-                </h1>
-
-                <div className="mt-5 h-px w-12 bg-gradient-to-r from-emerald-400 to-cyan-400" />
-
-                <p className="mt-5 max-w-[620px] text-sm leading-6 text-slate-200/90 md:text-[16px]">
-                  Tes performances, tes tendances et tes records
-                  <span className="text-emerald-300"> réunis </span>
-                  dans un seul espace.
-                </p>
-
-                <div className="mt-7 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      document
-                        .getElementById("stats-evolution")
-                        ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                    }
-                    className="flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/[0.07] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-300 backdrop-blur-md transition hover:border-emerald-300/60 hover:bg-emerald-400/[0.12]"
-                  >
-                    <BarChart3 size={14} />
-                    Performance
-                  </button>
-                  <button
-                    type="button"
-                    onClick={loadStats}
-                    disabled={loading}
-                    className="flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-500/[0.05] px-4 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200 backdrop-blur-md transition hover:border-blue-300/60 hover:bg-blue-500/[0.10] disabled:cursor-wait disabled:opacity-60"
-                  >
-                    <CalendarDays size={14} />
-                    {loading ? "Actualisation..." : "Saison 2026–2027"}
-                  </button>
-                </div>
+            <div className="relative flex min-h-[110px] flex-col justify-center gap-1.5 px-5 py-5 md:min-h-[140px] md:px-8">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[.24em] text-emerald-300">
+                Performance personnelle
               </div>
-
-              <div className="absolute bottom-7 right-7 hidden items-end gap-5 xl:flex">
-                <div className="pb-2 text-right">
-                  <div className="font-mono text-[8px] uppercase tracking-[0.25em] text-slate-300/60">
-                    Record actuel
-                  </div>
-                  <div className="mt-1 flex items-baseline justify-end gap-2">
-                    <span className="bg-gradient-to-r from-emerald-300 via-cyan-300 to-indigo-300 bg-clip-text text-6xl font-black text-transparent">
-                      {stats.bestDay}
-                    </span>
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-emerald-300">
-                      pts · {stats.bestDayLabel}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="w-[205px] rounded-[22px] border border-emerald-400/25 bg-[#04121a]/85 p-4 shadow-[0_0_45px_rgba(16,185,129,.10)] backdrop-blur-md">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[8px] uppercase tracking-[0.22em] text-emerald-300">
-                      Analyse
-                    </span>
-                    <BarChart3 size={15} className="text-emerald-300" />
-                  </div>
-
-                  <div className="mt-4 flex items-end gap-2">
-                    <span className="text-4xl font-black text-white">
-                      {String(stats.playedDays).padStart(2, "0")}
-                    </span>
-                    <span className="pb-1 font-mono text-[8px] uppercase tracking-wider text-emerald-300">
-                      journées
-                    </span>
-                  </div>
-
-                  <div className="mt-1 font-mono text-[8px] uppercase tracking-wider text-slate-400">
-                    analysées
-                  </div>
-
-                  <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 shadow-[0_0_14px_rgba(52,211,153,.5)]"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-
-                  <div className="mt-2 flex justify-between font-mono text-[7px] uppercase tracking-wider text-slate-500">
-                    <span>Progression saison</span>
-                    <span className="text-emerald-300">{progress}%</span>
-                  </div>
-                </div>
-              </div>
+              <h1 className="max-w-2xl bg-gradient-to-b from-white via-white to-emerald-100/75 bg-clip-text font-display text-[28px] font-black uppercase leading-[.92] tracking-[-.02em] text-transparent md:text-5xl">
+                Mes statistiques
+              </h1>
+              <p className="max-w-lg text-xs text-slate-300/80 md:text-sm">
+                Vos performances, vos tendances, vos records.
+              </p>
             </div>
           </section>
 
           {errorMessage && (
-            <section className="rounded-2xl border border-red-400/20 bg-red-500/[0.06] px-5 py-3 text-xs text-red-200">
+            <section className="rounded-2xl border border-red-400/20 bg-red-500/[0.06] px-4 py-2.5 text-xs text-red-200">
               {errorMessage}
             </section>
           )}
 
-          {/* METRICS STRIP — PREMIUM */}
-          <section className="relative overflow-hidden rounded-[26px] border border-white/[0.08] bg-[#07101c]/78 shadow-[0_24px_70px_rgba(0,0,0,.24)] backdrop-blur-xl">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_50%,rgba(139,92,246,.06),transparent_22%),radial-gradient(circle_at_50%_50%,rgba(34,211,238,.035),transparent_28%),radial-gradient(circle_at_88%_50%,rgba(16,185,129,.045),transparent_22%)]"
-            />
-
-            {loading && (
-              <div className="absolute right-4 top-3 z-20 font-mono text-[8px] uppercase tracking-[0.18em] text-emerald-300">
-                Synchronisation Supabase…
+          {/* VUE D'ENSEMBLE */}
+          <section>
+            <div className="mb-3 flex items-end justify-between gap-3">
+              <div>
+                <div className="font-mono text-[9px] font-semibold uppercase tracking-[.2em] text-emerald-300/80">
+                  Dashboard
+                </div>
+                <h2 className="mt-0.5 text-base font-bold uppercase tracking-[.08em] text-white">
+                  Vue d'ensemble
+                </h2>
               </div>
-            )}
+              <span className="font-mono text-[9px] uppercase tracking-widest text-slate-600">
+                {stats.playedDays}/{stats.seasonDays} journées
+              </span>
+            </div>
 
-            <div className="relative grid grid-cols-1 overflow-hidden sm:grid-cols-2 lg:grid-cols-5">
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-0 opacity-5"
-                style={{
-                  background:
-                    "radial-gradient(circle at 10% 50%, rgba(139,92,246,.10), transparent 20%), radial-gradient(circle at 30% 50%, rgba(16,185,129,.09), transparent 20%), radial-gradient(circle at 50% 50%, rgba(34,211,238,.09), transparent 20%), radial-gradient(circle at 70% 50%, rgba(59,130,246,.09), transparent 20%), radial-gradient(circle at 90% 50%, rgba(168,85,247,.10), transparent 20%)",
-                }}
-              />
-              {metrics.map((metric, index) => {
-                const Icon = metric.icon;
-
-                const accent =
-                  metric.tone === "green"
-                    ? {
-                        ring: "border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-300",
-                        glow: "bg-emerald-400",
-                        line: "from-emerald-400 to-cyan-400",
-                        value: "text-emerald-300",
-                      }
-                    : metric.tone === "cyan"
-                      ? {
-                          ring: "border-cyan-400/25 bg-cyan-400/[0.07] text-cyan-300",
-                          glow: "bg-cyan-400",
-                          line: "from-cyan-400 to-blue-500",
-                          value: "text-cyan-300",
-                        }
-                      : metric.tone === "blue"
-                        ? {
-                            ring: "border-blue-400/25 bg-blue-400/[0.07] text-blue-300",
-                            glow: "bg-blue-400",
-                            line: "from-blue-400 to-indigo-500",
-                            value: "text-blue-300",
-                          }
-                        : {
-                            ring: "border-violet-400/25 bg-violet-400/[0.07] text-violet-300",
-                            glow: "bg-violet-400",
-                            line: "from-violet-400 to-fuchsia-400",
-                            value: "text-violet-300",
-                          };
-
-                const backgroundPosition =
-                  index === 0
-                    ? "left center"
-                    : index === 1
-                      ? "25% center"
-                      : index === 2
-                        ? "50% center"
-                        : index === 3
-                          ? "75% center"
-                          : "right center";
-
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+              {kpis.map((kpi) => {
+                const Icon = kpi.icon;
                 return (
-                  <div
-                    key={metric.label}
-                    className={`group relative min-h-[184px] overflow-hidden bg-[#06101b] px-6 py-7 transition-all duration-300 hover:brightness-110 sm:px-7 ${
-                      index > 0 ? "border-l border-white/[0.08]" : ""
-                    } ${index === 2 ? "col-span-2 lg:col-span-1" : ""}`}
-                    style={{
-                      backgroundImage:
-                        "linear-gradient(rgba(3,10,20,.12), rgba(3,10,20,.12)), url('/bloc%20performance%20de%20la%20saison.png')",
-                      backgroundPosition,
-                      backgroundSize: "500% 100%",
-                      backgroundRepeat: "no-repeat",
-                    }}
+                  <article
+                    key={kpi.label}
+                    className="group relative min-h-[104px] overflow-hidden rounded-[16px] border border-white/[0.08] bg-white/[0.025] p-3 shadow-[0_12px_30px_rgba(0,0,0,.22)] backdrop-blur-xl transition-transform duration-300 hover:-translate-y-1"
                   >
-                    <div className="pointer-events-none absolute inset-0 bg-black/[0.06]" />
-                    <div
-                      className={`absolute left-0 right-0 top-0 h-px bg-gradient-to-r ${accent.line} opacity-0 transition-opacity duration-300 group-hover:opacity-80`}
-                    />
-
-                    <div className="relative z-10 flex h-full items-center gap-5">
-                      <div className="relative shrink-0">
-                        <div
-                          className={`absolute inset-0 scale-125 rounded-full ${accent.glow} opacity-10 blur-xl`}
-                        />
-                        <div
-                          className={`relative flex h-[58px] w-[58px] items-center justify-center rounded-2xl border ${accent.ring} shadow-[inset_0_0_20px_rgba(255,255,255,.025)]`}
-                        >
-                          <Icon size={23} strokeWidth={1.8} />
-                        </div>
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_85%_10%,rgba(52,211,153,.10),transparent_38%)]" />
+                    <div className="relative flex h-full flex-col">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[8px] font-semibold uppercase tracking-[.14em] text-slate-500">
+                          {kpi.label}
+                        </span>
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300">
+                          <Icon size={12} strokeWidth={1.8} />
+                        </span>
                       </div>
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[8px] font-bold uppercase tracking-[0.2em] text-slate-500">
-                            {metric.label}
-                          </span>
-                          <span
-                            className={`hidden h-1 w-1 rounded-full ${accent.glow} shadow-[0_0_8px_currentColor] sm:block`}
-                          />
-                        </div>
-
-                        <div className="mt-1 flex items-baseline gap-2">
-                          <span
-                            className={`text-[39px] font-semibold leading-none tracking-[-0.045em] text-white`}
-                          >
-                            {metric.value}
-                          </span>
-                        </div>
-
-                        <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-400">
-                          <span
-                            className={`h-1 w-1 rounded-full ${accent.glow}`}
-                          />
-                          <span>{metric.sub}</span>
-                        </div>
+                      <div className="mt-1.5">
+                        <StatValue value={kpi.value} size="text-3xl md:text-[32px]" />
+                      </div>
+                      <div className="mt-auto pt-1.5 text-[9px] text-slate-500">
+                        {kpi.sub}
                       </div>
                     </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>
-
           </section>
 
-          {/* CHART + DONUT */}
-          <section className="grid gap-5 lg:grid-cols-[1.35fr_1fr]">
-            {/* évolution */}
-            <article
-              id="stats-evolution"
-              className="relative overflow-hidden rounded-[24px] border border-white/[0.10] p-5 shadow-[0_24px_70px_rgba(0,0,0,.35)] md:p-7"
-            >
-              <img
-                src="/evolutions des points.jpg"
-                alt=""
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover object-center"
-              />
-              {/* Premium readability veil: darker behind the graph, brighter at the stadium edges */}
-              <div className="pointer-events-none absolute inset-0 z-[1] bg-[#020914]/[0.09]" />
-              <div
-                className="pointer-events-none absolute inset-0 z-[1]"
-                style={{
-                  background:
-                    "radial-gradient(ellipse 58% 58% at 52% 54%, rgba(2,8,18,.24) 0%, rgba(2,8,18,.14) 46%, rgba(2,8,18,.04) 74%, transparent 100%)",
-                }}
-              />
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 top-16 z-[1] bg-gradient-to-t from-[#020914]/[0.15] via-transparent to-[#020914]/[0.03]" />
-
-              <div className="relative z-10 mb-7 flex items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 text-emerald-300">
-                    <BarChart3 size={18} />
-                    <h2 className="bg-gradient-to-r from-emerald-300 via-cyan-300 to-blue-300 bg-clip-text text-base font-semibold uppercase tracking-wide text-transparent">
-                      Évolution des points
-                    </h2>
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 font-mono text-[9px] uppercase tracking-wider text-slate-300 backdrop-blur-sm">
-                  <select
-                    value={selectedRange}
-                    onChange={(event) =>
-                      setSelectedRange(Number(event.target.value))
-                    }
-                    className="cursor-pointer appearance-none bg-transparent pr-1 text-[9px] uppercase tracking-wider text-slate-300 outline-none"
-                    aria-label="Nombre de journées affichées"
+          {/* PROGRESSION */}
+          <section className="relative overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <SectionHeader icon={BarChart3} eyebrow="Évolution" title="Progression" />
+              <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/20 p-1">
+                {RANGE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setSelectedRange(opt.value)}
+                    className={`rounded-lg px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase tracking-wider transition ${
+                      selectedRange === opt.value
+                        ? "border border-emerald-400/40 bg-emerald-400/15 text-emerald-300 shadow-[0_0_14px_rgba(52,211,153,.30)]"
+                        : "border border-transparent text-slate-500 hover:text-slate-300"
+                    }`}
                   >
-                    {[5, 10, 15, 20, 34]
-                      .filter((value) => value <= Math.max(5, stats.dayStats.length) || value === 5)
-                      .map((value) => (
-                        <option
-                          key={value}
-                          value={value}
-                          className="bg-[#07101c] text-slate-200"
-                        >
-                          {value} journées
-                        </option>
-                      ))}
-                  </select>
-                  <span className="text-emerald-300">⌄</span>
-                </label>
+                    {opt.label.toUpperCase()}
+                  </button>
+                ))}
               </div>
+            </div>
 
-              <div className="relative z-10 h-[290px]">
-                <div className="absolute inset-x-0 top-0 bottom-8 flex flex-col justify-between">
-                  {Array.from({ length: 6 }, (_, index) =>
-                    Math.round((maxPoints / 5) * (5 - index))
-                  ).map((value) => (
-                    <div key={value} className="flex items-center gap-3">
-                      <span className="w-5 text-right text-[9px] text-slate-500">
-                        {value}
-                      </span>
-                      <div className="h-px flex-1 bg-white/[0.09]" />
-                    </div>
-                  ))}
+            <div className="relative h-[190px]">
+              {visibleDays.length === 0 ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-6 text-center">
+                  <span className="font-display text-base font-black uppercase tracking-wide text-white md:text-lg">
+                    Ta saison commence maintenant 🔥
+                  </span>
+                  <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">
+                    Reviens ici après ta première journée pronostiquée !
+                  </span>
                 </div>
-
-                <div className="absolute left-10 right-3 top-0 bottom-8">
-                  <svg
-                    viewBox="0 0 500 220"
-                    className="absolute inset-0 h-full w-full overflow-visible"
-                    preserveAspectRatio="none"
-                  >
-                    <defs>
-                      <linearGradient id="statsLine" x1="0" x2="1">
-                        <stop offset="0%" stopColor="#39ff88" />
-                        <stop offset="28%" stopColor="#19e6a0" />
-                        <stop offset="52%" stopColor="#20d9ff" />
-                        <stop offset="76%" stopColor="#4387ff" />
-                        <stop offset="100%" stopColor="#b56cff" />
-                      </linearGradient>
-                      <linearGradient id="statsFill" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="#39ff88" stopOpacity=".16" />
-                        <stop offset="30%" stopColor="#19e6a0" stopOpacity=".11" />
-                        <stop offset="55%" stopColor="#20d9ff" stopOpacity=".10" />
-                        <stop offset="78%" stopColor="#4387ff" stopOpacity=".09" />
-                        <stop offset="100%" stopColor="#b56cff" stopOpacity=".13" />
-                      </linearGradient>
-                      <filter id="statsLineGlow" x="-30%" y="-30%" width="160%" height="160%">
-                        <feGaussianBlur stdDeviation="3.2" result="blur" />
-                      </filter>
-                    </defs>
-
-                    {visibleDays.length > 0 && (() => {
-                      const width = 500;
-                      const height = 220;
-                      const step =
-                        visibleDays.length === 1
-                          ? 0
-                          : width / (visibleDays.length - 1);
-
-                      const points = visibleDays.map((item, index) => {
-                        const x = index * step;
-                        const y =
-                          height - (item.points / Math.max(maxPoints, 1)) * height;
-                        return { x, y };
-                      });
-
-                      const linePath = points
-                        .map((point, index) =>
-                          `${index === 0 ? "M" : "L"}${point.x} ${point.y}`
-                        )
-                        .join(" ");
-
-                      const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
-
-                      return (
-                        <>
-                          <path d={areaPath} fill="url(#statsFill)" />
-                          <path
-                            d={linePath}
-                            fill="none"
-                            stroke="url(#statsLine)"
-                            strokeWidth="10"
-                            opacity=".30"
-                            filter="url(#statsLineGlow)"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                          <path
-                            d={linePath}
-                            fill="none"
-                            stroke="url(#statsLine)"
-                            strokeWidth="3.5"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        </>
-                      );
-                    })()}                  </svg>
-
-                  {visibleDays.map((item, index) => {
-                    const left =
-                      visibleDays.length === 1
-                        ? 50
-                        : (index / (visibleDays.length - 1)) * 100;
-                    const top = 100 - (item.points / maxPoints) * 100;
-
-                    return (
-                      <div
-                        key={item.day}
-                        className="absolute"
-                        style={{
-                          left: `${left}%`,
-                          top: `${top}%`,
-                          transform: "translate(-50%, -50%)",
-                        }}
-                      >
-                        <div className="mb-2 -translate-y-5 text-center text-sm font-bold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,.85)] drop-shadow-[0_0_10px_rgba(255,255,255,.28)]">
-                          {item.points}
-                        </div>
-                        <div
-                          className={`h-4 w-4 rounded-full border-2 border-[#06101b] ${
-                            index === 0
-                              ? "bg-emerald-300 shadow-[0_0_20px_rgba(57,255,136,.95)]"
-                              : index === 1
-                                ? "bg-cyan-300 shadow-[0_0_20px_rgba(32,217,255,.95)]"
-                                : index === 2
-                                  ? "bg-white shadow-[0_0_24px_rgba(32,217,255,1)]"
-                                  : index === 3
-                                    ? "bg-blue-300 shadow-[0_0_20px_rgba(67,135,255,.95)]"
-                                    : "bg-purple-300 shadow-[0_0_22px_rgba(181,108,255,.95)]"
-                          }`}
-                        />
+              ) : (
+                <>
+                  <div className="absolute inset-x-0 top-0 bottom-8 flex flex-col justify-between">
+                    {Array.from({ length: 5 }, (_, index) =>
+                      Math.round((maxPoints / 4) * (4 - index)),
+                    ).map((value) => (
+                      <div key={value} className="flex items-center gap-2.5">
+                        <span className="w-5 text-right text-[8px] text-slate-600">
+                          {value}
+                        </span>
+                        <div className="h-px flex-1 bg-white/[0.045]" />
                       </div>
-                    );
-                  })}
-
-                  <div className="absolute -bottom-7 inset-x-0 flex justify-between">
-                    {visibleDays.map((item) => (
-                      <span
-                        key={item.day}
-                        className="text-[10px] font-semibold text-slate-300 drop-shadow-[0_2px_6px_rgba(0,0,0,.8)]"
-                      >
-                        {item.day}
-                      </span>
                     ))}
                   </div>
+
+                  <div className="absolute left-9 right-2 top-0 bottom-8">
+                    <svg
+                      viewBox="0 0 500 180"
+                      className="absolute inset-0 size-full overflow-visible"
+                      preserveAspectRatio="none"
+                    >
+                      <defs>
+                        <linearGradient id="statsLineGreen" x1="0" x2="1">
+                          <stop offset="0%" stopColor="#34d399" />
+                          <stop offset="100%" stopColor="#a7f3d0" />
+                        </linearGradient>
+                        <linearGradient id="statsFillGreen" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#34d399" stopOpacity=".18" />
+                          <stop offset="100%" stopColor="#34d399" stopOpacity="0" />
+                        </linearGradient>
+                        <filter id="statsGlowGreen" x="-30%" y="-30%" width="160%" height="160%">
+                          <feGaussianBlur stdDeviation="2.4" result="blur" />
+                        </filter>
+                      </defs>
+
+                      {(() => {
+                        const width = 500;
+                        const height = 180;
+                        const step =
+                          visibleDays.length === 1 ? 0 : width / (visibleDays.length - 1);
+
+                        const points = visibleDays.map((item, index) => ({
+                          x: index * step,
+                          y: height - (item.points / Math.max(maxPoints, 1)) * height,
+                        }));
+
+                        const linePath = points
+                          .map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`)
+                          .join(" ");
+
+                        const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
+
+                        return (
+                          <>
+                            <path d={areaPath} fill="url(#statsFillGreen)" />
+                            <path
+                              d={linePath}
+                              fill="none"
+                              stroke="#34d399"
+                              strokeWidth="7"
+                              opacity=".22"
+                              filter="url(#statsGlowGreen)"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                            <path
+                              d={linePath}
+                              fill="none"
+                              stroke="url(#statsLineGreen)"
+                              strokeWidth="2.5"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          </>
+                        );
+                      })()}
+                    </svg>
+
+                    {visibleDays.map((item, index) => {
+                      const left =
+                        visibleDays.length === 1 ? 50 : (index / (visibleDays.length - 1)) * 100;
+                      const top = 100 - (item.points / maxPoints) * 100;
+
+                      return (
+                        <div
+                          key={item.day}
+                          className="absolute"
+                          style={{ left: `${left}%`, top: `${top}%`, transform: "translate(-50%, -50%)" }}
+                        >
+                          <div className="mb-1.5 -translate-y-4 text-center text-[11px] font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.85)]">
+                            {item.points}
+                          </div>
+                          <div className="size-2.5 rounded-full border-2 border-[#07111c] bg-emerald-300 shadow-[0_0_15px_rgba(52,211,153,.85)]" />
+                        </div>
+                      );
+                    })}
+
+                    <div className="absolute -bottom-6 inset-x-0 flex justify-between">
+                      {visibleDays.map((item) => (
+                        <span key={item.day} className="text-[9px] font-semibold text-slate-400">
+                          {item.day}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* PRÉCISION — une seule section, deux blocs compacts côte à côte
+              (plus deux grandes cartes verticales séparées comme avant). */}
+          <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
+            <SectionHeader icon={Crosshair} eyebrow="Analyse" title="Précision" />
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[8px] font-bold uppercase tracking-[.14em] text-slate-500">
+                  <Crosshair size={11} className="text-emerald-300" /> Régularité
                 </div>
-              </div>
-            </article>
-
-            {/* donut */}
-            <article className="relative overflow-hidden rounded-[24px] border border-white/[0.07] bg-[#07101c]/62 p-5 shadow-[0_20px_60px_rgba(0,0,0,.18)] backdrop-blur-md md:p-7">
-              <div className="absolute right-[-70px] top-[-70px] h-64 w-64 rounded-full bg-blue-500/[0.045] blur-[80px]" />
-
-              <div className="relative mb-8 flex items-center gap-2 text-emerald-300">
-                <TrendingUp size={18} />
-                <h2 className="text-base font-medium uppercase tracking-wide text-slate-200">
-                  Répartition des points
-                </h2>
-              </div>
-
-              <div className="relative flex flex-col items-center gap-8 sm:flex-row sm:items-center sm:justify-center">
                 <div
-                  className="relative h-44 w-44 shrink-0 rounded-full p-[18px]"
+                  className="relative flex size-20 items-center justify-center rounded-full md:size-24"
                   style={{
-                    background: `conic-gradient(
-                      #22d3ee 0deg ${Math.round((stats.standardPoints / Math.max(totalPointsForDistribution, 1)) * 360)}deg,
-                      #34d399 ${Math.round((stats.standardPoints / Math.max(totalPointsForDistribution, 1)) * 360)}deg ${Math.round(((stats.standardPoints + stats.exactPoints) / Math.max(totalPointsForDistribution, 1)) * 360)}deg,
-                      #3b82f6 ${Math.round(((stats.standardPoints + stats.exactPoints) / Math.max(totalPointsForDistribution, 1)) * 360)}deg 360deg
-                    )`,
+                    background: `conic-gradient(#34d399 ${successRatePct * 3.6}deg, rgba(255,255,255,.06) ${successRatePct * 3.6}deg 360deg)`,
                   }}
                 >
-                  <div className="flex h-full w-full flex-col items-center justify-center rounded-full bg-[#07101c]">
-                    <span className="text-3xl font-semibold text-white">
-                      {stats.totalPoints}
+                  <div className="flex size-[62px] flex-col items-center justify-center rounded-full border border-white/[0.05] bg-[#06101b] md:size-[76px]">
+                    <span className="text-lg font-black text-white md:text-xl">
+                      {successRatePct}%
                     </span>
-                    <span className="mt-1 text-[10px] uppercase tracking-widest text-slate-500">
-                      PTS
+                    <span className="mt-0.5 font-mono text-[6px] uppercase tracking-[.16em] text-slate-500">
+                      réussite
                     </span>
                   </div>
                 </div>
+                <div className="mt-2 text-center text-[10px] font-semibold text-white">
+                  {stats.successfulPredictions} réussis / {stats.totalPredictions} joués
+                </div>
+              </div>
 
-                <div className="w-full max-w-[280px] space-y-5">
-                  {distribution.map((item) => (
-                    <div
-                      key={item.label}
-                      className="flex items-center justify-between gap-4"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span
-                          className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                            item.color === "cyan"
-                              ? "bg-cyan-400"
-                              : item.color === "green"
-                                ? "bg-emerald-400"
-                                : "bg-blue-500"
-                          }`}
-                        />
-                        <span className="truncate text-xs text-slate-300">
-                          {item.label}
-                        </span>
-                      </div>
-                      <span className="shrink-0 text-sm font-medium text-slate-200">
-                        {item.value} pts · {item.percent}%
-                      </span>
-                    </div>
-                  ))}
-
-                  <div className="border-t border-white/[0.07] pt-4">
-                    <div className="flex items-center justify-between text-xs uppercase tracking-wider text-slate-500">
-                      <span>Total</span>
-                      <span className="font-semibold text-white">
-                        {stats.totalPoints} pts
-                      </span>
-                    </div>
+              <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[8px] font-bold uppercase tracking-[.14em] text-slate-500">
+                  <Target size={11} className="text-emerald-300" /> Scores exacts
+                </div>
+                <div
+                  className="relative flex size-20 items-center justify-center rounded-full md:size-24"
+                  style={{
+                    background: `conic-gradient(#a7f3d0 ${exactRatePct * 3.6}deg, rgba(255,255,255,.06) ${exactRatePct * 3.6}deg 360deg)`,
+                  }}
+                >
+                  <div className="flex size-[62px] flex-col items-center justify-center rounded-full border border-white/[0.05] bg-[#06101b] md:size-[76px]">
+                    <span className="text-lg font-black text-white md:text-xl">
+                      {stats.exactScores}
+                    </span>
+                    <span className="mt-0.5 font-mono text-[6px] uppercase tracking-[.16em] text-slate-500">
+                      exacts
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 text-center text-[10px] font-semibold text-white">
+                  {stats.exactScores} score{stats.exactScores > 1 ? "s" : ""} exact{stats.exactScores > 1 ? "s" : ""}
+                  <div className="mt-0.5 text-[9px] font-normal text-slate-500">
+                    sur {stats.totalPredictions} pronostic{stats.totalPredictions > 1 ? "s" : ""}
                   </div>
                 </div>
               </div>
-            </article>
+            </div>
           </section>
-          {/* SUPPORTERS — compact, connected to real data */}
-          <section className="rounded-[24px] border border-white/[0.07] bg-[#07101c]/62 p-5 backdrop-blur-md md:p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Users size={17} className="text-emerald-300" />
-              <h2 className="text-sm font-medium uppercase tracking-wide text-slate-300">
-                Communauté
-              </h2>
+
+          {/* VOS DERNIÈRES JOURNÉES */}
+          <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4 md:px-5 md:pt-5">
+              <SectionHeader icon={CalendarDays} eyebrow="Historique" title="Vos dernières journées" />
               <button
                 type="button"
-                onClick={loadStats}
-                disabled={loading}
-                className="ml-auto rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-1.5 font-mono text-[8px] uppercase tracking-wider text-slate-400 transition hover:border-emerald-400/30 hover:text-emerald-300 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.025] px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase tracking-widest text-slate-400 transition hover:border-emerald-400/20 hover:text-emerald-300"
               >
-                {loading ? "..." : "Actualiser"}
+                Voir toutes les journées
+                <ChevronRight size={12} />
               </button>
             </div>
 
-            {supporters.length === 0 ? (
-              <div className="text-xs text-slate-500">
-                Aucun supporter enregistré pour le moment.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {supporters.slice(0, 4).map((item, index) => {
-                  const width = Math.max(8, (item.count / maxSupporter) * 100);
+            <div className="overflow-x-auto px-4 pb-4 md:px-5 md:pb-5">
+              <div className="min-w-[560px]">
+                <div className="grid grid-cols-[.7fr_1fr_1fr_1fr_1fr] gap-3 border-b border-white/[0.07] px-3 pb-2 pt-3 font-mono text-[8px] font-semibold uppercase tracking-[.15em] text-slate-600">
+                  <span>Journée</span>
+                  <span>Points</span>
+                  <span>Exacts</span>
+                  <span>Bonus</span>
+                  <span>Total</span>
+                </div>
 
-                  return (
-                    <div key={item.team}>
-                      <div className="mb-1.5 flex justify-between text-[10px]">
-                        <span className="text-slate-300">
-                          <span className="mr-2 font-mono text-slate-600">
-                            0{index + 1}
-                          </span>
-                          {item.team}
-                        </span>
-                        <span className="text-emerald-300">
-                          {item.count}
-                        </span>
+                <div className="divide-y divide-white/[0.05]">
+                  {latestDays.length === 0 ? (
+                    <div className="px-3 py-7 text-center">
+                      <div className="font-mono text-[9px] uppercase tracking-widest text-slate-500">
+                        Pas encore de journée terminée
                       </div>
-
-                      <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500"
-                          style={{ width: `${width}%` }}
-                        />
+                      <div className="mt-1 text-[10px] text-slate-600">
+                        Joue ta première journée pour voir tes stats ici !
                       </div>
                     </div>
-                  );
-                })}
+                  ) : (
+                    latestDays.map((day) => (
+                      <div
+                        key={day.day}
+                        className="grid grid-cols-[.7fr_1fr_1fr_1fr_1fr] items-center gap-3 px-3 py-3"
+                      >
+                        <span className="font-bold text-white">{day.day}</span>
+                        <span className="font-black text-emerald-300">{day.points} pts</span>
+                        <span className="text-sm text-slate-300">{day.exactScores}</span>
+                        <span className="text-sm text-slate-300">{day.bonusPoints} pts</span>
+                        <span className="text-sm font-semibold text-white">{day.cumulative} pts</span>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            )}
+            </div>
+          </section>
+
+          {/* TOP JOUEURS — uniquement le podium (3 premiers), le classement
+              complet reste sur /classement (jamais reconstruit ici). */}
+          <section className="relative overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(52,211,153,.08),transparent_38%)]" />
+
+            <div className="relative">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <SectionHeader icon={Trophy} eyebrow="Classement" title="Top joueurs" />
+                <Link
+                  to="/classement"
+                  className="inline-flex items-center gap-1 font-mono text-[8px] font-bold uppercase tracking-[.16em] text-emerald-300/80 transition hover:text-emerald-300"
+                >
+                  Voir le classement <ChevronRight size={11} />
+                </Link>
+              </div>
+
+              {podium.length === 0 ? (
+                <div className="rounded-2xl border border-white/[0.06] bg-black/15 px-5 py-8 text-center font-mono text-[9px] uppercase tracking-widest text-slate-600">
+                  Classement indisponible pour le moment
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  {podium.map((player, index) => (
+                    <PodiumPlayer
+                      key={player.userId}
+                      player={player}
+                      place={(index + 1) as 1 | 2 | 3}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* RÉPARTITION DES POINTS */}
+          <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
+            <SectionHeader icon={PieChart} eyebrow="Répartition" title="Répartition des points" />
+
+            <div className="grid items-center gap-5 md:grid-cols-[150px_1fr]">
+              <div
+                className="relative mx-auto flex size-32 items-center justify-center rounded-full"
+                style={{
+                  background: `conic-gradient(
+                    #34d399 0deg ${Math.round((stats.standardPoints / Math.max(totalPointsForDistribution, 1)) * 360)}deg,
+                    #a7f3d0 ${Math.round((stats.standardPoints / Math.max(totalPointsForDistribution, 1)) * 360)}deg ${Math.round(((stats.standardPoints + stats.exactPoints) / Math.max(totalPointsForDistribution, 1)) * 360)}deg,
+                    #10b981 ${Math.round(((stats.standardPoints + stats.exactPoints) / Math.max(totalPointsForDistribution, 1)) * 360)}deg 360deg
+                  )`,
+                }}
+              >
+                <div className="flex size-24 flex-col items-center justify-center rounded-full border border-white/[0.05] bg-[#06101b]">
+                  <span className="text-2xl font-black text-white">{stats.totalPoints}</span>
+                  <span className="mt-0.5 font-mono text-[7px] uppercase tracking-widest text-slate-500">
+                    points
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {distribution.map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-white/[0.05] bg-black/15 px-3.5 py-2.5">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className="size-2 shrink-0 rounded-full shadow-[0_0_10px_rgba(52,211,153,.45)]"
+                          style={{ backgroundColor: item.color }}
+                        />
+                        <span className="truncate text-xs font-medium text-slate-300">{item.label}</span>
+                      </div>
+                      <span className="shrink-0 text-xs font-bold text-white">{item.value} pts</span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2.5">
+                      <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.05]">
+                        <div
+                          className="h-full rounded-full bg-emerald-400/70"
+                          style={{ width: `${item.percent}%` }}
+                        />
+                      </div>
+                      <span className="font-mono text-[8px] text-slate-600">{item.percent}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* INDICATEURS FINAUX — uniquement basés sur les données existantes */}
+          <section className="grid gap-2.5 sm:grid-cols-2">
+            <article className="rounded-2xl border border-emerald-400/10 bg-emerald-400/[0.035] px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                <TrendingUp size={15} className="text-emerald-300" />
+                <div>
+                  <div className="font-mono text-[8px] uppercase tracking-[.18em] text-emerald-300/70">
+                    Dernière tendance
+                  </div>
+                  <div className="mt-0.5 text-sm font-semibold text-white">
+                    {stats.playedDays
+                      ? `${stats.dayStats[stats.dayStats.length - 1]?.day || "—"} : ${stats.dayStats[stats.dayStats.length - 1]?.points || 0} points`
+                      : "Pas encore de données"}
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                <Crosshair size={15} className="text-emerald-300" />
+                <div>
+                  <div className="font-mono text-[8px] uppercase tracking-[.18em] text-slate-600">
+                    Moyenne / journée
+                  </div>
+                  <div className="mt-0.5 text-sm font-semibold text-white">
+                    {stats.average.toFixed(2)} points
+                  </div>
+                </div>
+              </div>
+            </article>
           </section>
         </main>
       </div>

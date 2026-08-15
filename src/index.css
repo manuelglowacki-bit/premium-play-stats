@@ -2,16 +2,25 @@
 
 /* ---------------------------------------------------------------- */
 /* Transition d'entrée entre les pages (voir __root.tsx)            */
+/*                                                                    */
+/* Volontairement SANS `transform` ici : cette classe enveloppe toute */
+/* l'app (racine du routeur, au-dessus d'AppShell). Un `transform`    */
+/* animé dessus — même terminant à `none` — fait de cet élément un    */
+/* containing block pour tous ses descendants en `position: fixed`    */
+/* (header, fond global, nav mobile...), qui se retrouvent alors      */
+/* positionnés par rapport à la hauteur totale de la page au lieu du  */
+/* viewport. On garde le léger slide via `margin-top`, qui n'a pas    */
+/* cet effet de bord, pour le même rendu visuel sans casser le fixe.  */
 /* ---------------------------------------------------------------- */
 
 @keyframes page-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    margin-top: 10px;
   }
   to {
     opacity: 1;
-    transform: none;
+    margin-top: 0;
   }
 }
 
@@ -28,16 +37,21 @@
 html,
 body,
 #root{
+    height:100%;
     min-height:100%;
 }
 
 body{
     margin:0;
+    /* Fond global officiel de tout le site (voir AppShell.tsx pour la
+       version affichée réellement une fois connecté) — ce fallback ne sert
+       qu'au flash avant montage de React et aux pages hors AppShell
+       (ex. /auth), pour rester cohérent partout. */
     background-image:
         linear-gradient(rgba(8,12,20,.72),rgba(8,12,20,.88)),
-        url('/background-l1.png');
+        url('/arriere%20plan%20general.png');
     background-size:cover;
-    background-position:center;
+    background-position:center top;
     background-repeat:no-repeat;
     background-attachment:fixed;
 }

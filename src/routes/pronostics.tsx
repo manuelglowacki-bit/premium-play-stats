@@ -1256,7 +1256,7 @@ function PronosticsPage() {
             className="pointer-events-none absolute inset-0 opacity-70"
             style={{
               background:
-                "radial-gradient(ellipse 65% 55% at 88% -10%, rgba(16,185,129,0.20), transparent 70%), radial-gradient(ellipse 45% 40% at 10% 110%, rgba(56,189,248,0.12), transparent 70%)",
+                "radial-gradient(ellipse 65% 55% at 88% -10%, rgba(16,185,129,0.20), transparent 70%), radial-gradient(ellipse 45% 40% at 10% 110%, rgba(52,211,153,0.10), transparent 70%)",
             }}
           />
           <div
@@ -1328,7 +1328,7 @@ function PronosticsPage() {
                   <defs>
                     <linearGradient id="progGrad" x1="0" y1="0" x2="1" y2="1">
                       <stop offset="0%" stopColor="#34d399" />
-                      <stop offset="100%" stopColor="#38bdf8" />
+                      <stop offset="100%" stopColor="#a7f3d0" />
                     </linearGradient>
                   </defs>
                 </svg>
@@ -1404,7 +1404,14 @@ function PronosticsPage() {
               </button>
               <div
                 ref={scrollerRef}
-                className="flex flex-1 gap-3 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden relative py-2"
+                // min-w-0 : sans ça, un enfant flex-1 garde son min-width
+                // "auto" par défaut et refuse de rétrécir sous la largeur de
+                // son contenu — overflow-x-auto ne s'active donc jamais, et
+                // les ~34 boutons de journée poussent toute la page en
+                // largeur au lieu de défiler dans leur propre bandeau (bug
+                // réel confirmé : jusqu'à 680px de débordement horizontal
+                // mesuré à 360px de large).
+                className="flex min-w-0 flex-1 gap-3 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden relative py-2"
               >
                 {sortedMatchdays.map((md) => {
                   const active = md.id === selectedMatchdayId;
@@ -1587,10 +1594,10 @@ function PronosticsPage() {
         {/* ================= CONTENU PRINCIPAL ================= */}
         <div className="space-y-8">
           {/* ================= MATCHS 1N2 LIGUE 1 - INTERFACE BROADCAST / EA SPORTS ================= */}
-          <section className="relative overflow-hidden rounded-[28px] border border-[#1E3356] bg-[#050A14] shadow-[0_40px_80px_rgba(0,0,0,0.9)] p-4 sm:p-8">
+          <section className="relative overflow-hidden rounded-[28px] border border-emerald-500/20 bg-[#050A14] shadow-[0_40px_80px_rgba(0,0,0,0.9)] p-4 sm:p-8">
             <style>{`
               .hud-dots {
-                background-image: radial-gradient(circle, #33B5FF 1px, transparent 1px);
+                background-image: radial-gradient(circle, #34d399 1px, transparent 1px);
                 background-size: 24px 24px;
                 mask-image: radial-gradient(ellipse at center, transparent 40%, black 100%);
                 -webkit-mask-image: radial-gradient(ellipse at center, transparent 40%, black 100%);
@@ -1605,12 +1612,12 @@ function PronosticsPage() {
             <div aria-hidden className="absolute inset-0 z-0 pointer-events-none bg-black/45" />
 
             <div className="absolute inset-0 z-0 pointer-events-none hud-dots opacity-25" />
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[80%] h-64 bg-[#33B5FF]/10 blur-[120px] pointer-events-none z-0" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[80%] h-64 bg-emerald-400/10 blur-[120px] pointer-events-none z-0" />
             <div className="absolute inset-0 z-0 pointer-events-none bg-gradient-to-b from-transparent via-[#050A14]/70 to-[#050A14]" />
 
-            <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 border-b border-[#1E3356]/40 pb-5">
+            <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 border-b border-emerald-500/15 pb-5">
               <div className="flex items-center gap-4">
-                <div className="size-12 md:size-14 shrink-0 rounded-2xl bg-[#081221] border border-[#1E3356] p-2 flex items-center justify-center shadow-[0_0_20px_rgba(51,181,255,0.15)] overflow-hidden">
+                <div className="size-12 md:size-14 shrink-0 rounded-2xl bg-[#081221] border border-emerald-500/20 p-2 flex items-center justify-center shadow-[0_0_20px_rgba(52,211,153,0.15)] overflow-hidden">
                   {!logoFailed ? (
                     <img
                       src="/logo ligue 1.png"
@@ -1627,7 +1634,7 @@ function PronosticsPage() {
                     Ligue 1 McDonald's
                   </h2>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="font-mono text-[11px] text-[#33B5FF] uppercase tracking-widest font-bold">
+                    <span className="font-mono text-[11px] text-emerald-400 uppercase tracking-widest font-bold">
                       {selectedMatchday ? matchdayCode(selectedMatchday) : "Journée"}
                     </span>
                     <span className="text-[#E7B542]">•</span>
@@ -1649,7 +1656,7 @@ function PronosticsPage() {
                     0 PT · RÉSULTAT INCORRECT
                   </span>
                 </div>
-                <div className="text-right pl-3 border-l border-[#1E3356]/60">
+                <div className="text-right pl-3 border-l border-emerald-500/25">
                   <div className="font-mono text-[11px] text-slate-400 uppercase tracking-widest">
                     Pronos
                   </div>
@@ -1690,18 +1697,18 @@ function PronosticsPage() {
 
                   return (
                     <div key={match.id} className="relative group z-10">
-                      <div className="relative overflow-hidden rounded-[20px] bg-white/[0.02] backdrop-blur-xl border border-white/5 p-4 transition-all duration-500 hover:-translate-y-1 hover:bg-[#081221]/80 hover:border-[#33B5FF]/50 hover:shadow-[0_15px_40px_rgba(51,181,255,0.15)]">
-                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#33B5FF]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                      <div className="relative overflow-hidden rounded-[20px] bg-white/[0.02] backdrop-blur-xl border border-white/5 p-4 transition-all duration-500 hover:-translate-y-1 hover:bg-[#081221]/80 hover:border-emerald-400/50 hover:shadow-[0_15px_40px_rgba(52,211,153,0.15)]">
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
                         <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
-                          <div className="flex flex-col items-center justify-center w-[72px] shrink-0 border-r border-[#1E3356]/60 pr-4">
+                          <div className="flex flex-col items-center justify-center w-[72px] shrink-0 border-r border-emerald-500/25 pr-4">
                             <span className="font-mono text-[11px] text-slate-400 font-bold uppercase tracking-widest">
                               {dayName}
                             </span>
                             <span className="font-mono text-[11px] text-slate-300 font-bold uppercase tracking-wider whitespace-nowrap">
                               {dayDate}
                             </span>
-                            <span className="font-mono text-sm text-[#33B5FF] font-black mt-1">
+                            <span className="font-mono text-sm text-emerald-400 font-black mt-1">
                               {time}
                             </span>
                           </div>
@@ -1728,7 +1735,7 @@ function PronosticsPage() {
                                 className={`tap relative grid size-10 place-items-center rounded-xl font-display text-base font-black transition-all duration-300 ${
                                   current === k
                                     ? "bg-gradient-to-t from-[#17F1A7] to-emerald-400 text-[#050A14] shadow-[0_0_15px_rgba(23,241,167,0.4)] scale-105 border-transparent"
-                                    : "bg-white/5 text-slate-300 border border-white/20 hover:border-[#33B5FF]/50 hover:text-white hover:shadow-[0_0_15px_rgba(51,181,255,0.2)] active:scale-95"
+                                    : "bg-white/5 text-slate-300 border border-white/20 hover:border-emerald-400/50 hover:text-white hover:shadow-[0_0_15px_rgba(52,211,153,0.2)] active:scale-95"
                                 }`}
                               >
                                 {k}
@@ -1793,7 +1800,7 @@ function PronosticsPage() {
               }
             `}</style>
 
-            <div className="absolute inset-0 z-0 pointer-events-none opacity-5 bg-[radial-gradient(#1E3356_1px,transparent_1px)] [background-size:16px_16px]" />
+            <div className="absolute inset-0 z-0 pointer-events-none opacity-5 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:16px_16px]" />
             <div
               className="absolute top-0 left-0 w-48 h-48 blur-[80px] pointer-events-none z-0"
               style={{ backgroundColor: theme.glow }}
@@ -1920,7 +1927,7 @@ function PronosticsPage() {
                                 value={score.home}
                                 onChange={(e) => setCoeurValue(match.id, "home", e.target.value)}
                                 placeholder="-"
-                                className="size-14 md:size-16 rounded-2xl border border-[#1E3356] bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
+                                className="size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
                               />
                               <span className="font-display text-xl text-slate-600 font-bold">
                                 —
@@ -1931,7 +1938,7 @@ function PronosticsPage() {
                                 value={score.away}
                                 onChange={(e) => setCoeurValue(match.id, "away", e.target.value)}
                                 placeholder="-"
-                                className="size-14 md:size-16 rounded-2xl border border-[#1E3356] bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
+                                className="size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
                               />
                             </div>
                             <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest">

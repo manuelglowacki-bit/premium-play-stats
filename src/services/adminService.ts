@@ -9,7 +9,7 @@ export interface Player {
   pseudo: string | null;
   username?: string | null;
   avatar_url: string | null;
-  favorite_team: string | null;
+  favorite_team_id: string | null;
   favorite_team_override?: boolean;
   is_admin: boolean;
 }
@@ -121,6 +121,14 @@ export interface AppSettings {
   timezone: string;
   maintenance_mode: boolean;
   maintenance_message: string | null;
+
+  // Gazette (Phase 3) — bascule manuelle Mercato / Rubrique du moment. Pas
+  // de date de fenêtre de mercato stockée (fixée chaque saison par la
+  // LFP/FFF, jamais inventée ici) : l'admin l'active/désactive lui-même,
+  // comme maintenance_mode. Optionnel/nullable : colonne ajoutée après coup
+  // (migration 20260817090000), peut être absente tant qu'elle n'a pas été
+  // relue au moins une fois.
+  mercato_active?: boolean | null;
 }
 
 // ============================================================
@@ -179,7 +187,7 @@ export async function setPlayerAdmin(id: string, isAdmin: boolean): Promise<void
 
 export async function updatePlayer(
   id: string,
-  patch: Partial<Pick<Player, "pseudo" | "favorite_team" | "avatar_url" | "favorite_team_override">>,
+  patch: Partial<Pick<Player, "pseudo" | "favorite_team_id" | "avatar_url" | "favorite_team_override">>,
 ): Promise<void> {
   const { error } = await supabase.from("profiles").update(patch).eq("id", id);
   if (error) throw error;
@@ -241,10 +249,41 @@ export async function getCompetitions(): Promise<Competition[]> {
 // ============================================================
 // 4. MATCHS
 // ============================================================
+// getMatches() pagine explicitement par lots de MATCHES_PAGE_SIZE lignes :
+// Supabase (PostgREST hébergé) plafonne toute requête à 1000 lignes par
+// défaut ("Max Rows", réglage serveur invisible dans ce code), et la table
+// `matches` dépasse déjà ce plafond (~1750 lignes mesurées le 2026-08-10,
+// en croissance à chaque championnat/saison synchronisé). Un simple
+// .select("*") sans pagination tronque donc silencieusement le résultat au
+// 1000e match trié par kickoff — c'est ce qui causait de faux "aucun match
+// éligible" dans l'onglet Bonus (BonusTab), qui filtre ce tableau côté
+// client. NE PAS retirer cette boucle en pensant que c'est du code mort :
+// sans elle, getMatches() re-tronque dès que la table dépasse PAGE_SIZE
+// lignes, sans la moindre erreur pour le signaler.
+//
+// (Les autres select("*") de ce fichier — teams: 18, seasons: 1,
+// competitions: 9, matchdays: 182, payments/profiles: <10 lignes, mesurés le
+// même jour — restent très en dessous du plafond et sont structurellement
+// bornés par le nombre de clubs/saisons/utilisateurs ; pas besoin de la même
+// pagination pour l'instant.)
+const MATCHES_PAGE_SIZE = 1000;
+
 export async function getMatches(): Promise<Match[]> {
-  const { data, error } = await supabase.from("matches").select("*").order("kickoff", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Match[];
+  const all: Match[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("matches")
+      .select("*")
+      .order("kickoff", { ascending: true })
+      .range(from, from + MATCHES_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as Match[];
+    all.push(...page);
+    if (page.length < MATCHES_PAGE_SIZE) break;
+    from += MATCHES_PAGE_SIZE;
+  }
+  return all;
 }
 
 export async function createMatch(match: Partial<Match>): Promise<void> {
@@ -369,7 +408,21 @@ export async function syncLigue1Matches(): Promise<SyncSummary> {
   if (!season) throw new Error("La saison 2026-2027 est introuvable dans Supabase.");
   if (!competition) throw new Error("La compétition Ligue 1 (FL1) est introuvable dans Supabase.");
 
-  const matchdaysByCode = new Map(existingMatchdays.map((m) => [String(m.code || `J${m.number}`), m]));
+  // BUG corrigé ici — cette map était construite depuis TOUTES les
+  // matchdays de la base, indexées uniquement par `code` ("J1", "J2", ...),
+  // sans filtrer par compétition/saison. Comme les championnats étrangers
+  // (syncCompetitionMatches, plus bas dans ce fichier) utilisent le même
+  // format de code, une matchday "J1" de Serie A/Bundesliga/etc. pouvait
+  // écraser celle de Ligue 1 dans cette map (Map.set garde la dernière
+  // valeur pour une clé donnée) — les matchs Ligue 1 se retrouvaient alors
+  // rattachés à la matchday d'un AUTRE championnat portant le même numéro.
+  // On scope désormais par competition_id + season_id, comme le fait déjà
+  // correctement syncCompetitionMatches.
+  const matchdaysByNumber = new Map(
+    existingMatchdays
+      .filter((m) => m.competition_id === competition.id && m.season_id === season.id)
+      .map((m) => [Number(m.number), m]),
+  );
   const matchesByFixture = new Map(existingMatches.filter((m) => m.api_fixture_id != null).map((m) => [Number(m.api_fixture_id), m]));
 
   for (const apiMatch of apiMatches) {
@@ -390,7 +443,7 @@ export async function syncLigue1Matches(): Promise<SyncSummary> {
       }
 
       const code = `J${number}`;
-      let matchday = matchdaysByCode.get(code);
+      let matchday = matchdaysByNumber.get(number);
       if (!matchday) {
         const { data, error } = await supabase.from("matchdays").insert([{
           code,
@@ -406,7 +459,7 @@ export async function syncLigue1Matches(): Promise<SyncSummary> {
         }]).select("*").single();
         if (error) throw error;
         matchday = data as Matchday;
-        matchdaysByCode.set(code, matchday);
+        matchdaysByNumber.set(number, matchday);
         summary.matchdaysCreated++;
       }
 
@@ -469,11 +522,18 @@ export async function getAvailableCompetitions(): Promise<DiscoveredCompetition[
     headers: { Accept: "application/json" },
   });
 
+  const text = await response.text();
   let body: any = null;
   try {
-    body = await response.json();
+    body = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(`L'API championnats a renvoyé une réponse invalide (${response.status}).`);
+    // Le handler ne renvoie jamais 502 lui-même pour competition=ALL (les
+    // erreurs par championnat sont tolérées, voir api/ligue1/matchs.ts) —
+    // un statut non-JSON ici vient donc de la plateforme (timeout Vercel,
+    // 502 HTML/texte...), pas de notre code. Le corps loggé permet de
+    // trancher sans deviner.
+    console.error("[getAvailableCompetitions] réponse non-JSON:", { status: response.status, body: text.slice(0, 300) });
+    throw new Error(`L'API championnats a renvoyé une réponse invalide (${response.status}) : ${text.slice(0, 120) || "(corps vide)"}`);
   }
 
   // Pour ALL, l'API accepte désormais les erreurs partielles : les championnats
