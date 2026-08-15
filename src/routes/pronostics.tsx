@@ -98,14 +98,14 @@ const BONUS_LEAGUES: Record<
   PL: {
     name: "Premier League",
     logos: [
-      "/logos/Premier league/logo.png",
+      "/logos/Premier league/premierleague.png",
       "/logos/championnats/england.png",
     ],
   },
   PD: {
     name: "Liga",
     logos: [
-      "/logos/Liga/logo.png",
+      "/logos/Liga/laliga.png",
       "/logos/championnats/spain.png",
       "https://commons.wikimedia.org/wiki/Special:Redirect/file/LaLiga_EA_Sports_2023.svg",
     ],
@@ -113,7 +113,7 @@ const BONUS_LEAGUES: Record<
   SA: {
     name: "Serie A",
     logos: [
-      "/logos/Serie A/logo.png",
+      "/logos/Serie A/seriea.png",
       "/logos/championnats/italy.png",
       "https://commons.wikimedia.org/wiki/Special:Redirect/file/Serie_A_logo_2022.svg",
     ],
@@ -121,7 +121,7 @@ const BONUS_LEAGUES: Record<
   BL1: {
     name: "Bundesliga",
     logos: [
-      "/logos/Bundesliga/logo.png",
+      "/logos/Bundesliga/bundesliga.png",
       "/logos/championnats/germany.png",
       "https://commons.wikimedia.org/wiki/Special:Redirect/file/Bundesliga_logo.svg",
     ],

@@ -345,7 +345,7 @@ function VestiairePage() {
   const voiceUserIdRef = useRef<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const messageRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -422,7 +422,7 @@ function VestiairePage() {
         const meProfile = (me as Profile | null) || null;
         setCurrentProfile(meProfile);
         setIsAdmin(
-          (meProfile?.email || user.email || "").trim().toLowerCase() ===
+          (user.email || "").trim().toLowerCase() ===
             "manuelglowacki@gmail.com"
         );
 
@@ -620,11 +620,11 @@ function VestiairePage() {
             config: { presence: { key: user.id } },
           })
           .on("presence", { event: "sync" }, () => {
-            const state = presenceChannel?.presenceState() || {};
+            const state = presenceChannel?.presenceState<OnlinePlayer>() || {};
             const players: OnlinePlayer[] = [];
 
             for (const entries of Object.values(state)) {
-              for (const entry of entries as Array<OnlinePlayer>) {
+              for (const entry of entries) {
                 if (entry?.user_id) {
                   players.push({
                     user_id: entry.user_id,
