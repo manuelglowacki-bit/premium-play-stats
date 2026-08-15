@@ -89,6 +89,7 @@ function IndexPage() {
           { data: matchdays, error: matchdaysError },
           { data: competitions, error: competitionsError },
           { data: bonusOptionsData, error: bonusOptionsError },
+          { data: favoriteHistoryData, error: favoriteHistoryError },
         ] = await Promise.all([
           supabase
             .from("profiles")
@@ -129,6 +130,9 @@ function IndexPage() {
           // pronostic bonus reste valable même si l'admin a changé la
           // sélection depuis.
           supabase.from("bonus_options").select("matchday_id, match_id"),
+          // Équipe favorite historisée par saison (Lot 4) — voir
+          // computeLeagueStats() dans leaderboardStats.ts.
+          supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
         ]);
 
         // On logue les erreurs individuelles mais on continue
@@ -138,6 +142,7 @@ function IndexPage() {
         if (settingsError) console.warn("Cagnotte non calculable (réglages) :", settingsError);
         if (competitionsError) console.warn("Erreur chargement compétitions :", competitionsError);
         if (bonusOptionsError) console.warn("Erreur chargement bonus :", bonusOptionsError);
+        if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
         if (cancelled) return;
 
@@ -201,6 +206,23 @@ function IndexPage() {
           favorite_team?: string | null;
         }>;
 
+        // Saison par journée (matchday -> season_id) et équipe favorite
+        // HISTORISÉE par saison (Lot 4) — construits AVANT computeLeagueStats
+        // pour que le barème favori (2/1/0) d'un pronostic passé utilise le
+        // club réellement favori à cette époque, jamais le favori courant.
+        const seasonByMatchdayIdMap = new Map<string, string>();
+        (matchdays || []).forEach((md: any) => {
+          if (!md?.id) return;
+          seasonByMatchdayIdMap.set(String(md.id), String(md.season_id || md.season || "unknown"));
+        });
+        const seasonByMatchdayId: Record<string, string> = Object.fromEntries(seasonByMatchdayIdMap);
+
+        const favoriteTeamBySeason: Record<string, string> = {};
+        (favoriteHistoryData ?? []).forEach((row: any) => {
+          if (!row?.user_id || !row?.season_id || !row?.favorite_team_id) return;
+          favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
+        });
+
         const {
           pointsByUser: rankingPointsByUser,
           predictionsCountByUser: rankingCountByUser,
@@ -215,6 +237,7 @@ function IndexPage() {
           predictions || [],
           allProfilesForStats,
           teamNameById,
+          { seasonByMatchdayId, favoriteTeamBySeason },
         );
 
         // On complète avec les profils manquants (pour les joueurs sans pronos)
@@ -250,15 +273,7 @@ function IndexPage() {
         // -------- Carriere multi-saisons --------
         // prediction -> match -> matchday -> season.
         // Toutes les saisons sont cumulees ; aucun reset annuel.
-        const seasonByMatchdayId = new Map<string, string>();
-
-        (matchdays || []).forEach((md: any) => {
-          if (!md?.id) return;
-          seasonByMatchdayId.set(
-            String(md.id),
-            String(md.season_id || md.season || "unknown"),
-          );
-        });
+        // (seasonByMatchdayIdMap déjà construit plus haut, réutilisé ici.)
 
         // Points réels injectés depuis computeLeagueStats (voir plus haut) —
         // aggregateCareerStatsByUser lit un champ `points` par pronostic ;
@@ -276,7 +291,7 @@ function IndexPage() {
           (matchId) => {
             const match = matchById.get(matchId);
             if (!match || !match.matchday_id) return null;
-            return seasonByMatchdayId.get(String(match.matchday_id)) ?? null;
+            return seasonByMatchdayIdMap.get(String(match.matchday_id)) ?? null;
           },
         );
 

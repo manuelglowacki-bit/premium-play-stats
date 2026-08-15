@@ -158,12 +158,17 @@ function ProfilPage() {
           supabase.from("profiles").select("id, pseudo, favorite_team_id, favorite_team"),
         ]);
 
-        const [{ data: competitionsData, error: competitionsError }, { data: bonusOptionsData, error: bonusOptionsError }] =
-          await Promise.all([
-            supabase.from("competitions").select("id, code, external_code"),
-            // Actives ET historiques — même raison que classement.tsx.
-            supabase.from("bonus_options").select("matchday_id, match_id"),
-          ]);
+        const [
+          { data: competitionsData, error: competitionsError },
+          { data: bonusOptionsData, error: bonusOptionsError },
+          { data: favoriteHistoryData, error: favoriteHistoryError },
+        ] = await Promise.all([
+          supabase.from("competitions").select("id, code, external_code"),
+          // Actives ET historiques — même raison que classement.tsx.
+          supabase.from("bonus_options").select("matchday_id, match_id"),
+          // Équipe favorite historisée par saison (Lot 4).
+          supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
+        ]);
 
         if (profileError) throw profileError;
         if (teamsError) throw teamsError;
@@ -174,6 +179,7 @@ function ProfilPage() {
         if (allProfilesError) console.warn("Erreur chargement pseudos (classement) :", allProfilesError);
         if (competitionsError) console.warn("Erreur chargement compétitions :", competitionsError);
         if (bonusOptionsError) console.warn("Erreur chargement bonus :", bonusOptionsError);
+        if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
         if (cancelled) return;
 
@@ -297,6 +303,30 @@ function ProfilPage() {
           favorite_team?: string | null;
         }>;
 
+        // Saison par journée + équipe favorite HISTORISÉE par saison
+        // (Lot 4) — construits avant computeLeagueStats pour que le barème
+        // favori (2/1/0) d'un pronostic passé utilise le club réellement
+        // favori à cette époque, jamais le favori courant du profil.
+        const matchdayIdByMatchId = new Map<string, string>();
+        (matchesData || []).forEach((match: any) => {
+          if (match.matchday_id) {
+            matchdayIdByMatchId.set(String(match.id), String(match.matchday_id));
+          }
+        });
+
+        const seasonByMatchdayId = new Map<string, string>();
+        (matchdaysData || []).forEach((md: any) => {
+          if (!md?.id) return;
+          seasonByMatchdayId.set(String(md.id), String(md.season_id || md.season || "unknown"));
+        });
+        const seasonByMatchdayIdObj: Record<string, string> = Object.fromEntries(seasonByMatchdayId);
+
+        const favoriteTeamBySeason: Record<string, string> = {};
+        (favoriteHistoryData ?? []).forEach((row: any) => {
+          if (!row?.user_id || !row?.season_id || !row?.favorite_team_id) return;
+          favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
+        });
+
         const {
           pointsByUser: rankingPointsByUser,
           predictionsCountByUser: rankingCountByUser,
@@ -311,6 +341,7 @@ function ProfilPage() {
           allPredictions,
           allProfilesForStats,
           teamNameById,
+          { seasonByMatchdayId: seasonByMatchdayIdObj, favoriteTeamBySeason },
         );
 
         // Niveau de carrière — cumulé sur TOUTES les saisons (jamais
@@ -321,19 +352,6 @@ function ProfilPage() {
         // aggregateCareerStatsByUser lit un champ `points` par pronostic, et
         // `predictions.points` n'est jamais mis à jour par l'application
         // (voir le commentaire dans leaderboardStats.ts).
-        const matchdayIdByMatchId = new Map<string, string>();
-        (matchesData || []).forEach((match: any) => {
-          if (match.matchday_id) {
-            matchdayIdByMatchId.set(String(match.id), String(match.matchday_id));
-          }
-        });
-
-        const seasonByMatchdayId = new Map<string, string>();
-        (matchdaysData || []).forEach((md: any) => {
-          if (!md?.id) return;
-          seasonByMatchdayId.set(String(md.id), String(md.season_id || md.season || "unknown"));
-        });
-
         const predictionsWithRealPoints = allPredictions.map((p) => ({
           ...p,
           points: pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0,

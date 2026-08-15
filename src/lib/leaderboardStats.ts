@@ -94,6 +94,13 @@ export type LeagueStats = {
  *   sélection depuis, voir classement.tsx pour le détail du bug corrigé).
  * @param teamNameById Nom d'équipe par id (pour le repli de détection du
  *   favori par nom quand le team_id est absent/incohérent).
+ * @param history Historisation de l'équipe favorite par saison (Lot 4) —
+ *   entièrement OPTIONNELLE, rétrocompatible : un appelant qui ne la passe
+ *   pas obtient EXACTEMENT le comportement d'avant (favori = toujours
+ *   `profiles.favorite_team_id` courant, quelle que soit la saison du
+ *   match). Voir `user_season_favorite_teams` (migration Lot 4) : sans
+ *   ligne historique pour `${user_id}:${season_id}`, repli automatique
+ *   sur le favori courant — jamais d'invention de valeur.
  */
 export function computeLeagueStats(
   ligue1Matches: LeagueMatch[],
@@ -102,7 +109,16 @@ export function computeLeagueStats(
   predictions: LeaguePrediction[],
   profiles: LeagueProfile[],
   teamNameById: Record<string, string | undefined>,
+  history?: {
+    /** matchday_id -> season_id (ou clé de saison de repli). */
+    seasonByMatchdayId?: Record<string, string | undefined>;
+    /** clé `${user_id}:${season_id}` -> favorite_team_id historisé. */
+    favoriteTeamBySeason?: Record<string, string | undefined>;
+  },
 ): LeagueStats {
+  const seasonByMatchdayId = history?.seasonByMatchdayId ?? {};
+  const favoriteTeamBySeason = history?.favoriteTeamBySeason ?? {};
+
   const matchById = new Map<string, LeagueMatch>();
   [...ligue1Matches, ...bonusMatches].forEach((m) => matchById.set(String(m.id), m));
 
@@ -203,13 +219,25 @@ export function computeLeagueStats(
       return;
     }
 
+    // Favori HISTORIQUE de la saison DU MATCH — jamais celui d'une autre
+    // saison. Repli sur le favori courant du profil uniquement si aucune
+    // ligne user_season_favorite_teams n'existe pour cette saison (saison
+    // en cours avant toute écriture, données antérieures à cette table).
+    // Ne recalcule JAMAIS une saison passée avec le favori actuel dès
+    // qu'un historique existe pour elle.
+    const matchSeasonId = match.matchday_id ? seasonByMatchdayId[String(match.matchday_id)] : undefined;
+    const historicalFavoriteTeamId = matchSeasonId
+      ? favoriteTeamBySeason[`${userId}:${matchSeasonId}`]
+      : undefined;
+    const effectiveFavoriteTeamId = historicalFavoriteTeamId ?? profile.favorite_team_id;
+
     const isFavorite = isFavoriteMatch({
       homeTeamId: match.home_team_id,
       awayTeamId: match.away_team_id,
       homeTeamName: match.home_team,
       awayTeamName: match.away_team,
-      favoriteTeamId: profile.favorite_team_id,
-      favoriteTeamNames: [profile.favorite_team, teamNameById[String(profile.favorite_team_id ?? "")]],
+      favoriteTeamId: effectiveFavoriteTeamId,
+      favoriteTeamNames: [profile.favorite_team, teamNameById[String(effectiveFavoriteTeamId ?? "")]],
     });
 
     const { points: pts } = scoreLigue1Prediction({

@@ -310,6 +310,8 @@ function StatsPage() {
         { data: allPredictionsData, error: predictionsError },
         { data: profiles, error: profilesError },
         { data: bonusOptionsData, error: bonusOptionsError },
+        { data: matchdaysData, error: matchdaysError },
+        { data: favoriteHistoryData, error: favoriteHistoryError },
       ] = await Promise.all([
         supabase
           .from("matches")
@@ -330,12 +332,17 @@ function StatsPage() {
           .from("profiles")
           .select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
         supabase.from("bonus_options").select("matchday_id, match_id"),
+        // Saison par journée + équipe favorite historisée par saison (Lot 4).
+        supabase.from("matchdays").select("id, season_id, season"),
+        supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
       ]);
 
       if (matchesError) throw matchesError;
       if (predictionsError) throw predictionsError;
       if (profilesError) console.warn("Erreur chargement profils (Top joueurs) :", profilesError);
       if (bonusOptionsError) console.warn("Erreur chargement bonus (recalcul points) :", bonusOptionsError);
+      if (matchdaysError) console.warn("Erreur chargement journées (favori historique) :", matchdaysError);
+      if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
       const finishedMatches = (matches || []) as MatchRow[];
       const allPredictions = (allPredictionsData || []) as PredictionRow[];
@@ -385,6 +392,21 @@ function StatsPage() {
 
       const allProfilesForStats = (profiles || []) as LeagueProfile[];
 
+      // Saison par journée + équipe favorite HISTORISÉE par saison (Lot 4)
+      // — même construction que Classement/Accueil/Profil, pour que le
+      // barème favori (2/1/0) d'un pronostic passé utilise le club
+      // réellement favori à cette époque.
+      const seasonByMatchdayId: Record<string, string> = {};
+      (matchdaysData ?? []).forEach((md: any) => {
+        if (!md?.id) return;
+        seasonByMatchdayId[String(md.id)] = String(md.season_id || md.season || "unknown");
+      });
+      const favoriteTeamBySeason: Record<string, string> = {};
+      (favoriteHistoryData ?? []).forEach((row: any) => {
+        if (!row?.user_id || !row?.season_id || !row?.favorite_team_id) return;
+        favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
+      });
+
       const leagueStats = computeLeagueStats(
         ligue1MatchesForScoring,
         bonusMatchesForScoring,
@@ -392,6 +414,7 @@ function StatsPage() {
         allPredictions,
         allProfilesForStats,
         {},
+        { seasonByMatchdayId, favoriteTeamBySeason },
       );
 
       const realPointsFor = (prediction: PredictionRow) =>

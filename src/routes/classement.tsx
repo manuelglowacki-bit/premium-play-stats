@@ -181,6 +181,7 @@ function ClassementPage() {
           { data: teamsData, error: teamsError },
           { data: settingsData, error: settingsError },
           { data: matchdaysData, error: matchdaysError },
+          { data: favoriteHistoryData, error: favoriteHistoryError },
         ] = await Promise.all([
           supabase.from("profiles").select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
           supabase.from("teams").select("id, name, short_name, logo_url"),
@@ -189,12 +190,22 @@ function ClassementPage() {
             .from("matchdays")
             .select("id, number, code, season, season_id, competition_id")
             .order("number", { ascending: true }),
+          // Équipe favorite HISTORISÉE par saison (Lot 4) — pour que le
+          // barème favori (2/1/0) d'un pronostic passé utilise toujours le
+          // club qui était réellement favori À CETTE ÉPOQUE, jamais le
+          // favori courant du profil. Erreur non bloquante : sans cette
+          // donnée, repli automatique sur le favori courant (comportement
+          // d'avant), voir computeLeagueStats().
+          supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
         ]);
 
         if (cancelled) return;
         if (profilesError) throw profilesError;
         if (teamsError) throw teamsError;
         if (settingsError) throw settingsError;
+        if (favoriteHistoryError) {
+          console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
+        }
         if (matchdaysError) throw matchdaysError;
 
         const seasonName = settingsData?.season ?? "2026-2027";
@@ -362,8 +373,31 @@ function ClassementPage() {
           teamNameById[id] = team.name;
         });
 
+        // Résolution de saison par journée — sur TOUTES les journées connues
+        // (matchdaysData, non filtré), pas seulement ligue1Matchdays : un
+        // match bonus a son propre matchday_id, potentiellement dans une
+        // autre compétition (PL/PD/SA/BL1) mais toujours rattaché à une
+        // saison réelle (season_id). Utilisé à la fois par computeLeagueStats
+        // (favori historique, Lot 4) et par la carrière plus bas.
+        const seasonByMatchdayIdForCareer = new Map<string, string>();
+        (matchdaysData ?? []).forEach((md: any) => {
+          if (!md?.id) return;
+          seasonByMatchdayIdForCareer.set(String(md.id), String(md.season_id || md.season || "unknown"));
+        });
+        const seasonByMatchdayIdObj: Record<string, string> = Object.fromEntries(seasonByMatchdayIdForCareer);
+
+        // Équipe favorite historisée par saison (Lot 4) — clé `${user_id}:${season_id}`.
+        const favoriteTeamBySeason: Record<string, string> = {};
+        (favoriteHistoryData ?? []).forEach((row: any) => {
+          if (!row?.user_id || !row?.season_id || !row?.favorite_team_id) return;
+          favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
+        });
+
         const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, pointsByMatchday, pointsByPredictionKey } =
-          computeLeagueStats(matches, bonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById);
+          computeLeagueStats(matches, bonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
+            seasonByMatchdayId: seasonByMatchdayIdObj,
+            favoriteTeamBySeason,
+          });
 
         let topMatchday: { number: number; points: number } | null = null;
         Object.entries(pointsByMatchday).forEach(([dayId, total]) => {
@@ -384,22 +418,9 @@ function ClassementPage() {
         // du classement). Tant qu'une seule saison existe, carrière = saison
         // courante, donc ce calcul est exact dès aujourd'hui. Le jour où une
         // saison 2 démarre, cette entrée devra être élargie à un jeu de
-        // données multi-saisons (voir proposition de schéma
-        // `user_season_favorite_teams` — nécessaire pour historiser
-        // l'équipe favorite par saison, seul vrai chaînon manquant).
+        // données multi-saisons.
         const matchByIdForCareer = new Map<string, any>();
         [...matches, ...bonusMatches].forEach((m: any) => matchByIdForCareer.set(String(m.id), m));
-
-        // Résolution de saison par journée — sur TOUTES les journées connues
-        // (matchdaysData, non filtré), pas seulement ligue1Matchdays : un
-        // match bonus a son propre matchday_id, potentiellement dans une
-        // autre compétition (PL/PD/SA/BL1) mais toujours rattaché à une
-        // saison réelle (season_id).
-        const seasonByMatchdayIdForCareer = new Map<string, string>();
-        (matchdaysData ?? []).forEach((md: any) => {
-          if (!md?.id) return;
-          seasonByMatchdayIdForCareer.set(String(md.id), String(md.season_id || md.season || "unknown"));
-        });
 
         const isExactPrediction = (p: any) => {
           if (p.home_prediction == null || p.away_prediction == null) return false;
