@@ -311,11 +311,6 @@ function PronosticsPage() {
   const [bonusOptions, setBonusOptions] = useState<BonusOptionRow[]>([]);
   const [bonusSelection, setBonusSelection] = useState<string | null>(null);
   const [bonusScores, setBonusScores] = useState<Record<string, BonusScore>>({});
-  // Source persistante de secours pour les bonus : une entrée par journée.
-  // Format: { [matchdayId]: { matchId, home, away } }
-  const [savedBonusByDay, setSavedBonusByDay] = useState<
-    Record<string, { matchId: string; home: string; away: string }>
-  >({});
   const [bonusLoading, setBonusLoading] = useState(false);
   const [bonusError, setBonusError] = useState<string | null>(null);
   // Pronostics déjà enregistrés par le joueur, tels que renvoyés par
@@ -443,39 +438,13 @@ function PronosticsPage() {
           // match_id ; la classification (pick / coeur / bonus) se fait dans
           // l'effet dédié plus bas, une fois `matches`/`bonusOptions`/
           // `favoriteTeamId` disponibles.
-          const [
-            { data: predictionsData, error: predictionsLoadError },
-            { data: storageData, error: storageLoadError },
-          ] = await Promise.all([
-            supabase
-              .from("predictions")
-              .select("match_id, home_prediction, away_prediction")
-              .eq("user_id", user.id),
-            supabase
-              .from("user_prono_storage")
-              .select("storage_value")
-              .eq("user_id", user.id)
-              .eq("storage_key", "prono_bonus_bundle")
-              .maybeSingle(),
-          ]);
+          const { data: predictionsData, error: predictionsLoadError } = await supabase
+            .from("predictions")
+            .select("match_id, home_prediction, away_prediction")
+            .eq("user_id", user.id);
 
           if (predictionsLoadError) {
             console.warn("Erreur chargement predictions :", predictionsLoadError);
-          }
-          if (storageLoadError) {
-            console.warn("Erreur chargement user_prono_storage :", storageLoadError);
-          }
-
-          if (!cancelled && storageData?.storage_value) {
-            try {
-              const parsed = JSON.parse(String(storageData.storage_value));
-              const storedBonus = parsed?.bonusScoresByJournee;
-              if (storedBonus && typeof storedBonus === "object") {
-                setSavedBonusByDay(storedBonus);
-              }
-            } catch (storageParseError) {
-              console.warn("Impossible de lire bonusScoresByJournee :", storageParseError);
-            }
           }
 
           if (!cancelled && predictionsData) {
@@ -562,23 +531,6 @@ function PronosticsPage() {
     let nextBonusSelection: string | null = null;
     let nextBonusScores: Record<string, BonusScore> = {};
 
-    // Le stockage par journée est prioritaire pour les bonus.
-    const storedForDay = selectedMatchdayId ? savedBonusByDay[selectedMatchdayId] : null;
-    if (
-      storedForDay?.matchId &&
-      currentDayBonusIds.has(storedForDay.matchId) &&
-      storedForDay.home !== "" &&
-      storedForDay.away !== ""
-    ) {
-      nextBonusSelection = storedForDay.matchId;
-      nextBonusScores = {
-        [storedForDay.matchId]: {
-          home: String(storedForDay.home),
-          away: String(storedForDay.away),
-        },
-      };
-    }
-
     Object.entries(savedPredictions).forEach(([matchId, score]) => {
       if (currentDayBonusIds.has(matchId)) {
         // Ne remplace jamais le bonus sauvegardé pour la journée courante.
@@ -609,7 +561,7 @@ function PronosticsPage() {
     setCoeurScores(nextCoeurScores);
     if (nextBonusSelection) setBonusSelection(nextBonusSelection);
     setBonusScores(nextBonusScores);
-  }, [savedPredictions, matches, bonusOptions, favoriteTeamId, selectedMatchdayId, savedBonusByDay]);
+  }, [savedPredictions, matches, bonusOptions, favoriteTeamId, selectedMatchdayId]);
 
   const teamsById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
 
@@ -990,70 +942,6 @@ function PronosticsPage() {
                 cleanupError.message,
               );
             }
-          }
-
-          // Stockage secondaire par journée pour faciliter la restauration UI.
-          // Il ne doit JAMAIS bloquer la sauvegarde principale.
-          const nextBonusByDay = {
-            ...savedBonusByDay,
-            [selectedMatchdayId]: {
-              matchId: bonusRow.match_id,
-              home: String(bonusRow.home_prediction),
-              away: String(bonusRow.away_prediction),
-            },
-          };
-
-          try {
-            const { data: existingStorage, error: storageReadError } = await supabase
-              .from("user_prono_storage")
-              .select("storage_value")
-              .eq("user_id", user.id)
-              .eq("storage_key", "prono_bonus_bundle")
-              .maybeSingle();
-
-            if (storageReadError) {
-              console.warn(
-                "Lecture stockage bonus secondaire impossible :",
-                storageReadError.message,
-              );
-            } else {
-              let existingBundle: Record<string, any> = {};
-
-              if (existingStorage?.storage_value) {
-                try {
-                  existingBundle =
-                    JSON.parse(String(existingStorage.storage_value)) || {};
-                } catch {
-                  existingBundle = {};
-                }
-              }
-
-              const { error: storageWriteError } = await supabase
-                .from("user_prono_storage")
-                .upsert(
-                  {
-                    user_id: user.id,
-                    storage_key: "prono_bonus_bundle",
-                    storage_value: JSON.stringify({
-                      ...existingBundle,
-                      bonusScoresByJournee: nextBonusByDay,
-                      savedAt: new Date().toISOString(),
-                    }),
-                  },
-                  { onConflict: "user_id, storage_key" },
-                );
-
-              if (storageWriteError) {
-                console.warn(
-                  "Écriture stockage bonus secondaire impossible :",
-                  storageWriteError.message,
-                );
-              } else {
-                setSavedBonusByDay(nextBonusByDay);
-              }
-            }
-          } catch (storageError) {
-            console.warn("Stockage secondaire bonus ignoré :", storageError);
           }
         }
       }
