@@ -14,7 +14,7 @@ import { AppShell } from "@/components/prono/AppShell";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { matchday as currentMatchday } from "@/lib/prono-data";
-import { calculateCareerScore } from "@/lib/careerLevel";
+import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLevel";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
@@ -219,37 +219,6 @@ function ClassementPage() {
         // à une journée de la saison courante. On garde aussi les journées
         // explicitement marquées 2026-2027.
         const matchdayIds = ligue1Matchdays.map((md: any) => String(md.id));
-        // CARRIERE MULTI-SAISON
-        const [
-          { data: careerPredictionsData, error: careerPredictionsError },
-          { data: careerMatchesData, error: careerMatchesError },
-        ] = await Promise.all([
-          supabase.from("predictions").select("user_id,match_id,points,home_prediction,away_prediction"),
-          supabase.from("matches").select("id,home_score,away_score,finished").eq("finished", true),
-        ]);
-
-        if (careerPredictionsError) throw careerPredictionsError;
-        if (careerMatchesError) throw careerMatchesError;
-
-        const careerMatchById = new Map<string, any>();
-        (careerMatchesData ?? []).forEach((m: any) => careerMatchById.set(String(m.id), m));
-
-        const careerAccum: Record<string, { points: number; exactScores: number }> = {};
-        (careerPredictionsData ?? []).forEach((pred: any) => {
-          const uid = String(pred.user_id ?? "");
-          if (!uid) return;
-          const match = careerMatchById.get(String(pred.match_id));
-          if (!match) return;
-          if (!careerAccum[uid]) careerAccum[uid] = { points: 0, exactScores: 0 };
-          careerAccum[uid].points += Number(pred.points ?? 0);
-          if (
-            match.home_score != null && match.away_score != null &&
-            pred.home_prediction != null && pred.away_prediction != null &&
-            Number(pred.home_prediction) === Number(match.home_score) &&
-            Number(pred.away_prediction) === Number(match.away_score)
-          ) careerAccum[uid].exactScores += 1;
-        });
-        if (!cancelled) setCareerStatsByUser(careerAccum);
 
         if (matchdayIds.length === 0) {
           if (!cancelled) {
@@ -393,7 +362,7 @@ function ClassementPage() {
           teamNameById[id] = team.name;
         });
 
-        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, pointsByMatchday } =
+        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, pointsByMatchday, pointsByPredictionKey } =
           computeLeagueStats(matches, bonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById);
 
         let topMatchday: { number: number; points: number } | null = null;
@@ -404,6 +373,59 @@ function ClassementPage() {
           }
         });
 
+        // CARRIÈRE — même source unique que index.tsx/profil.tsx
+        // (aggregateCareerStatsByUser, src/lib/careerLevel.ts), plus de
+        // boucle séparée lisant `predictions.points` (colonne jamais mise à
+        // jour, toujours 0 — c'était un vrai bug : niveau/titre de carrière
+        // affichés ici tombaient systématiquement à 0 point).
+        //
+        // LIMITE ACTUELLE ASSUMÉE : `matches`/`bonusMatches`/`predictionsData`
+        // ci-dessus sont déjà filtrés sur la SAISON COURANTE (comme le reste
+        // du classement). Tant qu'une seule saison existe, carrière = saison
+        // courante, donc ce calcul est exact dès aujourd'hui. Le jour où une
+        // saison 2 démarre, cette entrée devra être élargie à un jeu de
+        // données multi-saisons (voir proposition de schéma
+        // `user_season_favorite_teams` — nécessaire pour historiser
+        // l'équipe favorite par saison, seul vrai chaînon manquant).
+        const matchByIdForCareer = new Map<string, any>();
+        [...matches, ...bonusMatches].forEach((m: any) => matchByIdForCareer.set(String(m.id), m));
+
+        // Résolution de saison par journée — sur TOUTES les journées connues
+        // (matchdaysData, non filtré), pas seulement ligue1Matchdays : un
+        // match bonus a son propre matchday_id, potentiellement dans une
+        // autre compétition (PL/PD/SA/BL1) mais toujours rattaché à une
+        // saison réelle (season_id).
+        const seasonByMatchdayIdForCareer = new Map<string, string>();
+        (matchdaysData ?? []).forEach((md: any) => {
+          if (!md?.id) return;
+          seasonByMatchdayIdForCareer.set(String(md.id), String(md.season_id || md.season || "unknown"));
+        });
+
+        const isExactPrediction = (p: any) => {
+          if (p.home_prediction == null || p.away_prediction == null) return false;
+          const m = matchByIdForCareer.get(String(p.match_id));
+          if (!m || m.home_score == null || m.away_score == null) return false;
+          return (
+            Number(p.home_prediction) === Number(m.home_score) &&
+            Number(p.away_prediction) === Number(m.away_score)
+          );
+        };
+
+        const predictionsWithRealPoints = (predictionsData ?? []).map((p: any) => ({
+          ...p,
+          points: pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0,
+        }));
+
+        const careerByUser = aggregateCareerStatsByUser(
+          predictionsWithRealPoints,
+          isExactPrediction,
+          (matchId) => {
+            const m = matchByIdForCareer.get(matchId);
+            if (!m || !m.matchday_id) return null;
+            return seasonByMatchdayIdForCareer.get(String(m.matchday_id)) ?? null;
+          },
+        );
+
         if (!cancelled) {
           setPlayers(profiles);
           setPointsByUser(points);
@@ -411,6 +433,7 @@ function ClassementPage() {
           setExactScoresByUser(exactScores);
           setRegularitySuccessByUser(regularitySuccess);
           setBestMatchday(topMatchday);
+          setCareerStatsByUser(Object.fromEntries(careerByUser));
         }
       } catch (error) {
         console.error("Erreur chargement/calcul du classement :", error);
@@ -421,6 +444,7 @@ function ClassementPage() {
           setExactScoresByUser({});
           setRegularitySuccessByUser({});
           setBestMatchday(null);
+          setCareerStatsByUser({});
         }
       }
     }
