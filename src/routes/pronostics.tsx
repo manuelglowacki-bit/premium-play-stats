@@ -341,6 +341,11 @@ function PronosticsPage() {
   // une fois celle-ci terminée, jamais perdue).
   // ============================================================
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // Détail de la dernière erreur ("Ligue 1 : ..." / "Bonus : ..." / les deux)
+  // — permet de distinguer un échec spécifique au bonus d'un échec général,
+  // au lieu d'un "Échec de l'enregistrement" générique qui masquerait lequel
+  // des deux upserts (Ligue 1 ou bonus, désormais indépendants) a échoué.
+  const [autosaveErrorMessage, setAutosaveErrorMessage] = useState<string | null>(null);
   const isSavingRef = useRef(false);
   const pendingResaveRef = useRef(false);
   const [, setLockTick] = useState(0);
@@ -657,6 +662,7 @@ function PronosticsPage() {
     setSaved(false);
     setJustSaved(false);
     setAutosaveStatus("idle");
+    setAutosaveErrorMessage(null);
   }, [selectedMatchdayId]);
 
   const matchesForDay = useMemo(
@@ -739,10 +745,20 @@ function PronosticsPage() {
   const selectedBonusCandidate =
     bonusCandidates.find((candidate) => candidate.match.id === bonusSelection) ?? null;
 
+  // BUG corrigé ici (cause du "⚠ Échec de l'enregistrement" systématique sur
+  // le bonus) : juste après avoir choisi un nouveau match bonus (selectBonusMatch),
+  // bonusScores[matchId] n'existe pas encore (aucun score saisi). L'ancienne
+  // condition lisait `bonusScores[id]?.home !== ""`, qui vaut `undefined !== ""`
+  // → `true` — bonusComplete devenait donc vrai à tort, AVANT toute saisie de
+  // score. savePronosticsCore accédait ensuite à `bonusScores[id].home` sur un
+  // objet `undefined` → TypeError → l'autosave du bonus échouait à chaque fois
+  // qu'on changeait de match. Il faut d'abord vérifier que l'objet score existe.
+  const selectedBonusScore = selectedBonusCandidate ? bonusScores[selectedBonusCandidate.match.id] : undefined;
   const bonusComplete = Boolean(
     selectedBonusCandidate &&
-      bonusScores[selectedBonusCandidate.match.id]?.home !== "" &&
-      bonusScores[selectedBonusCandidate.match.id]?.away !== "",
+      selectedBonusScore &&
+      selectedBonusScore.home !== "" &&
+      selectedBonusScore.away !== "",
   );
 
   const filled =
@@ -897,137 +913,164 @@ function PronosticsPage() {
         away_prediction: Number(s.away),
       }));
 
-    const bonusRows =
-      selectedBonusCandidate && bonusComplete && isOpen(selectedBonusCandidate.match.id)
-        ? [{
+    // BONUS — `selectedBonusScore` (défini plus haut, à côté de bonusComplete)
+    // est LE score de CE joueur pour LE match bonus actuellement sélectionné.
+    // Ne jamais relire `bonusScores[...]` directement ici sans passer par
+    // cette variable déjà garantie non-undefined par `bonusComplete`.
+    const bonusReady = !!selectedBonusCandidate && bonusComplete && isOpen(selectedBonusCandidate.match.id);
+    const bonusRow =
+      bonusReady && selectedBonusScore
+        ? {
             user_id: user.id,
-            match_id: selectedBonusCandidate.match.id,
-            home_prediction: Number(
-              bonusScores[selectedBonusCandidate.match.id].home,
-            ),
-            away_prediction: Number(
-              bonusScores[selectedBonusCandidate.match.id].away,
-            ),
-          }]
-        : [];
+            match_id: selectedBonusCandidate!.match.id,
+            home_prediction: Number(selectedBonusScore.home),
+            away_prediction: Number(selectedBonusScore.away),
+          }
+        : null;
 
-    const rowsToSave = [...pickRows, ...coeurRows, ...bonusRows];
+    // SOURCE DE VÉRITÉ : predictions. Deux upserts DISTINCTS (Ligue 1 + club
+    // de cœur d'un côté, bonus de l'autre) plutôt qu'un seul appel combiné :
+    // une erreur sur le bonus (match encore verrouillé entre-temps, conflit
+    // réseau...) ne doit jamais empêcher la sauvegarde des matchs Ligue 1
+    // déjà valides, et inversement.
+    const l1Rows = [...pickRows, ...coeurRows];
+    let l1Error: string | null = null;
+    let bonusError: string | null = null;
 
-    // SOURCE DE VÉRITÉ : predictions.
-    // Le bonus choisi est donc réellement enregistré avec le même mécanisme
-    // que les autres pronostics. Une panne du stockage secondaire ne peut
-    // plus faire échouer la validation.
-    if (rowsToSave.length > 0) {
-      const { error: predictionsError } = await supabase
+    if (l1Rows.length > 0) {
+      const { error } = await supabase
         .from("predictions")
-        .upsert(rowsToSave, { onConflict: "user_id, match_id" });
-
-      if (predictionsError) {
-        throw new Error(
-          `Erreur Supabase predictions : ${predictionsError.message}`,
-        );
-      }
+        .upsert(l1Rows, { onConflict: "user_id, match_id" });
+      if (error) l1Error = error.message;
     }
 
-    // Un seul bonus par journée :
-    // on nettoie uniquement les 3 autres candidats de LA JOURNÉE courante.
-    if (selectedMatchdayId && selectedBonusCandidate && bonusComplete && isOpen(selectedBonusCandidate.match.id)) {
-      const currentDayBonusIds = bonusOptions
-        .filter((option) => option.matchday_id === selectedMatchdayId)
-        .map((option) => option.match_id)
-        .filter((id): id is string => Boolean(id));
+    if (bonusRow) {
+      const { error } = await supabase
+        .from("predictions")
+        .upsert([bonusRow], { onConflict: "user_id, match_id" });
 
-      const otherBonusIds = currentDayBonusIds.filter(
-        (id) => id !== selectedBonusCandidate.match.id,
-      );
+      if (error) {
+        bonusError = error.message;
+        // Erreur Supabase réelle, jamais masquée par un message générique.
+        console.error("Erreur Supabase predictions (bonus) :", {
+          match_id: bonusRow.match_id,
+          code: (error as { code?: string }).code,
+          message: error.message,
+          details: (error as { details?: string }).details,
+          hint: (error as { hint?: string }).hint,
+        });
+      } else {
+        // Le bonus est sauvegardé : SEULEMENT MAINTENANT on nettoie les 3
+        // autres candidats de LA JOURNÉE courante. Ne jamais supprimer
+        // l'ancienne sélection avant confirmation que la nouvelle est bien
+        // enregistrée (sinon un joueur qui change de bonus pourrait se
+        // retrouver sans aucun bonus si l'écriture avait échoué).
+        if (selectedMatchdayId) {
+          const currentDayBonusIds = bonusOptions
+            .filter((option) => option.matchday_id === selectedMatchdayId)
+            .map((option) => option.match_id)
+            .filter((id): id is string => Boolean(id));
 
-      if (otherBonusIds.length > 0) {
-        const { error: cleanupError } = await supabase
-          .from("predictions")
-          .delete()
-          .eq("user_id", user.id)
-          .in("match_id", otherBonusIds);
-
-        // Le bonus sélectionné est déjà sauvegardé.
-        // Un éventuel refus RLS du nettoyage ne doit pas annuler la validation.
-        if (cleanupError) {
-          console.warn(
-            "Bonus enregistré, mais nettoyage des autres candidats impossible :",
-            cleanupError.message,
+          const otherBonusIds = currentDayBonusIds.filter(
+            (id) => id !== bonusRow.match_id,
           );
-        }
-      }
 
-      // Stockage secondaire par journée pour faciliter la restauration UI.
-      // Il ne doit JAMAIS bloquer la sauvegarde principale.
-      const nextBonusByDay = {
-        ...savedBonusByDay,
-        [selectedMatchdayId]: {
-          matchId: selectedBonusCandidate.match.id,
-          home: String(bonusScores[selectedBonusCandidate.match.id].home),
-          away: String(bonusScores[selectedBonusCandidate.match.id].away),
-        },
-      };
+          if (otherBonusIds.length > 0) {
+            const { error: cleanupError } = await supabase
+              .from("predictions")
+              .delete()
+              .eq("user_id", user.id)
+              .in("match_id", otherBonusIds);
 
-      try {
-        const { data: existingStorage, error: storageReadError } = await supabase
-          .from("user_prono_storage")
-          .select("storage_value")
-          .eq("user_id", user.id)
-          .eq("storage_key", "prono_bonus_bundle")
-          .maybeSingle();
-
-        if (storageReadError) {
-          console.warn(
-            "Lecture stockage bonus secondaire impossible :",
-            storageReadError.message,
-          );
-        } else {
-          let existingBundle: Record<string, any> = {};
-
-          if (existingStorage?.storage_value) {
-            try {
-              existingBundle =
-                JSON.parse(String(existingStorage.storage_value)) || {};
-            } catch {
-              existingBundle = {};
+            // Le bonus sélectionné est déjà sauvegardé.
+            // Un éventuel refus RLS du nettoyage ne doit pas annuler la validation.
+            if (cleanupError) {
+              console.warn(
+                "Bonus enregistré, mais nettoyage des autres candidats impossible :",
+                cleanupError.message,
+              );
             }
           }
 
-          const { error: storageWriteError } = await supabase
-            .from("user_prono_storage")
-            .upsert(
-              {
-                user_id: user.id,
-                storage_key: "prono_bonus_bundle",
-                storage_value: JSON.stringify({
-                  ...existingBundle,
-                  bonusScoresByJournee: nextBonusByDay,
-                  savedAt: new Date().toISOString(),
-                }),
-              },
-              { onConflict: "user_id, storage_key" },
-            );
+          // Stockage secondaire par journée pour faciliter la restauration UI.
+          // Il ne doit JAMAIS bloquer la sauvegarde principale.
+          const nextBonusByDay = {
+            ...savedBonusByDay,
+            [selectedMatchdayId]: {
+              matchId: bonusRow.match_id,
+              home: String(bonusRow.home_prediction),
+              away: String(bonusRow.away_prediction),
+            },
+          };
 
-          if (storageWriteError) {
-            console.warn(
-              "Écriture stockage bonus secondaire impossible :",
-              storageWriteError.message,
-            );
-          } else {
-            setSavedBonusByDay(nextBonusByDay);
+          try {
+            const { data: existingStorage, error: storageReadError } = await supabase
+              .from("user_prono_storage")
+              .select("storage_value")
+              .eq("user_id", user.id)
+              .eq("storage_key", "prono_bonus_bundle")
+              .maybeSingle();
+
+            if (storageReadError) {
+              console.warn(
+                "Lecture stockage bonus secondaire impossible :",
+                storageReadError.message,
+              );
+            } else {
+              let existingBundle: Record<string, any> = {};
+
+              if (existingStorage?.storage_value) {
+                try {
+                  existingBundle =
+                    JSON.parse(String(existingStorage.storage_value)) || {};
+                } catch {
+                  existingBundle = {};
+                }
+              }
+
+              const { error: storageWriteError } = await supabase
+                .from("user_prono_storage")
+                .upsert(
+                  {
+                    user_id: user.id,
+                    storage_key: "prono_bonus_bundle",
+                    storage_value: JSON.stringify({
+                      ...existingBundle,
+                      bonusScoresByJournee: nextBonusByDay,
+                      savedAt: new Date().toISOString(),
+                    }),
+                  },
+                  { onConflict: "user_id, storage_key" },
+                );
+
+              if (storageWriteError) {
+                console.warn(
+                  "Écriture stockage bonus secondaire impossible :",
+                  storageWriteError.message,
+                );
+              } else {
+                setSavedBonusByDay(nextBonusByDay);
+              }
+            }
+          } catch (storageError) {
+            console.warn("Stockage secondaire bonus ignoré :", storageError);
           }
         }
-      } catch (storageError) {
-        console.warn("Stockage secondaire bonus ignoré :", storageError);
       }
     }
 
     // Signale aux autres pages (classement notamment) qu'un pronostic vient
     // de changer — mêmes événements que handleReset ci-dessous, jamais
-    // émis jusqu'ici par la sauvegarde elle-même.
+    // émis jusqu'ici par la sauvegarde elle-même. Émis même en cas d'échec
+    // partiel : la partie qui a réussi doit quand même se propager.
     window.dispatchEvent(new CustomEvent("pronos-updated"));
     window.dispatchEvent(new CustomEvent("pronos-saved"));
+
+    if (l1Error && bonusError) {
+      throw new Error(`Ligue 1 : ${l1Error} · Bonus : ${bonusError}`);
+    }
+    if (l1Error) throw new Error(`Ligue 1 : ${l1Error}`);
+    if (bonusError) throw new Error(`Bonus : ${bonusError}`);
   };
 
   /** 1ère tentative → échec → retente après 1s → retente après 3s, puis abandonne
@@ -1065,12 +1108,14 @@ function PronosticsPage() {
     try {
       await saveWithRetry();
       setAutosaveStatus("saved");
+      setAutosaveErrorMessage(null);
       setSaved(true);
       setJustSaved(true);
       window.setTimeout(() => setJustSaved(false), 1600);
     } catch (err) {
       console.error("Erreur lors de l'enregistrement automatique des pronos :", err);
       setAutosaveStatus("error");
+      setAutosaveErrorMessage(err instanceof Error ? err.message : String(err ?? "Erreur inconnue"));
     } finally {
       isSavingRef.current = false;
       if (pendingResaveRef.current) {
@@ -1472,7 +1517,8 @@ function PronosticsPage() {
                       )}
                       {autosaveStatus === "error" && (
                         <>
-                          <AlertTriangle className="size-3" /> Échec de l'enregistrement
+                          <AlertTriangle className="size-3" />
+                          {autosaveErrorMessage ? `Échec — ${autosaveErrorMessage}` : "Échec de l'enregistrement"}
                         </>
                       )}
                     </span>
