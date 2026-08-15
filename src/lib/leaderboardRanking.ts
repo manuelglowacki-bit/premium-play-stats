@@ -1,0 +1,42 @@
+/**
+ * Classement officiel de l'application — tri + attribution du rang.
+ *
+ * Source unique de vérité : le même algorithme que celui utilisé sur la
+ * page Classement (src/routes/classement.tsx), extrait ici pour être
+ * réutilisé tel quel par l'Accueil (podium du tableau de bord) et le Profil
+ * ("#N du classement") — un joueur donné doit toujours avoir le MÊME rang,
+ * quelle que soit la page qui l'affiche.
+ *
+ * Départage strict, dans cet ordre :
+ *   1) points (décroissant)
+ *   2) scores exacts (décroissant)
+ *   3) régularité — ratio pronostics réussis / pronostics joués (décroissant)
+ *   4) pseudo (alphabétique) — départage final déterministe
+ * Rang strictement séquentiel (1, 2, 3, ...), sans partage d'ex-aequo —
+ * comme sur la page Classement.
+ *
+ * Ne recalcule AUCUN point ni score : prend en entrée des valeurs déjà
+ * calculées ailleurs (voir predictionScoring.ts pour le calcul des points).
+ */
+export type RankablePlayer = {
+  points: number;
+  exactScores: number;
+  predictionsCount: number;
+  regularitySuccess: number;
+  pseudo?: string | null;
+};
+
+export function rankPlayers<T extends RankablePlayer>(players: T[]): (T & { rank: number })[] {
+  return [...players]
+    .sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.exactScores !== a.exactScores) return b.exactScores - a.exactScores;
+
+      const aRatio = a.predictionsCount > 0 ? a.regularitySuccess / a.predictionsCount : 0;
+      const bRatio = b.predictionsCount > 0 ? b.regularitySuccess / b.predictionsCount : 0;
+      if (bRatio !== aRatio) return bRatio - aRatio;
+
+      return (a.pseudo ?? "").localeCompare(b.pseudo ?? "");
+    })
+    .map((player, index) => ({ ...player, rank: index + 1 }));
+}
