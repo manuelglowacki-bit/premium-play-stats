@@ -11,19 +11,20 @@ import {
   LogOut,
   MessageCircle,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
 
 /**
- * Hauteur réellement visible de l'app, en une seule source pour toute
- * l'appli — posée sur <html> comme variable CSS `--app-vh`, dérivée de
- * window.visualViewport (seule API qui réagit vraiment à l'ouverture du
+ * Hauteur rÃ©ellement visible de l'app, en une seule source pour toute
+ * l'appli â€” posÃ©e sur <html> comme variable CSS `--app-vh`, dÃ©rivÃ©e de
+ * window.visualViewport (seule API qui rÃ©agit vraiment Ã  l'ouverture du
  * clavier virtuel sur Android Chrome ; 100vh/100dvh non, le clavier
- * chevauche le contenu au lieu de réduire la hauteur visible). Toute page
+ * chevauche le contenu au lieu de rÃ©duire la hauteur visible). Toute page
  * qui a besoin de "toute la hauteur disponible" (ex. le Vestiaire) peut
  * alors se contenter d'un simple height: 100% en cascade, sans recalculer
- * quoi que ce soit elle-même.
+ * quoi que ce soit elle-mÃªme.
  */
 function useAppViewportHeight() {
   useEffect(() => {
@@ -42,15 +43,15 @@ function useAppViewportHeight() {
 }
 
 /**
- * Hauteur RÉELLE (mesurée, jamais devinée) du header sticky et de la nav
- * flottante, posées sur <html> comme `--app-header-h` / `--app-nav-h`.
- * Sert à des pages qui ont besoin de réserver un espace exact sous le
- * header ou au-dessus de la nav (ex. Admin → Suivi des pronostics) sans
+ * Hauteur RÃ‰ELLE (mesurÃ©e, jamais devinÃ©e) du header sticky et de la nav
+ * flottante, posÃ©es sur <html> comme `--app-header-h` / `--app-nav-h`.
+ * Sert Ã  des pages qui ont besoin de rÃ©server un espace exact sous le
+ * header ou au-dessus de la nav (ex. Admin â†’ Suivi des pronostics) sans
  * qu'un padding en dur (ex. pb-32) ne se retrouve un jour trop court ou
- * trop long si ces éléments changent de taille. ResizeObserver plutôt que
- * seulement `resize` : réagit aussi si le contenu du header/de la nav
- * change de taille sans que la fenêtre change (ex. badge qui apparaît/
- * disparaît à un breakpoint, police qui finit de charger).
+ * trop long si ces Ã©lÃ©ments changent de taille. ResizeObserver plutÃ´t que
+ * seulement `resize` : rÃ©agit aussi si le contenu du header/de la nav
+ * change de taille sans que la fenÃªtre change (ex. badge qui apparaÃ®t/
+ * disparaÃ®t Ã  un breakpoint, police qui finit de charger).
  */
 function useMeasuredChromeHeights(
   headerRef: React.RefObject<HTMLElement | null>,
@@ -85,16 +86,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
   const navigate = useNavigate();
-  // Même source de vérité que le reste de l'app (AuthContext) plutôt qu'un
-  // second abonnement local à la session Supabase — `isAdmin` en découle
-  // déjà (profiles.is_admin), c'est le mécanisme déjà utilisé par
-  // AdminRoute pour protéger la route /admin, réutilisé ici pour la nav.
+  // MÃªme source de vÃ©ritÃ© que le reste de l'app (AuthContext) plutÃ´t qu'un
+  // second abonnement local Ã  la session Supabase â€” `isAdmin` en dÃ©coule
+  // dÃ©jÃ  (profiles.is_admin), c'est le mÃ©canisme dÃ©jÃ  utilisÃ© par
+  // AdminRoute pour protÃ©ger la route /admin, rÃ©utilisÃ© ici pour la nav.
   const { user, isAdmin, signOut } = useAuth();
   const keyboardOpen = useKeyboardOpen();
   useAppViewportHeight();
   const headerRef = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLDivElement | null>(null);
+  const [vestiaireUnread, setVestiaireUnread] = useState(0);
   useMeasuredChromeHeights(headerRef, navRef);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setVestiaireUnread(0);
+      return;
+    }
+
+    if (currentPath === "/trophees") {
+      setVestiaireUnread(0);
+      return;
+    }
+
+    const channel = supabase
+      .channel(`app-vestiaire-notifications-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "chat_messages",
+        },
+        (payload) => {
+          const row = payload.new as { id?: string; user_id?: string | null };
+          if (!row?.id || !row.user_id || row.user_id === user.id) return;
+          if (window.location.pathname === "/trophees") {
+            setVestiaireUnread(0);
+            return;
+          }
+          setVestiaireUnread((current) => current + 1);
+        },
+      )
+      .subscribe((status, error) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.error("Vestiaire notifications:", error || status);
+        }
+      });
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [currentPath, user?.id]);
 
   const handleLogout = async () => {
     await signOut();
@@ -112,7 +155,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { label: "Profil", to: "/profil", icon: User },
     // Invisible pour les joueurs : aucun lien/bouton Admin dans la nav tant
     // que profiles.is_admin n'est pas vrai. L'URL /admin reste en plus
-    // protégée côté route par AdminRoute (voir src/routes/admin.tsx).
+    // protÃ©gÃ©e cÃ´tÃ© route par AdminRoute (voir src/routes/admin.tsx).
     ...(isAdmin ? [{ label: "Admin", to: "/admin", icon: Shield }] : []),
   ];
 
@@ -122,14 +165,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       style={{ height: "var(--app-vh, 100dvh)" }}
     >
 
-      {/* ================= ARRIÈRE-PLAN GLOBAL PREMIUM ================= */}
+      {/* ================= ARRIÃˆRE-PLAN GLOBAL PREMIUM ================= */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-[#050b14]">
         
         {/* Calque 1 : fond global officiel de tout le site (public/arriere plan
-            general.png — même fichier, jamais régénéré ni remplacé). "cover" +
-            position "top" pour remplir tout l'écran sans bandes vides tout en
-            gardant le haut de l'image (où se trouve le stade + le logo Ligue 1
-            d'origine) visible en priorité, quel que soit le format d'écran. */}
+            general.png â€” mÃªme fichier, jamais rÃ©gÃ©nÃ©rÃ© ni remplacÃ©). "cover" +
+            position "top" pour remplir tout l'Ã©cran sans bandes vides tout en
+            gardant le haut de l'image (oÃ¹ se trouve le stade + le logo Ligue 1
+            d'origine) visible en prioritÃ©, quel que soit le format d'Ã©cran. */}
         <div
           className="absolute inset-0 bg-cover bg-top bg-no-repeat"
           style={{
@@ -138,29 +181,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }}
         />
 
-        {/* Calque 2 : Vignette légère (assombrit à peine les bords, pour ne pas dénaturer l'image d'origine) */}
+        {/* Calque 2 : Vignette lÃ©gÃ¨re (assombrit Ã  peine les bords, pour ne pas dÃ©naturer l'image d'origine) */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(6,11,22,0)_0%,rgba(3,7,18,0.35)_100%)]" />
 
-        {/* Calque 3 : Reflets subtils aux couleurs de la Ligue 1 (émeraude/bleu) */}
+        {/* Calque 3 : Reflets subtils aux couleurs de la Ligue 1 (Ã©meraude/bleu) */}
         <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/10 via-transparent to-emerald-500/5 mix-blend-overlay" />
       </div>
 
-      {/* Les deux badges "Ligue 1" décoratifs fixes (haut-droite / bas-gauche)
-          qui vivaient ici ont été retirés : depuis le passage au nouveau fond
-          global (public/arriere plan general.png), qui porte déjà son propre
-          logo Ligue 1 dans la photo elle-même, ces badges superposés
+      {/* Les deux badges "Ligue 1" dÃ©coratifs fixes (haut-droite / bas-gauche)
+          qui vivaient ici ont Ã©tÃ© retirÃ©s : depuis le passage au nouveau fond
+          global (public/arriere plan general.png), qui porte dÃ©jÃ  son propre
+          logo Ligue 1 dans la photo elle-mÃªme, ces badges superposÃ©s
           faisaient doublon sur toutes les pages. Le logo Ligue 1 fonctionnel
-          (navigation, favicon d'onglet) n'est pas concerné, seulement ces
-          deux images purement décoratives. */}
+          (navigation, favicon d'onglet) n'est pas concernÃ©, seulement ces
+          deux images purement dÃ©coratives. */}
 
       {/* ================= HEADER / NAVIGATION ================= */}
       {/* paddingTop env(...) pousse le contenu sous l'encoche/la barre de statut
           sur mobile (iOS/Android) sans changer la hauteur visuelle sur les
-          navigateurs qui ne la définissent pas — env() vaut alors 0px. Fond
-          et bordure du header couvrent quand même toute la zone au-dessus.
+          navigateurs qui ne la dÃ©finissent pas â€” env() vaut alors 0px. Fond
+          et bordure du header couvrent quand mÃªme toute la zone au-dessus.
           En style inline (et non en classe Tailwind arbitraire) : le
-          minifieur CSS du build émettait un warning sur `env()` à l'intérieur
-          d'un sélecteur généré, sans le casser, mais autant l'éviter. */}
+          minifieur CSS du build Ã©mettait un warning sur `env()` Ã  l'intÃ©rieur
+          d'un sÃ©lecteur gÃ©nÃ©rÃ©, sans le casser, mais autant l'Ã©viter. */}
       <header
         ref={headerRef}
         className="sticky top-0 z-50 border-b border-slate-800/80 bg-[#060b16]/75 backdrop-blur-xl"
@@ -189,18 +232,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </Link>
 
-          {/* Version mobile compacte — icône seule, sm:hidden. Bug réel
-              trouvé lors de l'audit final : le bloc "hidden sm:flex"
-              ci-dessous était la SEULE porte de déconnexion de toute
-              l'application, invisible sur tout écran < 640px, donc
-              injoignable sur téléphone. Même handleLogout/signOut, aucune
-              logique d'authentification modifiée — juste rendue accessible. */}
+          {/* Version mobile compacte â€” icÃ´ne seule, sm:hidden. Bug rÃ©el
+              trouvÃ© lors de l'audit final : le bloc "hidden sm:flex"
+              ci-dessous Ã©tait la SEULE porte de dÃ©connexion de toute
+              l'application, invisible sur tout Ã©cran < 640px, donc
+              injoignable sur tÃ©lÃ©phone. MÃªme handleLogout/signOut, aucune
+              logique d'authentification modifiÃ©e â€” juste rendue accessible. */}
           {user ? (
             <button
               onClick={handleLogout}
               className="sm:hidden flex size-9 shrink-0 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400"
-              title="Se déconnecter"
-              aria-label="Se déconnecter"
+              title="Se dÃ©connecter"
+              aria-label="Se dÃ©connecter"
             >
               <LogOut size={16} />
             </button>
@@ -214,7 +257,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           )}
 
-          {/* SECTION DROITE : BADGE + BOUTON CONNEXION / DÉCONNEXION */}
+          {/* SECTION DROITE : BADGE + BOUTON CONNEXION / DÃ‰CONNEXION */}
           <div className="hidden sm:flex items-center gap-3">
             <div className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-[#0d1322] px-3.5 py-1.5 shadow-inner">
               <span className="size-2 rounded-full bg-emerald-500" />
@@ -225,7 +268,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white font-mono text-xs font-bold transition-all shadow-inner"
-                title="Se déconnecter"
+                title="Se dÃ©connecter"
               >
                 <LogOut size={14} />
                 <span>Quitter</span>
@@ -246,19 +289,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* ================= CONTENU DE LA PAGE ================= */}
       {/* flex flex-col + min-h-0 : <main> devient un vrai maillon de la
-          chaîne flex (pas juste un item flex-1, aussi un conteneur flex
-          pour son enfant) — nécessaire pour qu'une page comme le Vestiaire
+          chaÃ®ne flex (pas juste un item flex-1, aussi un conteneur flex
+          pour son enfant) â€” nÃ©cessaire pour qu'une page comme le Vestiaire
           puisse faire flex:1 + min-height:0 sur son propre conteneur racine
-          et récupérer l'espace réellement disponible, sans recalculer quoi
+          et rÃ©cupÃ©rer l'espace rÃ©ellement disponible, sans recalculer quoi
           que ce soit en JS.
-          min-w-0 sur le wrapper de {children} : correctif d'une régression
-          réelle trouvée lors de l'audit responsive (Pronos débordait de
+          min-w-0 sur le wrapper de {children} : correctif d'une rÃ©gression
+          rÃ©elle trouvÃ©e lors de l'audit responsive (Pronos dÃ©bordait de
           680px sur 360px de large). En rendant <main> flex, chaque page
-          devient un flex-item dont le min-width par défaut est "auto" (ne
-          rétrécit jamais sous la largeur de son contenu) — exactement le
-          même piège que min-height sur l'axe vertical, ici sur l'axe
+          devient un flex-item dont le min-width par dÃ©faut est "auto" (ne
+          rÃ©trÃ©cit jamais sous la largeur de son contenu) â€” exactement le
+          mÃªme piÃ¨ge que min-height sur l'axe vertical, ici sur l'axe
           horizontal. Un seul enfant large quelque part sur une page (ex.
-          bandeau de journées à défiler) suffisait à repousser toute la page
+          bandeau de journÃ©es Ã  dÃ©filer) suffisait Ã  repousser toute la page
           en largeur. Un seul wrapper min-w-0 ici corrige structurellement
           toutes les pages d'un coup, sans dupliquer le correctif page par
           page. */}
@@ -266,39 +309,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="min-w-0 w-full">{children}</div>
 </main>
 
-      {/* ================= NAVIGATION — un seul bloc, sur tous les écrans ================= */}
-      {/* Les maquettes ne montrent AUCUNE nav du haut, même en résolution
-          desktop (~1024px) : une seule nav, en bas, partout — remplace
-          l'ancien split "pills en haut dès lg" / "barre flottante en bas
-          jusqu'à lg" par ce bloc unique, toujours affiché.
-          bottom via style inline : décale la nav au-dessus de la barre de
-          gestes (iOS) / navigation Android au lieu du seul bottom-4 fixe —
-          env() vaut 0px par défaut, donc identique à avant sur mobile.
-          Style inline plutôt que classe Tailwind arbitraire pour la même
+      {/* ================= NAVIGATION â€” un seul bloc, sur tous les Ã©crans ================= */}
+      {/* Les maquettes ne montrent AUCUNE nav du haut, mÃªme en rÃ©solution
+          desktop (~1024px) : une seule nav, en bas, partout â€” remplace
+          l'ancien split "pills en haut dÃ¨s lg" / "barre flottante en bas
+          jusqu'Ã  lg" par ce bloc unique, toujours affichÃ©.
+          bottom via style inline : dÃ©cale la nav au-dessus de la barre de
+          gestes (iOS) / navigation Android au lieu du seul bottom-4 fixe â€”
+          env() vaut 0px par dÃ©faut, donc identique Ã  avant sur mobile.
+          Style inline plutÃ´t que classe Tailwind arbitraire pour la mÃªme
           raison que le header ci-dessus (warning du minifieur CSS, inoffensif
-          mais évitable). */}
+          mais Ã©vitable). */}
       <div
         ref={navRef}
         className="fixed inset-x-4 z-50 transition-[opacity,transform] duration-200"
         style={{
           bottom: "calc(1rem + env(safe-area-inset-bottom))",
-          // Masquée pendant la saisie (clavier ouvert) plutôt que superposée
-          // au champ de texte ou au clavier — voir useKeyboardOpen ci-dessus.
-          // pointer-events-none : évite un appui fantôme sur un lien invisible.
+          // MasquÃ©e pendant la saisie (clavier ouvert) plutÃ´t que superposÃ©e
+          // au champ de texte ou au clavier â€” voir useKeyboardOpen ci-dessus.
+          // pointer-events-none : Ã©vite un appui fantÃ´me sur un lien invisible.
           opacity: keyboardOpen ? 0 : 1,
           transform: keyboardOpen ? "translateY(16px)" : "translateY(0)",
           pointerEvents: keyboardOpen ? "none" : "auto",
         }}
       >
-        {/* justify-around centre les items tant qu'ils tiennent ; l'ajout de "Trophées"
-            (7e/8e lien) peut dépasser la largeur disponible sur les très petits écrans
-            (ex. 360px) — le padding/icône/texte ont donc été légèrement resserrés pour
-            que tout tienne sans rien retirer, et overflow-x-auto + scrollbar masquée
-            servent de filet de sécurité (glissement au lieu d'un lien invisible/coupé)
-            si un écran encore plus étroit ou le lien Admin (utilisateurs admin) ne
+        {/* justify-around centre les items tant qu'ils tiennent ; l'ajout de "TrophÃ©es"
+            (7e/8e lien) peut dÃ©passer la largeur disponible sur les trÃ¨s petits Ã©crans
+            (ex. 360px) â€” le padding/icÃ´ne/texte ont donc Ã©tÃ© lÃ©gÃ¨rement resserrÃ©s pour
+            que tout tienne sans rien retirer, et overflow-x-auto + scrollbar masquÃ©e
+            servent de filet de sÃ©curitÃ© (glissement au lieu d'un lien invisible/coupÃ©)
+            si un Ã©cran encore plus Ã©troit ou le lien Admin (utilisateurs admin) ne
             laissait vraiment plus assez de place. max-w-2xl + mx-auto : sur grand
-            écran, reste alignée sur la largeur du contenu (comme les maquettes)
-            au lieu de s'étirer sur toute la largeur de la fenêtre. */}
+            Ã©cran, reste alignÃ©e sur la largeur du contenu (comme les maquettes)
+            au lieu de s'Ã©tirer sur toute la largeur de la fenÃªtre. */}
         <nav className="mx-auto flex max-w-2xl items-center justify-around overflow-x-auto bg-[#060b16]/90 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.8)] [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -313,7 +356,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                <Icon size={16} />
+                <div className="relative">
+                  <Icon size={16} />
+                  {item.label === "Vestiaire" && vestiaireUnread > 0 && (
+                    <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white shadow-lg">
+                      {vestiaireUnread > 9 ? "9+" : vestiaireUnread}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[9px] font-mono font-bold whitespace-nowrap">{item.label}</span>
               </Link>
             );

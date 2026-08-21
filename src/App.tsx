@@ -14,7 +14,7 @@ export function App() {
       className="min-h-screen"
       style={{
         backgroundImage:
-          "linear-gradient(rgba(7,12,22,.78), rgba(7,12,22,.88)), url('/background-l1.png')",
+          "linear-gradient(rgba(7,12,22,.78), rgba(7,12,22,.88)), url('/background-site.png')",
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundAttachment: "fixed",

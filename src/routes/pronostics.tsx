@@ -71,6 +71,7 @@ type MatchRow = {
   // resolveBonusClubLogo) : home_team_id/away_team_id y restent null.
   home_team: string | null;
   away_team: string | null;
+  api_fixture_id: number | null;
   kickoff: string | null;
   status: string | null;
   finished: boolean;
@@ -254,6 +255,51 @@ function derivePick(home: number, away: number): Pick {
   return "N";
 }
 
+/** Retourne les points du pronostic 1N2 une fois le match terminé. */
+function getMainMatchPoints(match: MatchRow, pick: Pick | undefined): number | null {
+  if (!match.finished || match.home_score == null || match.away_score == null || !pick) {
+    return null;
+  }
+
+  const finalResult = derivePick(match.home_score, match.away_score);
+  return pick === finalResult ? 1 : 0;
+}
+
+/**
+ * Calcul du score affiché uniquement à l'écran.
+ * Ne modifie ni Supabase ni les points déjà enregistrés.
+ */
+function getExactScorePoints(
+  predictionHome: string | number | null | undefined,
+  predictionAway: string | number | null | undefined,
+  finalHome: number | null | undefined,
+  finalAway: number | null | undefined,
+  exactPoints: number,
+  resultPoints: number,
+): number | null {
+  if (
+    predictionHome == null ||
+    predictionAway == null ||
+    predictionHome === "" ||
+    predictionAway === "" ||
+    finalHome == null ||
+    finalAway == null
+  ) {
+    return null;
+  }
+
+  const ph = Number(predictionHome);
+  const pa = Number(predictionAway);
+
+  if (!Number.isFinite(ph) || !Number.isFinite(pa)) return null;
+
+  if (ph === finalHome && pa === finalAway) return exactPoints;
+
+  return derivePick(ph, pa) === derivePick(finalHome, finalAway)
+    ? resultPoints
+    : 0;
+}
+
 /**
  * Sens inverse : un pick 1/N/2 (matchs Ligue 1 classiques, qui n'ont pas de
  * saisie de score dans l'UI) doit être représenté par un score puisque
@@ -303,6 +349,12 @@ function PronosticsPage() {
   const [dataLoading, setDataLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // DIRECT LIVE : Supabase reste la source du calendrier/pronos.
+  // Le score et le statut en cours viennent de football-data.org.
+  // Rafraîchissement raisonnable pour éviter de saturer l'API.
+  const [liveByFixture, setLiveByFixture] = useState<Record<string, any>>({});
+  const [liveTick, setLiveTick] = useState(() => Date.now());
+
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   // Pronostics "score exact" du club de cœur, par match_id — un match peut
   // avoir son propre score en cours de saisie (cas rare mais géré : plusieurs
@@ -311,6 +363,8 @@ function PronosticsPage() {
   const [bonusOptions, setBonusOptions] = useState<BonusOptionRow[]>([]);
   const [bonusSelection, setBonusSelection] = useState<string | null>(null);
   const [bonusScores, setBonusScores] = useState<Record<string, BonusScore>>({});
+    const [bonusChoiceCounts, setBonusChoiceCounts] = useState<Record<string, number>>({});
+    const [bonusChoiceTotal, setBonusChoiceTotal] = useState(0);
   const [bonusLoading, setBonusLoading] = useState(false);
   const [bonusError, setBonusError] = useState<string | null>(null);
   // Pronostics déjà enregistrés par le joueur, tels que renvoyés par
@@ -322,6 +376,9 @@ function PronosticsPage() {
   const [savedPredictions, setSavedPredictions] = useState<
     Record<string, { home: number; away: number }>
   >({});
+  // Points déjà enregistrés par le système de scoring.
+  // Cette valeur est uniquement lue pour l'affichage : aucun recalcul ici.
+  const [savedPoints, setSavedPoints] = useState<Record<string, number | null>>({});
   const [saved, setSaved] = useState(false);
   // Pulse/glow bref juste après l'enregistrement (feedback visuel court),
   // distinct de `saved` qui lui reste vrai tant que les pronos ne sont pas
@@ -398,7 +455,7 @@ function PronosticsPage() {
           supabase
             .from("matches")
             .select(
-              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, kickoff, status, finished, home_score, away_score",
+              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, api_fixture_id, kickoff, status, finished, home_score, away_score",
             )
             .order("kickoff", { ascending: true }),
         ]);
@@ -440,7 +497,7 @@ function PronosticsPage() {
           // `favoriteTeamId` disponibles.
           const { data: predictionsData, error: predictionsLoadError } = await supabase
             .from("predictions")
-            .select("match_id, home_prediction, away_prediction")
+            .select("match_id, home_prediction, away_prediction, points")
             .eq("user_id", user.id);
 
           if (predictionsLoadError) {
@@ -449,12 +506,16 @@ function PronosticsPage() {
 
           if (!cancelled && predictionsData) {
             const raw: Record<string, { home: number; away: number }> = {};
+            const pointsRaw: Record<string, number | null> = {};
             predictionsData.forEach((p) => {
               if (p.home_prediction == null || p.away_prediction == null) return;
               if (!p.match_id) return;
               raw[p.match_id] = { home: p.home_prediction, away: p.away_prediction };
+              pointsRaw[p.match_id] =
+                typeof p.points === "number" ? p.points : p.points == null ? null : Number(p.points);
             });
             setSavedPredictions(raw);
+            setSavedPoints(pointsRaw);
           }
         }
       } catch (err) {
@@ -564,6 +625,182 @@ function PronosticsPage() {
   }, [savedPredictions, matches, bonusOptions, favoriteTeamId, selectedMatchdayId]);
 
   const teamsById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
+
+  /**
+   * DIRECT LIVE
+   * - L'API est interrogée toutes les 30 secondes.
+   * - Dès que le statut passe IN_PLAY/PAUSED, le score courant est affiché.
+   * - Si le coup d'envoi est dépassé mais que l'API n'a pas encore renvoyé
+   *   les buts, on affiche 0-0 pour permettre au calcul des points de démarrer
+   *   dès le début du match.
+   * - Les points affichés sont calculés à l'écran uniquement : aucune écriture
+   *   dans `predictions.points` n'est faite pendant le direct.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshLive() {
+      try {
+        const response = await fetch(
+          "/api/ligue1/matchs?season=2026&competition=ALL",
+          {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          },
+        );
+
+        if (!response.ok) return;
+
+        const payload = await response.json().catch(() => null);
+        const apiMatches = Array.isArray(payload?.allMatches)
+          ? payload.allMatches
+          : [];
+
+        const next: Record<string, any> = {};
+        for (const apiMatch of apiMatches) {
+          if (apiMatch?.apiFixtureId != null) {
+            next[String(apiMatch.apiFixtureId)] = apiMatch;
+          }
+        }
+
+        if (!cancelled) {
+          setLiveByFixture(next);
+          setLiveTick(Date.now());
+        }
+      } catch (error) {
+        console.warn("API live indisponible sur la page Pronos :", error);
+      }
+    }
+
+    void refreshLive();
+    const timer = window.setInterval(refreshLive, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  // Permet à l'interface de reconnaître immédiatement le passage du coup
+  // d'envoi, même entre deux rafraîchissements API.
+  useEffect(() => {
+    const timer = window.setInterval(() => setLiveTick(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const getLiveApiMatch = (match: MatchRow): any | null => {
+    if (match.api_fixture_id == null) return null;
+    return liveByFixture[String(match.api_fixture_id)] ?? null;
+  };
+
+  const getLiveStatus = (match: MatchRow): string => {
+    const live = getLiveApiMatch(match);
+    return String(live?.statut ?? live?.status ?? match.status ?? "SCHEDULED").toUpperCase();
+  };
+
+  const getLiveScore = (
+    match: MatchRow,
+  ): { home: number; away: number; status: string; live: boolean; finished: boolean } | null => {
+    const live = getLiveApiMatch(match);
+    const status = getLiveStatus(match);
+    const finished =
+      match.finished ||
+      ["FINISHED", "FT", "AET", "PEN"].includes(status);
+
+    if (finished) {
+      if (match.home_score == null || match.away_score == null) return null;
+      return {
+        home: Number(match.home_score),
+        away: Number(match.away_score),
+        status,
+        live: false,
+        finished: true,
+      };
+    }
+
+    const kickoffMs = match.kickoff ? new Date(match.kickoff).getTime() : NaN;
+    const kickoffStarted = Number.isFinite(kickoffMs) && liveTick >= kickoffMs;
+    const apiLive = ["IN_PLAY", "LIVE", "PAUSED", "HT", "HALFTIME"].includes(status);
+
+    if (!apiLive && !kickoffStarted) return null;
+
+    const apiHome =
+      live?.scoreDomicile ??
+      live?.scoreHome ??
+      live?.homeScore ??
+      null;
+    const apiAway =
+      live?.scoreExterieur ??
+      live?.scoreAway ??
+      live?.awayScore ??
+      null;
+
+    const home =
+      apiHome == null
+        ? match.home_score == null
+          ? 0
+          : Number(match.home_score)
+        : Number(apiHome);
+    const away =
+      apiAway == null
+        ? match.away_score == null
+          ? 0
+          : Number(match.away_score)
+        : Number(apiAway);
+
+    return {
+      home: Number.isFinite(home) ? home : 0,
+      away: Number.isFinite(away) ? away : 0,
+      status,
+      live: true,
+      finished: false,
+    };
+  };
+
+  const getLivePoints = (
+    match: MatchRow,
+    pick: Pick | undefined,
+    predictionHome?: string,
+    predictionAway?: string,
+    exactPoints = 2,
+    resultPoints = 1,
+  ): number | null => {
+    const current = getLiveScore(match);
+    if (!current) return null;
+
+    const realResult = derivePick(current.home, current.away);
+
+    if (predictionHome != null || predictionAway != null) {
+      if (
+        predictionHome == null ||
+        predictionAway == null ||
+        predictionHome === "" ||
+        predictionAway === ""
+      ) {
+        return 0;
+      }
+
+      const ph = Number(predictionHome);
+      const pa = Number(predictionAway);
+      if (!Number.isFinite(ph) || !Number.isFinite(pa)) return 0;
+
+      if (ph === current.home && pa === current.away) return exactPoints;
+      return derivePick(ph, pa) === realResult ? resultPoints : 0;
+    }
+
+    if (!pick) return 0;
+    return pick === realResult ? 1 : 0;
+  };
+
+  const liveLabel = (match: MatchRow): string | null => {
+    const current = getLiveScore(match);
+    if (!current) return null;
+    if (current.finished) return null;
+    if (current.status === "PAUSED" || current.status === "HT" || current.status === "HALFTIME") {
+      return "MI-TEMPS";
+    }
+    return "LIVE";
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => setLockTick((v) => v + 1), 15_000);
@@ -693,6 +930,72 @@ function PronosticsPage() {
       }>,
     [bonusByCompetition],
   );
+
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBonusChoiceStats() {
+      if (!selectedMatchdayId || bonusCandidates.length === 0) {
+        setBonusChoiceCounts({});
+        setBonusChoiceTotal(0);
+        return;
+      }
+
+      const bonusMatchIds = bonusCandidates.map((candidate) => candidate.match.id);
+
+      try {
+        const { data: players, error: playersError } = await supabase
+          .from("profiles")
+          .select("id");
+
+        if (playersError) throw playersError;
+
+        const { data: predictions, error: predictionsError } = await supabase
+          .from("predictions")
+          .select("user_id, match_id")
+          .in("match_id", bonusMatchIds);
+
+        if (predictionsError) throw predictionsError;
+
+        if (cancelled) return;
+
+        const counts: Record<string, number> = {};
+        for (const matchId of bonusMatchIds) {
+          counts[matchId] = 0;
+        }
+
+        const counted = new Set<string>();
+
+        for (const prediction of predictions ?? []) {
+          if (!prediction.user_id || !prediction.match_id) continue;
+
+          const key = `${prediction.user_id}:${prediction.match_id}`;
+          if (counted.has(key)) continue;
+
+          counted.add(key);
+          counts[prediction.match_id] =
+            (counts[prediction.match_id] ?? 0) + 1;
+        }
+
+        setBonusChoiceCounts(counts);
+        setBonusChoiceTotal(players?.length ?? 0);
+      } catch (error) {
+        console.error("Erreur chargement statistiques bonus :", error);
+
+        if (!cancelled) {
+          setBonusChoiceCounts({});
+          setBonusChoiceTotal(0);
+        }
+      }
+    }
+
+    void loadBonusChoiceStats();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMatchdayId, bonusCandidates]);
 
   const selectedBonusCandidate =
     bonusCandidates.find((candidate) => candidate.match.id === bonusSelection) ?? null;
@@ -1613,22 +1916,60 @@ function PronosticsPage() {
                             </b>
                           </div>
 
-                          <div className="flex shrink-0 gap-1.5 p-1 rounded-2xl bg-[#050A14] border border-black/50 shadow-inner mx-auto">
-                            {(["1", "N", "2"] as const).map((k) => (
-                              <button
-                                key={k}
-                                type="button"
-                                disabled={isMatchLocked(match)}
-                                onClick={() => pick(match.id, k)}
-                                className={`tap relative grid size-10 place-items-center rounded-xl font-display text-base font-black transition-all duration-300 ${
-                                  current === k
-                                    ? "bg-gradient-to-t from-[#17F1A7] to-emerald-400 text-[#050A14] shadow-[0_0_15px_rgba(23,241,167,0.4)] scale-105 border-transparent"
-                                    : "bg-white/5 text-slate-300 border border-white/20 hover:border-emerald-400/50 hover:text-white hover:shadow-[0_0_15px_rgba(52,211,153,0.2)] active:scale-95"
-                                }`}
-                              >
-                                {k}
-                              </button>
-                            ))}
+                          <div className="flex shrink-0 flex-col items-center gap-2 mx-auto">
+                            <div className="flex gap-1.5 rounded-2xl border border-black/50 bg-[#050A14] p-1 shadow-inner">
+                              {(["1", "N", "2"] as const).map((k) => (
+                                <button
+                                  key={k}
+                                  type="button"
+                                  disabled={isMatchLocked(match)}
+                                  onClick={() => pick(match.id, k)}
+                                  className={`tap relative grid size-10 place-items-center rounded-xl font-display text-base font-black transition-all duration-300 ${
+                                    current === k
+                                      ? "bg-gradient-to-t from-[#17F1A7] to-emerald-400 text-[#050A14] shadow-[0_0_15px_rgba(23,241,167,0.4)] scale-105 border-transparent"
+                                      : "bg-white/5 text-slate-300 border border-white/20 hover:border-emerald-400/50 hover:text-white hover:shadow-[0_0_15px_rgba(52,211,153,0.2)] active:scale-95"
+                                  }`}
+                                >
+                                  {k}
+                                </button>
+                              ))}
+                            </div>
+
+                            {(() => {
+                              const currentScore = getLiveScore(match);
+                              const isLive = Boolean(currentScore?.live);
+                              const points = isLive
+                                ? getLivePoints(match, current)
+                                : getMainMatchPoints(match, current);
+
+                              if (!currentScore) return null;
+
+                              return (
+                                <div className="flex flex-col items-center gap-1 font-mono text-[10px] font-black uppercase tracking-wider">
+                                  <div className="flex items-center gap-2">
+                                    {isLive && (
+                                      <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-1.5 py-0.5 text-[9px] text-emerald-300 animate-pulse">
+                                        {liveLabel(match)}
+                                      </span>
+                                    )}
+                                    <span className="text-white">
+                                      {currentScore.home} — {currentScore.away}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={
+                                      points === 1
+                                        ? "text-emerald-400"
+                                        : points === 0
+                                          ? "text-red-400"
+                                          : "text-slate-400"
+                                    }
+                                  >
+                                    {points === 1 ? "+1 pt" : "0 pt"}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {isMatchLocked(match) && (
@@ -1836,6 +2177,51 @@ function PronosticsPage() {
                               </span>{" "}
                               <span>───</span>
                             </div>
+
+                            {(() => {
+                              const currentScore = getLiveScore(match);
+                              if (!currentScore) return null;
+
+                              const displayPoints =
+                                score.home !== "" && score.away !== ""
+                                  ? getLivePoints(
+                                      match,
+                                      undefined,
+                                      score.home,
+                                      score.away,
+                                      2,
+                                      1,
+                                    )
+                                  : 0;
+
+                              return (
+                                <div className="mt-2 flex flex-col items-center leading-none">
+                                  <div className="flex items-center gap-2">
+                                    {currentScore.live && (
+                                      <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9px] font-black uppercase text-emerald-300 animate-pulse">
+                                        {liveLabel(match)}
+                                      </span>
+                                    )}
+                                    <span className="font-display text-base md:text-lg font-black tracking-wide text-white">
+                                      {currentScore.home} — {currentScore.away}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={`mt-1 font-display text-[11px] font-black uppercase tracking-wider ${
+                                      displayPoints > 0
+                                        ? "text-emerald-300"
+                                        : "text-red-300"
+                                    }`}
+                                  >
+                                    {score.home !== "" && score.away !== ""
+                                      ? displayPoints > 0
+                                        ? `+${displayPoints} PT`
+                                        : "0 PT"
+                                      : "Prono à saisir"}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* Équipe Extérieur (90px) */}
@@ -1993,6 +2379,11 @@ function PronosticsPage() {
             const score = bonusScores[match.id] ?? { home: "", away: "" };
             const { dayName, dayDate, time } = formatKickoff(match.kickoff);
             const locked = isMatchLocked(match);
+            const choiceCount = bonusChoiceCounts[match.id] ?? 0;
+            const choicePercent =
+              bonusChoiceTotal > 0
+                ? Math.round((choiceCount / bonusChoiceTotal) * 100)
+                : 0;
 
             return (
               <div
@@ -2040,6 +2431,12 @@ function PronosticsPage() {
                     }`}
                   >
                     <Check className="size-3.5" />
+                  </span>
+                </div>
+
+                <div className="relative mt-3 flex justify-center">
+                  <span className="rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-200">
+                    🔥 {choicePercent}% des joueurs
                   </span>
                 </div>
 
@@ -2126,6 +2523,51 @@ function PronosticsPage() {
                         className="size-12 rounded-xl border border-amber-400/25 bg-black/35 text-center font-display text-xl font-black text-white outline-none backdrop-blur-sm transition-all focus:border-amber-300 focus:bg-black/45 focus:ring-2 focus:ring-amber-400/15"
                       />
                     </div>
+
+                    {(() => {
+                      const currentScore = getLiveScore(match);
+                      if (!currentScore) return null;
+
+                      const displayPoints =
+                        score.home !== "" && score.away !== ""
+                          ? getLivePoints(
+                              match,
+                              undefined,
+                              score.home,
+                              score.away,
+                              3,
+                              2,
+                            )
+                          : 0;
+
+                      return (
+                        <div className="mt-3 flex flex-col items-center leading-none">
+                          <div className="flex items-center gap-2">
+                            {currentScore.live && (
+                              <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9px] font-black uppercase text-emerald-300 animate-pulse">
+                                {liveLabel(match)}
+                              </span>
+                            )}
+                            <span className="font-display text-base font-black tracking-wide text-white">
+                              {currentScore.home} — {currentScore.away}
+                            </span>
+                          </div>
+                          <span
+                            className={`mt-1 font-display text-[11px] font-black uppercase tracking-wider ${
+                              displayPoints > 0
+                                ? "text-emerald-300"
+                                : "text-red-300"
+                            }`}
+                          >
+                            {score.home !== "" && score.away !== ""
+                              ? displayPoints > 0
+                                ? `+${displayPoints} PT`
+                                : "0 PT"
+                              : "Prono à saisir"}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

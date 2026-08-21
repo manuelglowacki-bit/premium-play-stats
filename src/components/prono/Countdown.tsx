@@ -102,7 +102,7 @@ export function CountdownBlocksIconic() {
               <b className={`block font-display text-3xl leading-none ${c.text}`}>
                 {String(value).padStart(2, "0")}
               </b>
-              <span className="mt-1 block text-[10px] font-bold tracking-wider text-slate-400">
+              <span className="mt-1 block font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 {label}
               </span>
             </div>

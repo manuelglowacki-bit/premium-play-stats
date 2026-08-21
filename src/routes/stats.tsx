@@ -35,6 +35,7 @@ type MatchRow = {
   matchday: string | null;
   matchday_id?: string | null;
   status: string | null;
+  api_fixture_id?: number | null;
   home_score: number | null;
   away_score: number | null;
   // Vraie colonne de `matches` (confirmée via le schéma Supabase réel) :
@@ -312,13 +313,13 @@ function StatsPage() {
         { data: bonusOptionsData, error: bonusOptionsError },
         { data: matchdaysData, error: matchdaysError },
         { data: favoriteHistoryData, error: favoriteHistoryError },
+        apiLivePayload,
       ] = await Promise.all([
         supabase
           .from("matches")
           .select(
-            "id, matchday, matchday_id, status, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
-          )
-          .eq("status", "finished"),
+            "id, matchday, matchday_id, status, api_fixture_id, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
+          ),
         // Tous les joueurs (pas seulement le compte connecté) : nécessaire
         // pour recalculer le Top joueurs via computeLeagueStats(), même
         // moteur que le Classement — remplace l'ancienne requête sur la vue
@@ -335,6 +336,16 @@ function StatsPage() {
         // Saison par journée + équipe favorite historisée par saison (Lot 4).
         supabase.from("matchdays").select("id, season_id, season"),
         supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
+        fetch("/api/ligue1/matchs?season=2026&competition=ALL", {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        })
+          .then(async (response) => {
+            if (!response.ok) return null;
+            const body = await response.json().catch(() => null);
+            return body?.ok ? body : null;
+          })
+          .catch(() => null),
       ]);
 
       if (matchesError) throw matchesError;
@@ -344,14 +355,53 @@ function StatsPage() {
       if (matchdaysError) console.warn("Erreur chargement journées (favori historique) :", matchdaysError);
       if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
-      const finishedMatches = (matches || []) as MatchRow[];
+      const allMatches = (matches || []) as MatchRow[];
+
+      // Direct live : Supabase reste la source du calendrier, tandis que
+      // l'API fournit le score/statut courant. Un match 0-0 en cours est donc
+      // immédiatement utilisable par le même moteur de points que le Classement.
+      const liveByFixture = new Map<number, any>();
+      const liveMatches = Array.isArray(apiLivePayload?.allMatches)
+        ? apiLivePayload.allMatches
+        : [];
+
+      liveMatches.forEach((apiMatch: any) => {
+        if (apiMatch?.apiFixtureId != null) {
+          liveByFixture.set(Number(apiMatch.apiFixtureId), apiMatch);
+        }
+      });
+
+      const matchesWithLiveScore = allMatches.map((match) => {
+        if (match.api_fixture_id == null) return match;
+
+        const live = liveByFixture.get(Number(match.api_fixture_id));
+        if (!live) return match;
+
+        const status = String(
+          live.statut ?? live.status ?? match.status ?? "SCHEDULED",
+        );
+
+        return {
+          ...match,
+          status,
+          home_score:
+            live.scoreDomicile != null
+              ? Number(live.scoreDomicile)
+              : match.home_score,
+          away_score:
+            live.scoreExterieur != null
+              ? Number(live.scoreExterieur)
+              : match.away_score,
+        };
+      });
+
       const allPredictions = (allPredictionsData || []) as PredictionRow[];
       const userPredictions = allPredictions.filter((p) => p.user_id === user.id);
 
       const matchDayById = new Map<string, string>();
       const matchById = new Map<string, MatchRow>();
 
-      finishedMatches.forEach((match) => {
+      matchesWithLiveScore.forEach((match) => {
         matchById.set(String(match.id), match);
         if (match.matchday) {
           matchDayById.set(String(match.id), String(match.matchday));
@@ -364,7 +414,7 @@ function StatsPage() {
       // computeLeagueStats l'attend.
       const bonusOptions = (bonusOptionsData || []) as LeagueBonusOption[];
       const bonusMatchIdSet = new Set(bonusOptions.map((o) => String(o.match_id)));
-      const ligue1MatchesForScoring: LeagueMatch[] = finishedMatches
+      const ligue1MatchesForScoring: LeagueMatch[] = matchesWithLiveScore
         .filter((m) => !m.is_bonus && m.home_score != null && m.away_score != null)
         .map((m) => ({
           id: m.id,
@@ -376,7 +426,7 @@ function StatsPage() {
           home_score: m.home_score,
           away_score: m.away_score,
         }));
-      const bonusMatchesForScoring: LeagueMatch[] = finishedMatches
+      const bonusMatchesForScoring: LeagueMatch[] = matchesWithLiveScore
         .filter((m) => bonusMatchIdSet.has(String(m.id)) && m.home_score != null && m.away_score != null)
         .map((m) => ({
           id: m.id,
@@ -566,7 +616,14 @@ function StatsPage() {
       loadStats();
     });
 
+    // Le score live et les statistiques doivent évoluer sans attendre FT.
+    // L'API est interrogée toutes les 30 secondes (pas chaque seconde).
+    const liveRefreshTimer = window.setInterval(() => {
+      loadStats();
+    }, 30_000);
+
     return () => {
+      window.clearInterval(liveRefreshTimer);
       authListener.subscription.unsubscribe();
     };
   }, []);

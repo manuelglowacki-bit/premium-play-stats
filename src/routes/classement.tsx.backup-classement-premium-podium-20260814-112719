@@ -1,0 +1,722 @@
+﻿import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
+import { Calendar, Flag, ListChecks, Target, Users } from "lucide-react";
+import { AppShell } from "@/components/prono/AppShell";
+import { PlayerCard, type PlayerCardData, type ExtraBadge } from "@/components/prono/PlayerCard";
+import { PodiumBoard, type PodiumPosition } from "@/components/prono/PodiumBoard";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
+import { useTeamTheme } from "@/hooks/useTeamTheme";
+import { matchday as currentMatchday } from "@/lib/prono-data";
+import { calculateCareerScore } from "@/lib/careerLevel";
+
+// `currentMatchday.label` (ex. "J1 Â· Vendredi 21 aoÃ»t 2026") est la mÃªme
+// donnÃ©e dÃ©jÃ  utilisÃ©e par cette page avant cette refonte â€” simple lecture
+// de la partie "date" de ce libellÃ© existant pour la barre d'infos
+// ci-dessous, aucune nouvelle source ni aucun nouveau calcul.
+function matchdayDateLabel(label: string): string {
+  const parts = label.split("Â·");
+  return parts.length > 1 ? parts[1].trim() : label;
+}
+
+export const Route = createFileRoute("/classement")({
+  head: () => ({
+    meta: [
+      { title: "Classement GÃ©nÃ©ral â€” Prono Ligue 1" },
+      { name: "description", content: "Classement gÃ©nÃ©ral et statistiques de la ligue de pronostics." },
+    ],
+  }),
+  component: ClassementPage,
+});
+
+// ============================================================
+// DonnÃ©es & calcul du classement
+// ============================================================
+type PlayerProfile = {
+  id: string;
+  pseudo: string | null;
+  avatar_url: string | null;
+  favorite_team_id: string | null;
+};
+
+type TeamRow = { id: string; name: string; short_name: string | null; logo_url: string | null };
+
+type RankedPlayer = PlayerProfile & {
+  rank: number;
+  points: number;
+  exactScores: number;
+  predictionsCount: number;
+  /** Nombre de pronostics 1N2 rÃ©ussis (cumul sur toutes les journÃ©es terminÃ©es) â€” sert au calcul de la rÃ©gularitÃ©. */
+  regularitySuccess: number;
+  careerLevel: number;
+  careerTitle: string;
+};
+
+/** RÃ©sultat 1/N/2 rÃ©el d'un match terminÃ©, Ã  partir du score final. */
+function matchResult(home: number | null, away: number | null): "1" | "N" | "2" | null {
+  if (home == null || away == null) return null;
+  if (home > away) return "1";
+  if (home < away) return "2";
+  return "N";
+}
+
+function ClassementPage() {
+  const { user } = useAuth();
+  const { theme: viewerTheme } = useTeamTheme();
+
+  const [players, setPlayers] = useState<PlayerProfile[] | null>(null);
+  const [teamsById, setTeamsById] = useState<Record<string, TeamRow>>({});
+  const [season, setSeason] = useState("2026-2027");
+
+  const [pointsByUser, setPointsByUser] = useState<Record<string, number>>({});
+  const [predictionsCountByUser, setPredictionsCountByUser] = useState<Record<string, number>>({});
+  // Scores exacts rÃ©els (pronostic "club de cÅ“ur" home_score/away_score === score final du match),
+  // et compteur de pronostics 1N2 rÃ©ussis pour la rÃ©gularitÃ© â€” tous deux calculÃ©s dynamiquement
+  // depuis Supabase (voir load() ci-dessous), jamais de valeur fictive.
+  const [exactScoresByUser, setExactScoresByUser] = useState<Record<string, number>>({});
+  const [regularitySuccessByUser, setRegularitySuccessByUser] = useState<Record<string, number>>({});
+  const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    type MatchForRanking = {
+      id: string;
+      matchday_id: string | null;
+      home_team_id: string | null;
+      away_team_id: string | null;
+      home_score: number | null;
+      away_score: number | null;
+      finished: boolean;
+      is_bonus: boolean;
+    };
+
+    type BonusOptionForRanking = {
+      matchday_id: string;
+      match_id: string;
+      is_active: boolean;
+    };
+
+    async function load() {
+      try {
+        // La source du classement est maintenant cohÃ©rente avec le systÃ¨me
+        // actuel :
+        // - profiles.favorite_team_id = Ã©quipe de cÅ“ur
+        // - predictions.home_prediction / away_prediction = pronostic
+        // - matches = rÃ©sultat + Ã©quipes + type du match
+        // - bonus_options = les 4 matchs bonus rattachÃ©s Ã  UNE journÃ©e Ligue 1
+        const [
+          { data: profilesData, error: profilesError },
+          { data: teamsData, error: teamsError },
+          { data: settingsData, error: settingsError },
+          { data: matchdaysData, error: matchdaysError },
+        ] = await Promise.all([
+          supabase.from("profiles").select("id, pseudo, avatar_url, favorite_team_id"),
+          supabase.from("teams").select("id, name, short_name, logo_url"),
+          supabase.from("app_settings").select("season").eq("id", 1).maybeSingle(),
+          supabase
+            .from("matchdays")
+            .select("id, number, code, season, season_id, competition_id")
+            .order("number", { ascending: true }),
+        ]);
+
+        if (cancelled) return;
+        if (profilesError) throw profilesError;
+        if (teamsError) throw teamsError;
+        if (settingsError) throw settingsError;
+        if (matchdaysError) throw matchdaysError;
+
+        const seasonName = settingsData?.season ?? "2026-2027";
+        if (settingsData?.season) setSeason(settingsData.season);
+
+        const teamsMap: Record<string, TeamRow> = {};
+        (teamsData ?? []).forEach((t: TeamRow) => {
+          teamsMap[t.id] = t;
+        });
+        setTeamsById(teamsMap);
+
+        // On ne travaille que sur les journÃ©es Ligue 1 de la saison courante.
+        // Le filtre compÃ©tition Ã©vite de mÃ©langer les J1/J2 des 4 championnats
+        // bonus avec les J1/J2 de Ligue 1.
+        const ligue1Matchdays = (matchdaysData ?? []).filter((md: any) => {
+          const sameSeason = String(md.season ?? seasonName) === String(seasonName);
+          const competitionCode = String(md.competition_id ?? "");
+          return sameSeason && competitionCode !== "";
+        });
+
+        // Certaines anciennes lignes peuvent avoir season vide mais Ãªtre liÃ©es
+        // Ã  une journÃ©e de la saison courante. On garde aussi les journÃ©es
+        // explicitement marquÃ©es 2026-2027.
+        const matchdayIds = ligue1Matchdays.map((md: any) => String(md.id));
+        // CARRIERE MULTI-SAISON
+        const [
+          { data: careerPredictionsData, error: careerPredictionsError },
+          { data: careerMatchesData, error: careerMatchesError },
+        ] = await Promise.all([
+          supabase.from("predictions").select("user_id,match_id,points,home_prediction,away_prediction"),
+          supabase.from("matches").select("id,home_score,away_score,finished").eq("finished", true),
+        ]);
+
+        if (careerPredictionsError) throw careerPredictionsError;
+        if (careerMatchesError) throw careerMatchesError;
+
+        const careerMatchById = new Map<string, any>();
+        (careerMatchesData ?? []).forEach((m: any) => careerMatchById.set(String(m.id), m));
+
+        const careerAccum: Record<string, { points: number; exactScores: number }> = {};
+        (careerPredictionsData ?? []).forEach((pred: any) => {
+          const uid = String(pred.user_id ?? "");
+          if (!uid) return;
+          const match = careerMatchById.get(String(pred.match_id));
+          if (!match) return;
+          if (!careerAccum[uid]) careerAccum[uid] = { points: 0, exactScores: 0 };
+          careerAccum[uid].points += Number(pred.points ?? 0);
+          if (
+            match.home_score != null && match.away_score != null &&
+            pred.home_prediction != null && pred.away_prediction != null &&
+            Number(pred.home_prediction) === Number(match.home_score) &&
+            Number(pred.away_prediction) === Number(match.away_score)
+          ) careerAccum[uid].exactScores += 1;
+        });
+        if (!cancelled) setCareerStatsByUser(careerAccum);
+
+        if (matchdayIds.length === 0) {
+          if (!cancelled) {
+            setPlayers(profilesData ?? []);
+            setPointsByUser({});
+            setPredictionsCountByUser({});
+            setExactScoresByUser({});
+            setRegularitySuccessByUser({});
+          }
+          return;
+        }
+
+        const [
+          { data: competitionsData, error: competitionsError },
+          { data: finishedLigue1Matches, error: matchesError },
+        ] = await Promise.all([
+          supabase.from("competitions").select("id, code, external_code"),
+          supabase
+            .from("matches")
+            .select(
+              "id, matchday_id, home_team_id, away_team_id, home_score, away_score, finished, is_bonus",
+            )
+            .eq("finished", true)
+            .eq("is_bonus", false)
+            .in("matchday_id", matchdayIds),
+        ]);
+
+        if (cancelled) return;
+        if (competitionsError) throw competitionsError;
+        if (matchesError) throw matchesError;
+
+        const ligue1CompetitionIds = new Set(
+          (competitionsData ?? [])
+            .filter((c: any) => c.code === "FL1" || c.external_code === "FL1")
+            .map((c: any) => String(c.id)),
+        );
+
+        // Les journÃ©es Ligue 1 sont liÃ©es Ã  FL1. On utilise ce contrÃ´le en plus
+        // du season pour rester compatible avec les anciennes donnÃ©es.
+        const ligue1MatchdayIds = new Set(
+          ligue1Matchdays
+            .filter((md: any) => !md.competition_id || ligue1CompetitionIds.has(String(md.competition_id)))
+            .map((md: any) => String(md.id)),
+        );
+
+        const matches = ((finishedLigue1Matches ?? []) as MatchForRanking[]).filter(
+          (m) =>
+            m.home_score != null &&
+            m.away_score != null &&
+            !!m.matchday_id &&
+            ligue1MatchdayIds.has(String(m.matchday_id)),
+        );
+
+        // Les 4 matchs bonus sont rattachÃ©s Ã  la journÃ©e Ligue 1 via
+        // bonus_options.matchday_id. Le match bonus lui-mÃªme peut appartenir
+        // Ã  une autre compÃ©tition et avoir un autre matchday_id dans matches.
+        const { data: bonusOptionsData, error: bonusOptionsError } = await supabase
+          .from("bonus_options")
+          .select("matchday_id, match_id, is_active")
+          .in("matchday_id", matchdayIds)
+          .eq("is_active", true);
+
+        if (cancelled) return;
+        if (bonusOptionsError) throw bonusOptionsError;
+
+        const bonusOptions = (bonusOptionsData ?? []) as BonusOptionForRanking[];
+
+        const bonusMatchIds = [...new Set(bonusOptions.map((o) => String(o.match_id)).filter(Boolean))];
+
+        let bonusMatches: MatchForRanking[] = [];
+        if (bonusMatchIds.length > 0) {
+          const { data: bonusMatchesData, error: bonusMatchesError } = await supabase
+            .from("matches")
+            .select(
+              "id, matchday_id, home_team_id, away_team_id, home_score, away_score, finished, is_bonus",
+            )
+            .eq("finished", true)
+            .in("id", bonusMatchIds);
+
+          if (cancelled) return;
+          if (bonusMatchesError) throw bonusMatchesError;
+
+          bonusMatches = (bonusMatchesData ?? []) as MatchForRanking[];
+        }
+
+        const allScoredMatchIds = [
+          ...new Set([
+            ...matches.map((m) => String(m.id)),
+            ...bonusMatches.map((m) => String(m.id)),
+          ]),
+        ];
+
+        const { data: predictionsData, error: predictionsError } = await supabase
+          .from("predictions")
+          .select("user_id, match_id, home_prediction, away_prediction, created_at")
+          .in("match_id", allScoredMatchIds);
+
+        if (cancelled) return;
+        if (predictionsError) throw predictionsError;
+
+        const matchById = new Map<string, MatchForRanking>();
+        [...matches, ...bonusMatches].forEach((m) => {
+          matchById.set(String(m.id), m);
+        });
+
+        const bonusMatchdayByMatchId = new Map<string, string>();
+        bonusOptions.forEach((option) => {
+          bonusMatchdayByMatchId.set(String(option.match_id), String(option.matchday_id));
+        });
+
+        const bonusMatchIdsByDay = new Map<string, Set<string>>();
+        bonusOptions.forEach((option) => {
+          const dayId = String(option.matchday_id);
+          const set = bonusMatchIdsByDay.get(dayId) ?? new Set<string>();
+          set.add(String(option.match_id));
+          bonusMatchIdsByDay.set(dayId, set);
+        });
+
+        // Une prÃ©diction bonus correspond Ã  un seul match bonus sÃ©lectionnÃ©
+        // par journÃ©e. S'il reste exceptionnellement plusieurs anciennes lignes
+        // bonus pour une mÃªme journÃ©e, on conserve seulement la plus rÃ©cente.
+        const latestBonusPredictionByUserDay = new Map<
+          string,
+          { createdAt: number; matchId: string }
+        >();
+
+        const safePredictions = (predictionsData ?? []).filter(
+          (pred: any) =>
+            pred?.user_id &&
+            pred?.match_id &&
+            pred?.home_prediction != null &&
+            pred?.away_prediction != null &&
+            matchById.has(String(pred.match_id)),
+        );
+
+        safePredictions.forEach((pred: any) => {
+          const bonusDayId = bonusMatchdayByMatchId.get(String(pred.match_id));
+          if (!bonusDayId) return;
+
+          const key = `${pred.user_id}:${bonusDayId}`;
+          const createdAt = pred.created_at ? new Date(pred.created_at).getTime() : 0;
+          const previous = latestBonusPredictionByUserDay.get(key);
+
+          if (!previous || createdAt >= previous.createdAt) {
+            latestBonusPredictionByUserDay.set(key, {
+              createdAt,
+              matchId: String(pred.match_id),
+            });
+          }
+        });
+
+        const points: Record<string, number> = {};
+        const predictionsCount: Record<string, number> = {};
+        const exactScores: Record<string, number> = {};
+        const regularitySuccess: Record<string, number> = {};
+
+        const profiles = (profilesData ?? []) as PlayerProfile[];
+
+        profiles.forEach((profile) => {
+          points[profile.id] = 0;
+          predictionsCount[profile.id] = 0;
+          exactScores[profile.id] = 0;
+          regularitySuccess[profile.id] = 0;
+        });
+
+        safePredictions.forEach((pred: any) => {
+          const userId = String(pred.user_id);
+          const matchId = String(pred.match_id);
+          const match = matchById.get(matchId);
+          if (!match || match.home_score == null || match.away_score == null) return;
+
+          const homePrediction = Number(pred.home_prediction);
+          const awayPrediction = Number(pred.away_prediction);
+          if (!Number.isFinite(homePrediction) || !Number.isFinite(awayPrediction)) return;
+
+          const profile = profiles.find((p) => p.id === userId);
+          if (!profile) return;
+
+          const isBonus = bonusMatchdayByMatchId.has(matchId);
+
+          // Pour un bonus, on ne compte que la ligne qui correspond au bonus
+          // effectivement sÃ©lectionnÃ© pour cette journÃ©e.
+          if (isBonus) {
+            const dayId = bonusMatchdayByMatchId.get(matchId)!;
+            const selected = latestBonusPredictionByUserDay.get(`${userId}:${dayId}`);
+            if (!selected || selected.matchId !== matchId) return;
+
+            const result = matchResult(match.home_score, match.away_score);
+            const pick = matchResult(homePrediction, awayPrediction);
+            const exact =
+              match.home_score === homePrediction && match.away_score === awayPrediction;
+            const correct = !!result && pick === result;
+
+            predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
+
+            if (exact) {
+              points[userId] = (points[userId] ?? 0) + 3;
+              exactScores[userId] = (exactScores[userId] ?? 0) + 1;
+              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+            } else if (correct) {
+              points[userId] = (points[userId] ?? 0) + 2;
+              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+            }
+
+            return;
+          }
+
+          // Match Ligue 1 classique / club de cÅ“ur.
+          const isFavoriteMatch =
+            !!profile.favorite_team_id &&
+            (String(match.home_team_id) === String(profile.favorite_team_id) ||
+              String(match.away_team_id) === String(profile.favorite_team_id));
+
+          const result = matchResult(match.home_score, match.away_score);
+          const pick = matchResult(homePrediction, awayPrediction);
+          const correct = !!result && pick === result;
+
+          predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
+
+          if (isFavoriteMatch) {
+            // Ã‰quipe de cÅ“ur : exact = 2, bon rÃ©sultat = 1, sinon 0.
+            const exact =
+              match.home_score === homePrediction && match.away_score === awayPrediction;
+
+            if (exact) {
+              points[userId] = (points[userId] ?? 0) + 2;
+              exactScores[userId] = (exactScores[userId] ?? 0) + 1;
+              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+            } else if (correct) {
+              points[userId] = (points[userId] ?? 0) + 1;
+              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+            }
+          } else {
+            // Ligue 1 classique : 1N2 = 1 point si rÃ©sultat correct.
+            if (correct) {
+              points[userId] = (points[userId] ?? 0) + 1;
+              regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
+            }
+          }
+        });
+
+        if (!cancelled) {
+          setPlayers(profiles);
+          setPointsByUser(points);
+          setPredictionsCountByUser(predictionsCount);
+          setExactScoresByUser(exactScores);
+          setRegularitySuccessByUser(regularitySuccess);
+        }
+      } catch (error) {
+        console.error("Erreur chargement/calcul du classement :", error);
+        if (!cancelled) {
+          setPlayers([]);
+          setPointsByUser({});
+          setPredictionsCountByUser({});
+          setExactScoresByUser({});
+          setRegularitySuccessByUser({});
+        }
+      }
+    }
+
+    load();
+
+    const refreshRanking = () => {
+      load();
+    };
+
+    window.addEventListener("pronos-updated", refreshRanking);
+    window.addEventListener("pronos-saved", refreshRanking);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("pronos-updated", refreshRanking);
+      window.removeEventListener("pronos-saved", refreshRanking);
+    };
+  }, []);
+  const careerTitles = [
+    "DÃ©butant","Apprenti","Novice","Amateur","ConfirmÃ©","RÃ©gulier","CompÃ©titeur","Averti","SpÃ©cialiste","Expert",
+    "StratÃ¨ge","Tacticien","MaÃ®tre","Ã‰lite","Grand MaÃ®tre","Virtuose","MaÃ®tre Prono","Champion","Champion confirmÃ©","Champion d'Ã©lite",
+    "LÃ©gendaire","IcÃ´ne","IcÃ´ne majeure","RÃ©fÃ©rence","Grand StratÃ¨ge","MaÃ®tre absolu","LÃ©gende","LÃ©gende ultime","Immortel","IcÃ´ne de la Ligue",
+  ] as const;
+
+
+  const loading = players === null;
+
+  // Statistiques dÃ©rivÃ©es mÃ©moÃ¯sÃ©es avec DÃ‰PARTAGE STRICT + ASSIDUITÃ‰
+  const {
+    totalPlayers,
+    leader,
+    avgPoints,
+    totalExactScores,
+    totalPredictions,
+    bestExactScorePlayerId,
+    podiumPositions,
+    others,
+  } = useMemo(() => {
+      const sortedList = (players ?? [])
+        .map((p) => ({
+          ...p,
+          points: pointsByUser[p.id] ?? 0,
+          exactScores: exactScoresByUser[p.id] ?? 0,
+          predictionsCount: predictionsCountByUser[p.id] ?? 0,
+          regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
+        
+          ...(() => {
+            const career = careerStatsByUser[p.id] ?? { points: 0, exactScores: 0 };
+            const result = calculateCareerScore(career);
+            return {
+              careerLevel: result.level,
+              careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
+            };
+          })(),}))
+        .sort((a, b) => {
+          // DÃ©partage strict : 1) points, 2) scores exacts, 3) rÃ©gularitÃ©
+          // (ratio pronostics rÃ©ussis / jouÃ©s, cumulÃ© sur la saison).
+          if (b.points !== a.points) return b.points - a.points;
+          if (b.exactScores !== a.exactScores) return b.exactScores - a.exactScores;
+          const aRatio = a.predictionsCount > 0 ? a.regularitySuccess / a.predictionsCount : 0;
+          const bRatio = b.predictionsCount > 0 ? b.regularitySuccess / b.predictionsCount : 0;
+          if (bRatio !== aRatio) return bRatio - aRatio;
+          return (a.pseudo ?? "").localeCompare(b.pseudo ?? "");
+        });
+
+      const list: RankedPlayer[] = sortedList.map((p, i) => ({
+        ...p,
+        rank: i + 1,
+      }));
+
+      const total = list.length;
+      const sumPoints = list.reduce((sum, p) => sum + p.points, 0);
+      const sumExact = list.reduce((sum, p) => sum + p.exactScores, 0);
+      const maxExact = list.reduce((max, p) => Math.max(max, p.exactScores), 0);
+      // Total de pronostics tous joueurs confondus â€” simple somme de
+      // `predictionsCount` (dÃ©jÃ  calculÃ© par joueur ci-dessus), pour la
+      // barre d'infos sous le podium. Aucun nouveau calcul mÃ©tier.
+      const sumPredictions = list.reduce((sum, p) => sum + p.predictionsCount, 0);
+
+      const top3Groups = list.slice(0, 3).map((p) => ({
+        rank: p.rank,
+        players: [p],
+      }));
+
+      const othersPlayers = list.slice(3);
+
+      return {
+        ranked: list,
+        totalPlayers: total,
+        leader: list[0],
+        avgPoints: total > 0 ? sumPoints / total : 0,
+        totalExactScores: sumExact,
+        totalPredictions: sumPredictions,
+        bestExactScorePlayerId: maxExact > 0 ? list.find((p) => p.exactScores === maxExact)?.id ?? null : null,
+        podiumPositions: top3Groups,
+        others: othersPlayers,
+      };
+    }, [players, pointsByUser, predictionsCountByUser, exactScoresByUser, regularitySuccessByUser, careerStatsByUser]);
+
+  const podiumData: PodiumPosition[] = podiumPositions.map((pos) => ({
+    rank: pos.rank,
+    players: pos.players.map((p) => ({
+      player: toCardData(p, teamsById),
+      isMe: p.id === user?.id,
+      badges: cardBadges(p, bestExactScorePlayerId),
+    })),
+  }));
+
+  return (
+    <AppShell>
+      <div className="mx-auto max-w-6xl space-y-6 pb-32">
+        {/* ================= HEADER =================
+            SimplifiÃ© Ã  l'essentiel : titre, date/saison, tagline â€” plus de
+            second encart photo (le fond global d'AppShell joue dÃ©jÃ  ce
+            rÃ´le), plus de badge "X joueurs" (information redondante avec la
+            barre d'infos juste sous le podium, qui l'affiche dÃ©jÃ ). Espacements
+            resserrÃ©s pour que le podium arrive rapidement. */}
+        <section className="pt-2 text-center sm:pt-3">
+          {/* DÃ©gradÃ© en classe Tailwind arbitraire (pas en style inline
+              "background: linear-gradient(...)") : assignÃ© en JS, le
+              navigateur rejetait silencieusement cette valeur et le titre
+              devenait invisible (confirmÃ© en inspectant les styles calculÃ©s).
+              MÃªme technique que le titre de l'Accueil. Taille lÃ©gÃ¨rement
+              rÃ©duite (Ã©tait clamp(2.1rem,8vw,3.75rem)) pour une prÃ©sence
+              forte sans Ã©craser le podium juste en dessous. */}
+          <h1
+            className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[clamp(1.9rem,6.5vw,3.1rem)] uppercase leading-none tracking-tight text-transparent"
+            style={{
+              filter: "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
+            }}
+          >
+            Classement
+          </h1>
+          {/* Date/saison : simple ligne typographique premium (plus de panneau
+              verre autour) â€” sobriÃ©tÃ© demandÃ©e, cohÃ©rent avec la tagline
+              juste en dessous. */}
+          <p className="mt-2 font-display text-xs font-bold uppercase tracking-wide text-emerald-400 sm:text-sm">
+            {currentMatchday.label} â€¢ Saison {season}
+          </p>
+          <p className="mt-1 text-xs text-slate-400/90 sm:text-sm">Les meilleurs pronostiqueurs de la journÃ©e</p>
+        </section>
+
+        {loading && <p className="py-16 text-center font-mono text-sm text-slate-500">Chargement du classementâ€¦</p>}
+
+        {!loading && totalPlayers === 0 && (
+          <p className="py-16 text-center font-mono text-sm text-slate-500">Aucun joueur inscrit pour le moment.</p>
+        )}
+
+        {!loading && totalPlayers > 0 && (
+          <>
+            {/* ================= PODIUM ================= */}
+            {/* Plus de padding-top ici : l'espace entre le titre et le podium
+                Ã©tait jugÃ© excessif â€” c'est dÃ©sormais le seul espacement du
+                conteneur parent (space-y-6) qui les sÃ©pare. */}
+            <PodiumBoard positions={podiumData} viewerTheme={viewerTheme} />
+
+            {/* ================= INFOS DE LA JOURNÃ‰E â€” barre compacte =================
+                Toutes les valeurs viennent de donnÃ©es dÃ©jÃ  calculÃ©es plus haut
+                (season/currentMatchday dÃ©jÃ  utilisÃ©s par cette page,
+                totalPlayers/totalPredictions/totalExactScores dÃ©rivÃ©s du mÃªme
+                useMemo que le podium et la liste #4+) â€” aucune nouvelle
+                source, aucun nouveau calcul. */}
+            <section className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-x-8 gap-y-3 rounded-2xl border border-white/10 bg-[#0d1322]/70 px-5 py-4 backdrop-blur-md sm:justify-between sm:gap-x-4">
+              {[
+                { icon: Flag, label: "JournÃ©e", value: `J${currentMatchday.number}` },
+                { icon: Calendar, label: "Date", value: matchdayDateLabel(currentMatchday.label) },
+                { icon: Users, label: "Joueurs", value: String(totalPlayers) },
+                { icon: ListChecks, label: "Pronostics", value: String(totalPredictions) },
+                { icon: Target, label: "Scores exacts", value: String(totalExactScores) },
+              ].map(({ icon: Icon, label, value }) => (
+                <div key={label} className="flex items-center gap-2.5">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-emerald-400">
+                    <Icon size={14} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                      {label}
+                    </div>
+                    <div className="truncate font-display text-sm font-bold text-white">{value}</div>
+                  </div>
+                </div>
+              ))}
+            </section>
+
+            {/* ================= LISTE DES AUTRES JOUEURS (#4+) ================= */}
+            {others.length > 0 && (
+              <section className="space-y-3 sm:space-y-4">
+                {others.map((p) => (
+                  <PlayerCard
+                    key={p.id}
+                    player={toCardData(p, teamsById)}
+                    isMe={p.id === user?.id}
+                    viewerTheme={viewerTheme}
+                    badges={cardBadges(p, bestExactScorePlayerId)}
+                  />
+                ))}
+              </section>
+            )}
+
+            {/* ================= BADGES â€” GUIDE DISCRET ================= */}
+            <section className="mx-auto max-w-4xl px-2 sm:px-0">
+              <div className="rounded-lg border border-white/[0.06] bg-[#0d1322]/35 px-3 py-2.5 backdrop-blur-sm sm:px-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-mono text-[9px] font-bold uppercase tracking-[0.2em] text-emerald-400/80">
+                      Badges
+                    </p>
+                    <p className="mt-0.5 text-[9px] text-slate-600">
+                      5 Â· 10 Â· 20 journÃ©es
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1 sm:gap-1.5">
+                    {[
+                      { level: "I", days: "5", tone: "border-emerald-400/20 text-emerald-300" },
+                      { level: "II", days: "10", tone: "border-sky-400/20 text-sky-300" },
+                      { level: "III", days: "20", tone: "border-amber-400/20 text-amber-300" },
+                    ].map((level) => (
+                      <div
+                        key={level.level}
+                        className={`rounded-md border bg-white/[0.015] px-2 py-1 text-center ${level.tone}`}
+                        title={`Niveau ${level.level} Â· ${level.days} journÃ©es`}
+                      >
+                        <span className="font-mono text-[8px] font-bold">{level.level}</span>
+                        <span className="ml-1 text-[8px] text-slate-600">{level.days}J</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-white/[0.05] pt-2">
+                  {[
+                    { icon: "ðŸ†", name: "Top 3", desc: "Top 3" },
+                    { icon: "ðŸ†", name: "Top 2", desc: "Top 2" },
+                    { icon: "ðŸ†", name: "Premier", desc: "1er" },
+                    { icon: "ðŸŽ¯", name: "1N2", desc: "1N2" },
+                    { icon: "âš½", name: "Score exact", desc: "Exact" },
+                  ].map((badge) => (
+                    <div key={badge.name} className="flex items-center gap-1.5">
+                      <span className="text-xs leading-none opacity-70">{badge.icon}</span>
+                      <div>
+                        <div className="font-display text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                          {badge.name}
+                        </div>
+                        <div className="font-mono text-[7px] uppercase tracking-wider text-slate-700">
+                          {badge.desc} Â· I II III
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+      </div>
+    </AppShell>
+  );
+}
+
+function toCardData(p: RankedPlayer, teamsById: Record<string, TeamRow>): PlayerCardData {
+  const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
+  return {
+    id: p.id,
+    pseudo: p.pseudo,
+    avatarUrl: p.avatar_url,
+    favoriteTeam: team ? { name: team.name, shortName: team.short_name, logoUrl: team.logo_url } : null,
+    rank: p.rank,
+    previousRank: null,
+    points: p.points,
+    exactScores: p.exactScores,
+    regularitySuccess: p.regularitySuccess,
+    regularityPlayed: p.predictionsCount,
+    careerLevel: p.careerLevel,
+    careerTitle: p.careerTitle,
+  };
+}
+
+function cardBadges(p: RankedPlayer, bestExactScorePlayerId: string | null): ExtraBadge[] {
+  const badges: ExtraBadge[] = [];
+  if (bestExactScorePlayerId === p.id) badges.push({ kind: "exactKing", label: "Roi exact" });
+  return badges;
+}
+

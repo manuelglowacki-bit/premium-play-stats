@@ -121,14 +121,6 @@ export interface AppSettings {
   timezone: string;
   maintenance_mode: boolean;
   maintenance_message: string | null;
-
-  // Gazette (Phase 3) — bascule manuelle Mercato / Rubrique du moment. Pas
-  // de date de fenêtre de mercato stockée (fixée chaque saison par la
-  // LFP/FFF, jamais inventée ici) : l'admin l'active/désactive lui-même,
-  // comme maintenance_mode. Optionnel/nullable : colonne ajoutée après coup
-  // (migration 20260817090000), peut être absente tant qu'elle n'a pas été
-  // relue au moins une fois.
-  mercato_active?: boolean | null;
 }
 
 // ============================================================
@@ -200,6 +192,76 @@ export async function getPayments(): Promise<Payment[]> {
   const { data, error } = await supabase.from("payments").select("*");
   if (error) throw error;
   return (data ?? []) as Payment[];
+}
+
+/**
+ * Nettoie et reconstruit la liste des paiements à partir des joueurs réels.
+ * - 1 seul paiement conservé par user_id
+ * - si plusieurs lignes existent, on conserve en priorité une ligne PAYÉE,
+ *   puis la plus récente
+ * - les joueurs sans paiement reçoivent une ligne à defaultAmount
+ * - les lignes doublons sont supprimées de Supabase
+ */
+export async function regeneratePayments(
+  players: Player[],
+  defaultAmount: number,
+): Promise<{ created: number; removedDuplicates: number }> {
+  const { data, error } = await supabase.from("payments").select("*");
+  if (error) throw error;
+
+  const raw = (data ?? []) as Payment[];
+  const byUser = new Map<string, Payment[]>();
+
+  for (const payment of raw) {
+    const rows = byUser.get(payment.user_id) ?? [];
+    rows.push(payment);
+    byUser.set(payment.user_id, rows);
+  }
+
+  const duplicateIds: string[] = [];
+
+  for (const rows of byUser.values()) {
+    if (rows.length <= 1) continue;
+
+    const sorted = [...rows].sort((a, b) => {
+      if (a.paid !== b.paid) return a.paid ? -1 : 1;
+      const dateA = a.payment_date ? new Date(a.payment_date).getTime() : 0;
+      const dateB = b.payment_date ? new Date(b.payment_date).getTime() : 0;
+      if (dateA !== dateB) return dateB - dateA;
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+    for (const duplicate of sorted.slice(1)) {
+      duplicateIds.push(duplicate.id);
+    }
+  }
+
+  if (duplicateIds.length) {
+    const { error: deleteError } = await supabase
+      .from("payments")
+      .delete()
+      .in("id", duplicateIds);
+    if (deleteError) throw deleteError;
+  }
+
+  const existingUserIds = new Set(
+    raw.filter((payment) => !duplicateIds.includes(payment.id)).map((payment) => payment.user_id),
+  );
+
+  const missing = players.filter((player) => !existingUserIds.has(player.id));
+
+  if (missing.length) {
+    const { error: insertError } = await supabase.from("payments").insert(
+      missing.map((player) => ({
+        user_id: player.id,
+        amount: defaultAmount,
+        paid: false,
+      })),
+    );
+    if (insertError) throw insertError;
+  }
+
+  return { created: missing.length, removedDuplicates: duplicateIds.length };
 }
 
 export async function setPaymentPaid(id: string, paid: boolean): Promise<void> {

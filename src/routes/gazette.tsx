@@ -24,6 +24,13 @@ import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
+import {
+  computeLeagueStats,
+  type LeagueBonusOption,
+  type LeagueMatch,
+  type LeaguePrediction,
+  type LeagueProfile,
+} from "@/lib/leaderboardStats";
 import { fetchExternalGazetteNews, type GazetteArticle } from "@/services/gazetteNewsService";
 
 export const Route = createFileRoute("/gazette")({
@@ -68,6 +75,13 @@ type DayMatch = {
   isBonus: boolean;
 };
 
+type GazetteTeam = {
+  id: string;
+  name: string;
+  short_name?: string | null;
+  logo_url?: string | null;
+};
+
 // ============================================================
 // HELPERS DE DONNÉES (réutilisés depuis l'ancienne Gazette)
 // ============================================================
@@ -85,6 +99,109 @@ function sameClub(a: any, b: any) {
   const cb = clean(b);
   return Boolean(ca && cb && (ca === cb || ca.includes(cb) || cb.includes(ca)));
 }
+
+// ============================================================
+// LOGOS LOCAUX — public/logos
+// ============================================================
+
+const LOCAL_LIGUE1_LOGOS: Record<string, string> = {
+  angers: "/logos/ligue1/angers.png",
+  auxerre: "/logos/ligue1/auxerre.png",
+  brest: "/logos/ligue1/brest.png",
+  lehavre: "/logos/ligue1/lehavre.png",
+  lemans: "/logos/ligue1/lemans.png",
+  lens: "/logos/ligue1/lens.png",
+  lille: "/logos/ligue1/lille.png",
+  lorient: "/logos/ligue1/lorient.png",
+  monaco: "/logos/ligue1/monaco.png",
+  nice: "/logos/ligue1/nice.png",
+  lyon: "/logos/ligue1/ol.png",
+  om: "/logos/ligue1/om.png",
+  marseille: "/logos/ligue1/om.png",
+  olympiquedemarseille: "/logos/ligue1/om.png",
+  ol: "/logos/ligue1/ol.png",
+  lyonnais: "/logos/ligue1/ol.png",
+  parisfc: "/logos/ligue1/parisfc.png",
+  psg: "/logos/ligue1/psg.png",
+  parissg: "/logos/ligue1/psg.png",
+  parissaintgermain: "/logos/ligue1/psg.png",
+  rennes: "/logos/ligue1/rennes.png",
+  strasbourg: "/logos/ligue1/strasbourg.png",
+  rcstrasbourg: "/logos/ligue1/strasbourg.png",
+  toulouse: "/logos/ligue1/tfc.png",
+  tfc: "/logos/ligue1/tfc.png",
+  troyes: "/logos/ligue1/troyes.png",
+};
+
+const LOCAL_BONUS_LOGOS: Record<string, string> = {
+  premierleague: "/logos/Premier league",
+  liga: "/logos/Liga",
+  seriea: "/logos/Serie A",
+  bundesliga: "/logos/Bundesliga",
+};
+
+function normalizeClubLogoName(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function getLocalLigue1Logo(teamName: unknown) {
+  const key = normalizeClubLogoName(teamName);
+  if (LOCAL_LIGUE1_LOGOS[key]) return LOCAL_LIGUE1_LOGOS[key];
+
+  return null;
+}
+
+function getLocalTeamLogo(match: any, side: "home" | "away") {
+  const team =
+    side === "home" ? getTeamHome(match) : getTeamAway(match);
+
+  // Keep any exact local logo URL already stored in the match.
+  const direct =
+    side === "home"
+      ? match?.home_logo ?? match?.homeLogo ?? match?.homeTeam?.logo
+      : match?.away_logo ?? match?.awayLogo ?? match?.awayTeam?.logo;
+
+  if (
+    typeof direct === "string" &&
+    direct.startsWith("/logos/")
+  ) {
+    return direct;
+  }
+
+  return getLocalLigue1Logo(team);
+}
+
+function LocalTeamLogo({
+  match,
+  side,
+  size = "size-11",
+}: {
+  match: any;
+  side: "home" | "away";
+  size?: string;
+}) {
+  const logo = getLocalTeamLogo(match, side);
+  const name = side === "home" ? getTeamHome(match) : getTeamAway(match);
+
+  return logo ? (
+    <img
+      src={logo}
+      alt={`Logo ${name}`}
+      className={`${size} shrink-0 object-contain drop-shadow-[0_5px_16px_rgba(0,0,0,.55)]`}
+      loading="eager"
+    />
+  ) : (
+    <div
+      className={`${size} shrink-0 rounded-full border border-white/10 bg-slate-900/80`}
+      aria-label={`Logo ${name}`}
+    />
+  );
+}
+
 
 function getTeamHome(match: any) {
   return (
@@ -145,6 +262,78 @@ function hasScore(match: any) {
   return Number.isFinite(h) && Number.isFinite(a);
 }
 
+
+function getMatchState(match: any): "upcoming" | "live" | "finished" {
+  const raw = String(
+    match?.status ??
+      match?.match_status ??
+      match?.state ??
+      match?.fixture_status ??
+      match?.status_short ??
+      ""
+  ).toLowerCase();
+
+  if (["live", "1h", "2h", "ht", "et", "p", "paused", "in_play", "in-play", "playing", "inprogress", "in_progress"].includes(raw)) {
+    return "live";
+  }
+  if (["finished", "ft", "aet", "pen", "ended", "complete", "completed"].includes(raw)) {
+    return "finished";
+  }
+  if (["postponed", "cancelled", "canceled", "suspended"].includes(raw)) {
+    return "upcoming";
+  }
+
+  // Fallback quand la base ne stocke pas encore de statut :
+  // on considère le match en direct autour de son coup d'envoi si un score
+  // existe déjà. Cela permet à la Gazette de bouger pendant les rencontres
+  // sans toucher aux calculs de points.
+  const kickoff = match?.kickoff ?? match?.kickoff_time;
+  if (kickoff) {
+    const start = new Date(kickoff).getTime();
+    if (Number.isFinite(start)) {
+      const now = Date.now();
+      const elapsed = now - start;
+      if (elapsed >= 0 && elapsed <= 2.25 * 60 * 60 * 1000) {
+        return hasScore(match) ? "live" : "upcoming";
+      }
+    }
+  }
+
+  return hasScore(match) ? "finished" : "upcoming";
+}
+
+function getLiveMinute(match: any) {
+  const explicit =
+    match?.minute ??
+    match?.elapsed ??
+    match?.elapsed_minute ??
+    match?.status_minute ??
+    match?.fixture?.status?.elapsed ??
+    null;
+  const n = Number(explicit);
+  if (Number.isFinite(n) && n >= 0) return `${Math.min(120, Math.round(n))}'`;
+  return "EN DIRECT";
+}
+
+function getKickoffTimestamp(match: any) {
+  const raw = match?.kickoff ?? match?.kickoff_time;
+  if (!raw) return NaN;
+  return new Date(raw).getTime();
+}
+
+function localDateKey(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function localDateKeyFromMatch(match: any) {
+  const ts = getKickoffTimestamp(match);
+  if (!Number.isFinite(ts)) return "";
+  return localDateKey(new Date(ts));
+}
+
 function getResult1N2(home: any, away: any): "1" | "N" | "2" | null {
   const h = Number(home);
   const a = Number(away);
@@ -159,9 +348,20 @@ function pickResult(prono: any): "1" | "N" | "2" | "" {
   return getResult1N2(prono.home_prediction, prono.away_prediction) || "";
 }
 
+function isActuallyFinished(match: any): boolean {
+  const state = getMatchState(match);
+  if (state !== "finished") return false;
+
+  const kickoff = getKickoffTimestamp(match);
+  if (Number.isFinite(kickoff) && kickoff > Date.now()) return false;
+
+  return hasScore(match);
+}
+
 function isExactPrediction(match: any, prono: any): boolean {
   if (!prono || prono.home_prediction == null || prono.away_prediction == null) return false;
-  if (!hasScore(match)) return false;
+  if (!isActuallyFinished(match)) return false;
+
   return (
     Number(prono.home_prediction) === Number(getScoreHome(match)) &&
     Number(prono.away_prediction) === Number(getScoreAway(match))
@@ -209,14 +409,76 @@ function pluralWord(count: number, singular: string, plural: string) {
   return count > 1 ? plural : singular;
 }
 
+function normalizeGazetteTeam(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function teamFromGazette(teams: GazetteTeam[], match: any, side: "home" | "away") {
+  const id = side === "home" ? match?.home_team_id : match?.away_team_id;
+  const name = side === "home" ? getTeamHome(match) : getTeamAway(match);
+
+  if (id) {
+    const byId = teams.find((team) => String(team.id) === String(id));
+    if (byId) return byId;
+  }
+
+  const wanted = normalizeGazetteTeam(name);
+  if (!wanted) return null;
+
+  return teams.find((team) => {
+    const n = normalizeGazetteTeam(team.name);
+    const sn = normalizeGazetteTeam(team.short_name);
+    return n === wanted || sn === wanted || n.includes(wanted) || wanted.includes(n);
+  }) ?? null;
+}
+
+function GazetteTeamLogo({
+  teams,
+  match,
+  side,
+  size = "size-11",
+}: {
+  teams: GazetteTeam[];
+  match: any;
+  side: "home" | "away";
+  size?: string;
+}) {
+  const team = teamFromGazette(teams, match, side);
+  const local = getLocalTeamLogo(match, side);
+  const logo = team?.logo_url || local;
+  const name = side === "home" ? getTeamHome(match) : getTeamAway(match);
+
+  if (!logo) {
+    return (
+      <div className={`${size} shrink-0 rounded-full border border-white/10 bg-slate-900/80`} aria-label={`Logo ${name}`} />
+    );
+  }
+
+  return (
+    <img
+      src={logo}
+      alt={`Logo ${team?.name ?? name}`}
+      className={`${size} shrink-0 object-contain drop-shadow-[0_5px_16px_rgba(0,0,0,.6)]`}
+      loading="eager"
+      onError={(event) => {
+        const target = event.currentTarget;
+        if (target.src.endsWith(local ?? "___none___")) target.style.display = "none";
+      }}
+    />
+  );
+}
+
 // Résolution du thème (fond + logo) d'un club pour les cartes éditoriales.
 function clubAsset(name: string | undefined | null) {
-  const id = getOfficialClubId(name);
-  const theme = getTeamTheme(id);
+  const key = normalizeClubLogoName(name);
+  const logo = LOCAL_LIGUE1_LOGOS[key] ?? null;
+
   return {
-    id,
-    background: theme.background,
-    logo: id ? `/logos/ligue1/${id}.png` : null,
+    logo,
   };
 }
 
@@ -369,7 +631,7 @@ function ActuCard({
   onClick?: () => void;
 }) {
   const asset = clubAsset(teamName || null);
-  const bg = imageUrl || asset.background || null;
+  const bg = imageUrl || null;
 
   return (
     <button
@@ -461,22 +723,16 @@ function GazettePage() {
   const [error, setError] = useState("");
   const [journees, setJournees] = useState<Journee[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [predictionsByUser, setPredictionsByUser] = useState<
-    Map<string, PlayerPronos>
-  >(new Map());
-  // Horodatage réel du dernier chargement réussi — jamais une heure fixée
-  // en dur : reflète le vrai moment où les données Supabase ont été
-  // relues (voir loadData, rappelé automatiquement toutes les 5 min).
+  const [predictionsByUser, setPredictionsByUser] = useState<Map<string, PlayerPronos>>(new Map());
+  const [teams, setTeams] = useState<GazetteTeam[]>([]);
+
+  // Même source de vérité que la page Classement.
+  const [rankingPredictions, setRankingPredictions] = useState<LeaguePrediction[]>([]);
+  const [rankingBonusOptions, setRankingBonusOptions] = useState<LeagueBonusOption[]>([]);
+  const [rankingFavoriteHistory, setRankingFavoriteHistory] = useState<Record<string, string | undefined>>({});
+  const [rankingTeamNames, setRankingTeamNames] = useState<Record<string, string | undefined>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  // Bascule Mercato / Rubrique du moment — réglage admin (voir Admin →
-  // Réglages), jamais une date de fenêtre de mercato devinée ici.
-  const [mercatoActive, setMercatoActive] = useState(false);
-  // Actualités externes réelles (RSS multi-sources + reformulation OpenAI,
-  // voir api/gazette-news.ts). Totalement découplé de loadData() : un échec
-  // ici (endpoint absent en local sans `vercel dev`, réseau coupé...) ne
-  // doit jamais bloquer ni vider le reste de la page — voir externalArticles
-  // par défaut à [] et son usage systématiquement en fallback ci-dessous.
-  const [externalArticles, setExternalArticles] = useState<GazetteArticle[]>([]);
+  const [clock, setClock] = useState(Date.now());
 
   async function loadData(silent = false) {
     if (!silent) setLoading(true);
@@ -490,47 +746,50 @@ function GazettePage() {
         { data: bonusOptionsData, error: bonusOptionsError },
         { data: profileData, error: profileError },
         { data: predictionData, error: predictionError },
-        { data: settingsData, error: settingsError },
+        { data: teamsData, error: teamsError },
+        { data: favoriteHistoryData, error: favoriteHistoryError },
+        apiPayload,
       ] = await Promise.all([
         supabase.from("competitions").select("id, external_code, code"),
         getMatchdays(),
         getMatches(),
-        supabase
-          .from("bonus_options")
-          .select("matchday_id, match_id")
-          .eq("is_active", true),
-        supabase
-          .from("profiles")
-          .select("*")
-          .order("pseudo", { ascending: true, nullsFirst: false }),
+        supabase.from("bonus_options").select("matchday_id, match_id").eq("is_active", true),
+        supabase.from("profiles").select("*").order("pseudo", { ascending: true, nullsFirst: false }),
         supabase.from("predictions").select("*"),
-        // Bascule Mercato / Rubrique du moment (Admin → Réglages) — voir
-        // migration 20260817090000. Non bloquant : si absente/en erreur, on
-        // retombe sur la Rubrique du moment (jamais un faux Mercato).
-        supabase.from("app_settings").select("mercato_active").eq("id", 1).maybeSingle(),
+        supabase.from("teams").select("id, name, short_name, logo_url"),
+        supabase
+          .from("user_season_favorite_teams")
+          .select("user_id, season_id, favorite_team_id"),
+        fetch("/api/ligue1/matchs?season=2026", {
+          headers: { Accept: "application/json" },
+        })
+          .then(async (response) => {
+            if (!response.ok) return null;
+            const body = await response.json().catch(() => null);
+            return body?.ok ? body : null;
+          })
+          .catch(() => null),
       ]);
 
       if (competitionsError) throw competitionsError;
       if (bonusOptionsError) throw bonusOptionsError;
       if (profileError) throw profileError;
       if (predictionError) throw predictionError;
-      if (settingsError) console.warn("Erreur chargement réglages (mercato) :", settingsError);
+      if (teamsError) throw teamsError;
 
-      const ligue1CompetitionId = (competitionsData ?? []).find(
+      const competitionId = (competitionsData ?? []).find(
         (c: any) => c.external_code === "FL1" || c.code === "FL1"
       )?.id;
 
       const ligue1Matchdays = (matchdaysData ?? []).filter(
-        (md: any) => md.competition_id === ligue1CompetitionId
+        (md: any) => md.competition_id === competitionId
       );
 
       const matchesById = new Map<string, any>();
       const matchesByMatchday = new Map<string, any[]>();
-
       (matchesData ?? []).forEach((match: any) => {
         matchesById.set(String(match.id), match);
-        if ((match.match_type ?? "LIGUE1") !== "LIGUE1") return;
-        if (!match.matchday_id) return;
+        if ((match.match_type ?? "LIGUE1") !== "LIGUE1" || !match.matchday_id) return;
         const list = matchesByMatchday.get(match.matchday_id) ?? [];
         list.push(match);
         matchesByMatchday.set(match.matchday_id, list);
@@ -545,41 +804,121 @@ function GazettePage() {
         bonusMatchesByMatchday.set(option.matchday_id, list);
       });
 
+      // Supabase reste la source du calendrier. Pour le direct, on fusionne
+      // le statut et le score provenant de l'API Ligue 1.
+      const apiMatchByFixture = new Map<string, any>();
+      const apiMatchByTeams = new Map<string, any>();
+
+      for (const apiMatch of Array.isArray(apiPayload?.matchs) ? apiPayload.matchs : []) {
+        if (apiMatch?.apiFixtureId != null) {
+          apiMatchByFixture.set(String(apiMatch.apiFixtureId), apiMatch);
+        }
+
+        const home = normalizeClubLogoName(apiMatch?.domicile ?? "");
+        const away = normalizeClubLogoName(apiMatch?.exterieur ?? "");
+        if (home && away) {
+          apiMatchByTeams.set(`${home}__${away}`, apiMatch);
+        }
+      }
+
+      const mergeLiveApiMatch = (match: any) => {
+        const apiMatch =
+          match?.api_fixture_id != null
+            ? apiMatchByFixture.get(String(match.api_fixture_id))
+            : apiMatchByTeams.get(
+                `${normalizeClubLogoName(match?.home_team ?? "")}__${normalizeClubLogoName(match?.away_team ?? "")}`,
+              );
+
+        if (!apiMatch) return match;
+
+        const status = String(
+          apiMatch.statut ??
+          apiMatch.status ??
+          match.status ??
+          "SCHEDULED",
+        );
+
+        return {
+          ...match,
+          status,
+          live_status: status,
+          finished: ["FINISHED", "FT", "AET", "PEN"].includes(status.toUpperCase()),
+          home_score:
+            apiMatch.scoreDomicile ??
+            apiMatch.score_home ??
+            match.home_score ??
+            null,
+          away_score:
+            apiMatch.scoreExterieur ??
+            apiMatch.score_away ??
+            match.away_score ??
+            null,
+        };
+      };
+
       const normalized: Journee[] = ligue1Matchdays
         .map((matchday: any) => ({
           id: matchday.id,
           number: matchday.number,
           title: `J${matchday.number}`,
-          matches: matchesByMatchday.get(matchday.id) ?? [],
-          bonus: bonusMatchesByMatchday.get(matchday.id) ?? [],
+          matches: (matchesByMatchday.get(matchday.id) ?? []).map(mergeLiveApiMatch),
+          bonus: (bonusMatchesByMatchday.get(matchday.id) ?? []).map(mergeLiveApiMatch),
         }))
         .sort((a, b) => Number(a.number) - Number(b.number));
 
-      const profilesLoaded = (profileData || []) as Profile[];
-      const predictions = predictionData || [];
+      const loadedProfiles = (profileData ?? []) as Profile[];
+      const predictionMap = new Map<string, PlayerPronos>();
 
-      const predictionsMap = new Map<string, PlayerPronos>();
-      profilesLoaded.forEach((profile: any) => {
-        predictionsMap.set(profile.id, {
-          favoriteTeam: getFavoriteTeamValue(
-            profile.favorite_team ?? profile.favorite_team_id ?? null
-          ),
+      loadedProfiles.forEach((profile: any) => {
+        predictionMap.set(profile.id, {
+          favoriteTeam: getFavoriteTeamValue(profile.favorite_team ?? profile.favorite_team_id ?? null),
           byMatch: new Map(),
         });
       });
 
-      predictions.forEach((prediction: any) => {
-        const entry = predictionsMap.get(prediction?.user_id);
+      (predictionData ?? []).forEach((prediction: any) => {
+        const entry = predictionMap.get(prediction?.user_id);
         if (!entry || !prediction?.match_id) return;
         entry.byMatch.set(String(prediction.match_id), prediction);
       });
 
+      const rankingPredictionRows = (predictionData ?? []) as LeaguePrediction[];
+
+      const rankingBonusRows: LeagueBonusOption[] = (bonusOptionsData ?? []).map(
+        (row: any) => ({
+          matchday_id: String(row.matchday_id),
+          match_id: String(row.match_id),
+        }),
+      );
+
+      const favoriteHistoryMap: Record<string, string | undefined> = {};
+      (favoriteHistoryData ?? []).forEach((row: any) => {
+        if (!row?.user_id || !row?.season_id || !row?.favorite_team_id) return;
+        favoriteHistoryMap[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
+      });
+
+      const teamNames: Record<string, string | undefined> = {};
+      (matchesData ?? []).forEach((match: any) => {
+        if (match?.home_team_id && match?.home_team) {
+          teamNames[String(match.home_team_id)] = match.home_team;
+        }
+        if (match?.away_team_id && match?.away_team) {
+          teamNames[String(match.away_team_id)] = match.away_team;
+        }
+      });
+
+      setRankingPredictions(rankingPredictionRows);
+      setRankingBonusOptions(rankingBonusRows);
+      setRankingFavoriteHistory(favoriteHistoryMap);
+      setRankingTeamNames(teamNames);
+
       setJournees(normalized);
-      setProfiles(profilesLoaded);
-      setPredictionsByUser(predictionsMap);
-      setMercatoActive(Boolean((settingsData as any)?.mercato_active));
+      setProfiles(loadedProfiles);
+      setPredictionsByUser(predictionMap);
+      setTeams((teamsData ?? []) as GazetteTeam[]);
       setLastUpdated(new Date());
-    } catch (err: any) {
+    } catch (err) {
+      console.error("Gazette load error", err);
       setError("Données momentanément indisponibles.");
     } finally {
       setLoading(false);
@@ -588,1440 +927,793 @@ function GazettePage() {
 
   useEffect(() => {
     loadData();
-    const interval = window.setInterval(() => loadData(true), 300000);
-    return () => window.clearInterval(interval);
-  }, []);
-
-  // Actualités externes : chargement volontairement séparé du moteur
-  // interne ci-dessus. Ainsi la Gazette s'affiche instantanément avec ses
-  // données internes réelles, puis s'enrichit avec de vraies actus dès
-  // qu'elles arrivent — jamais l'inverse (jamais d'attente, jamais d'écran
-  // vide si les actus externes échouent).
-  useEffect(() => {
-    let cancelled = false;
-    async function loadExternalNews() {
-      const { articles } = await fetchExternalGazetteNews();
-      if (!cancelled) setExternalArticles(articles);
-    }
-    loadExternalNews();
-    const interval = window.setInterval(loadExternalNews, 300000);
+    const refresh = window.setInterval(() => loadData(true), 30000);
+    const ticker = window.setInterval(() => setClock(Date.now()), 1000);
     return () => {
-      cancelled = true;
-      window.clearInterval(interval);
+      window.clearInterval(refresh);
+      window.clearInterval(ticker);
     };
   }, []);
 
-  // Journées jouées, pour dériver les temps forts et la une.
-  const scoredJournees = useMemo(
-    () =>
-      [...new Set(
-        journees
-          .filter((j) => [...j.matches, ...j.bonus].some(hasScore))
-          .map((j) => Number(j.number))
-          .filter(Boolean)
-      )].sort((a, b) => a - b),
-    [journees]
-  );
+  const todayKey = useMemo(() => localDateKey(new Date(clock)), [clock]);
 
-  const lastJournee = scoredJournees[scoredJournees.length - 1] || 1;
-  const currentJournee =
-    journees.find((j) => Number(j.number) === Number(lastJournee)) ||
-    journees[journees.length - 1];
+  const currentJournee = useMemo(() => {
+    if (!journees.length) return null;
 
-  const selectedJournee = currentJournee;
+    // La journée de la Gazette est déterminée par la DATE RÉELLE,
+    // jamais par "la dernière journée ayant un score". Ainsi J1 reste J1
+    // et, à 00:00, la Gazette passe automatiquement aux matchs du nouveau jour.
+    const datedDays = journees
+      .map((journee) => {
+        const all = [...journee.matches, ...journee.bonus];
+        const timestamps = all
+          .map(getKickoffTimestamp)
+          .filter((ts) => Number.isFinite(ts))
+          .sort((a, b) => a - b);
+        return {
+          journee,
+          firstKickoff: timestamps[0] ?? NaN,
+          lastKickoff: timestamps[timestamps.length - 1] ?? NaN,
+          matches: all,
+        };
+      })
+      .filter((x) => x.matches.length > 0);
 
-  // Table de recherche des matchs (Ligue 1 + bonus) par id — pour déduire les
-  // scores exacts à partir des pronostics déjà enregistrés.
-  const matchesByIdMap = useMemo(() => {
+    // 1) S'il y a des matchs aujourd'hui, c'est la journée active.
+    const today = datedDays.find(({ matches }) =>
+      matches.some((match) => localDateKeyFromMatch(match) === todayKey)
+    );
+    if (today) return today.journee;
+
+    // 2) Si la journée du jour n'a pas encore de match programmé,
+    // on prend la prochaine journée à venir.
+    const now = clock;
+    const upcoming = datedDays
+      .filter(({ firstKickoff }) => Number.isFinite(firstKickoff) && firstKickoff >= now)
+      .sort((a, b) => a.firstKickoff - b.firstKickoff)[0];
+    if (upcoming) return upcoming.journee;
+
+    // 3) Fin de saison : on reste sur la dernière journée disponible.
+    return [...datedDays].sort((a, b) => Number(b.journee.number) - Number(a.journee.number))[0]?.journee ?? journees[0];
+  }, [journees, clock, todayKey]);
+
+  // UNIQUEMENT les rencontres dont la date locale correspond à aujourd'hui.
+  // La journée peut contenir 10 matchs L1 + les bonus, mais le vendredi,
+  // par exemple, on n'affiche que le(s) match(s) du vendredi.
+  const todaysMatches = useMemo<DayMatch[]>(() => {
+    if (!currentJournee) return [];
+
+    return [
+      ...currentJournee.matches.map((match) => ({
+        match,
+        journee: currentJournee,
+        isBonus: false,
+      })),
+      ...currentJournee.bonus.map((match) => ({
+        match,
+        journee: currentJournee,
+        isBonus: true,
+      })),
+    ]
+      .filter(({ match }) => localDateKeyFromMatch(match) === todayKey)
+      .sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
+  }, [currentJournee, todayKey, clock]);
+
+  // Compatibilité avec le rendu : "matchs du jour" = uniquement la date locale actuelle.
+  const allCurrentMatches = todaysMatches;
+
+  const liveMatches = useMemo(() => {
+    return todaysMatches.filter(({ match }) => getMatchState(match) === "live");
+  }, [todaysMatches, clock]);
+
+  const finishedMatches = useMemo(() => {
+    return todaysMatches.filter(({ match }) => getMatchState(match) === "finished");
+  }, [todaysMatches, clock]);
+
+  // Matchs déjà terminés de toute la journée J1/J2/... :
+  // utiles pour l'analyse et le classement, sans les afficher dans "matchs du jour".
+  const currentJourneeAllMatches = useMemo<DayMatch[]>(() => {
+    if (!currentJournee) return [];
+    return [
+      ...currentJournee.matches.map((match) => ({ match, journee: currentJournee, isBonus: false })),
+      ...currentJournee.bonus.map((match) => ({ match, journee: currentJournee, isBonus: true })),
+    ].sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
+  }, [currentJournee]);
+
+  const journeeFinishedMatches = useMemo(() => {
+    return currentJourneeAllMatches.filter(({ match }) => getMatchState(match) === "finished");
+  }, [currentJourneeAllMatches, clock]);
+
+  const matchesById = useMemo(() => {
     const map = new Map<string, any>();
-    journees.forEach((j) => {
-      [...j.matches, ...j.bonus].forEach((m) => map.set(String(m.id), m));
-    });
+    journees.forEach((j) => [...j.matches, ...j.bonus].forEach((m) => map.set(String(m.id), m)));
     return map;
   }, [journees]);
 
-  // Classement "Dans notre compétition" — MÊME source de vérité que
-  // Classement/Accueil/Profil : points RÉELLEMENT enregistrés
-  // (predictions.points, jamais un recalcul 1N2 simplifié parallèle) +
-  // rankPlayers (src/lib/leaderboardRanking.ts) pour le tri/départage.
-  // `excludeMatchdayId` permet de recalculer un classement "avant la
-  // dernière journée" (pour La tendance / À surveiller) sans dupliquer la
-  // logique de tri : seul l'ensemble de pronostics pris en compte change.
-  function buildRankedPlayers(excludeMatchdayId?: string) {
-    const rows = profiles.map((profile) => {
-      const byMatch = predictionsByUser.get(profile.id)?.byMatch;
+  const rankedPlayers = useMemo(() => {
+    const ligue1Matches = journees.flatMap((j) => j.matches) as LeagueMatch[];
+    const bonusMatches = journees.flatMap((j) => j.bonus) as LeagueMatch[];
+
+    const stats = computeLeagueStats(
+      ligue1Matches,
+      bonusMatches,
+      rankingBonusOptions,
+      rankingPredictions,
+      profiles as LeagueProfile[],
+      rankingTeamNames,
+      {
+        favoriteTeamBySeason: rankingFavoriteHistory,
+      },
+    );
+
+    const rows = profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.pseudo || "Joueur",
+      avatar: profile.avatar_url || "",
+      points: stats.pointsByUser[profile.id] ?? 0,
+      exactScores: stats.exactScoresByUser[profile.id] ?? 0,
+      predictionsCount: stats.predictionsCountByUser[profile.id] ?? 0,
+      regularitySuccess: stats.regularitySuccessByUser[profile.id] ?? 0,
+      pseudo: profile.pseudo || "Joueur",
+    }));
+
+    return rankPlayers(rows);
+  }, [
+    profiles,
+    journees,
+    rankingPredictions,
+    rankingBonusOptions,
+    rankingFavoriteHistory,
+    rankingTeamNames,
+  ]);
+
+  const leader = rankedPlayers[0] ?? null;
+  const second = rankedPlayers[1] ?? null;
+  const third = rankedPlayers[2] ?? null;
+
+  const evolution = useMemo(() => {
+    if (!rankedPlayers.length) return null;
+    const moves = rankedPlayers.map((player) => {
+      let pointsToday = 0;
+      let exactToday = 0;
+      player && predictionsByUser.get(player.id)?.byMatch.forEach((prono, matchId) => {
+        const match = matchesById.get(matchId);
+        if (
+          !match ||
+          match.matchday_id !== currentJournee?.id ||
+          !isActuallyFinished(match)
+        ) return;
+        pointsToday += Number(prono.points || 0);
+        if (isExactPrediction(match, prono)) exactToday += 1;
+      });
+      return { ...player, pointsToday, exactToday };
+    });
+
+    const previousRanks = new Map<string, number>();
+    profiles.forEach((profile) => {
+      previousRanks.set(profile.id, rankedPlayers.find((p) => p.id === profile.id)?.rank ?? 0);
+    });
+
+    const biggestMover = [...moves].sort((a, b) => b.pointsToday - a.pointsToday || b.exactToday - a.exactToday)[0] ?? null;
+    const closestRace = leader && second ? leader.points - second.points : 0;
+
+    return { moves, biggestMover, closestRace, previousRanks };
+  }, [rankedPlayers, predictionsByUser, matchesById, currentJournee, profiles, clock]);
+
+  const lastFinished = journeeFinishedMatches[journeeFinishedMatches.length - 1]?.match ?? null;
+  const lastFinishedId = String(lastFinished?.id ?? "");
+
+  // ============================================================
+  // BLOCS ÉVOLUTIFS DE LA GAZETTE
+  // 1. Leader actuel
+  // 2. Plus belle progression depuis le dernier match terminé
+  // 3. Dernier coup : meilleure performance sur le dernier match
+  // ============================================================
+  const gazetteDynamicBlocks = useMemo(() => {
+    if (!rankedPlayers.length) {
+      return {
+        leader: null,
+        progression: null,
+        performance: null,
+      };
+    }
+
+    const previousMatchId = lastFinishedId;
+
+    // Reconstitue le classement juste AVANT le dernier match terminé.
+    // On retire uniquement les points/exacts de ce match, sans toucher
+    // aux calculs de classement actuels.
+    const previousRows = profiles.map((profile) => {
+      const player = predictionsByUser.get(profile.id);
       let points = 0;
       let exactScores = 0;
       let predictionsCount = 0;
-      let regularitySuccess = 0;
 
-      byMatch?.forEach((prono, matchId) => {
-        const match = matchesByIdMap.get(matchId);
-        if (excludeMatchdayId && match?.matchday_id === excludeMatchdayId) return;
-        const pts = Number(prono.points || 0);
-        points += pts;
+      player?.byMatch.forEach((prono, matchId) => {
+        const match = matchesById.get(matchId);
+        if (!match || !isActuallyFinished(match)) return;
+        if (previousMatchId && String(matchId) === previousMatchId) return;
+
+        points += Number(prono.points || 0);
         predictionsCount += 1;
-        if (pts > 0) regularitySuccess += 1;
-        if (match && isExactPrediction(match, prono)) exactScores += 1;
+        if (isExactPrediction(match, prono)) exactScores += 1;
       });
 
-      const pseudo = profile.pseudo || "Joueur";
       return {
         id: profile.id,
-        name: pseudo,
+        name: profile.pseudo || "Joueur",
         avatar: profile.avatar_url || "",
         points,
         exactScores,
         predictionsCount,
-        regularitySuccess,
-        pseudo,
+        regularitySuccess: 0,
+        pseudo: profile.pseudo || "Joueur",
       };
     });
 
-    return rankPlayers(rows);
+    const previousRanked = rankPlayers(previousRows);
+    const previousRankById = new Map(
+      previousRanked.map((player) => [player.id, player.rank]),
+    );
+
+    // Plus belle progression : on compare le rang avant/après le dernier match.
+    const movers = rankedPlayers
+      .map((player) => ({
+        ...player,
+        previousRank: previousRankById.get(player.id) ?? player.rank,
+        movement:
+          (previousRankById.get(player.id) ?? player.rank) - player.rank,
+      }))
+      .filter((player) => player.movement > 0)
+      .sort(
+        (a, b) =>
+          b.movement - a.movement ||
+          b.points - a.points ||
+          b.exactScores - a.exactScores,
+      );
+
+    const progression = movers[0] ?? null;
+
+    // Dernier coup : on cherche le meilleur prono sur le dernier match.
+    let performance: any = null;
+
+    if (lastFinished) {
+      const candidates = profiles
+        .map((profile) => {
+          const player = predictionsByUser.get(profile.id);
+          const prono = previousMatchId
+            ? player?.byMatch.get(previousMatchId)
+            : null;
+
+          if (!prono) return null;
+
+          const points = Number(prono.points || 0);
+          const exact = isExactPrediction(lastFinished, prono);
+
+          return {
+            player,
+            profile,
+            prono,
+            points,
+            exact,
+          };
+        })
+        .filter(Boolean)
+        .filter((item: any) => item.points > 0)
+        .sort(
+          (a: any, b: any) =>
+            Number(b.exact) - Number(a.exact) ||
+            b.points - a.points,
+        );
+
+      performance = candidates[0] ?? null;
+    }
+
+    return {
+      leader: rankedPlayers[0] ?? null,
+      progression,
+      performance,
+    };
+  }, [
+    rankedPlayers,
+    profiles,
+    predictionsByUser,
+    matchesById,
+    lastFinished,
+    lastFinishedId,
+  ]);
+
+
+  const analysis = useMemo(() => {
+    if (!currentJournee) {
+      return {
+        kicker: "GAZETTE LIVE",
+        title: "La journée va bientôt commencer",
+        intro: "Les premiers résultats feront progressivement apparaître la hiérarchie de votre compétition.",
+        paragraphs: ["La Gazette suivra chaque rencontre et actualisera l'analyse dès qu'un nouveau résultat sera disponible."],
+      };
+    }
+
+    const done = journeeFinishedMatches.length;
+    const total = currentJourneeAllMatches.length;
+    const live = liveMatches.length;
+    const hash = lastFinishedId.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const variant = hash % 4;
+    const mover = evolution?.biggestMover;
+    const moverName = mover?.name ?? leader?.name ?? "Le leader";
+    const gap = evolution?.closestRace ?? 0;
+
+    if (live > 0) {
+      const liveMatch = liveMatches[0].match;
+      const home = shortTeam(getTeamHome(liveMatch));
+      const away = shortTeam(getTeamAway(liveMatch));
+      const homeScore = Number(getScoreHome(liveMatch) ?? 0);
+      const awayScore = Number(getScoreAway(liveMatch) ?? 0);
+      const minute = getDisplayedLiveMinute(liveMatch, clock);
+      const diff = homeScore - awayScore;
+      const totalGoals = homeScore + awayScore;
+      const status = String(
+        liveMatch?.live_status ??
+        liveMatch?.status ??
+        liveMatch?.fixture?.status?.short ??
+        "",
+      ).toUpperCase();
+
+      let liveTitle = "";
+      let liveIntro = "";
+
+      // Le texte éditorial s'adapte au score réel : pas de "bataille continue"
+      // lorsque l'une des équipes mène largement.
+      if (["PAUSED", "HT", "HALFTIME"].includes(status)) {
+        if (diff >= 2) {
+          liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${home} a fait le break`;
+          liveIntro = `À la pause, ${home} a pris une vraie option. ${away} devra réagir pour relancer la rencontre.`;
+        } else if (diff === 1) {
+          liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${home} prend l'avantage`;
+          liveIntro = `À la pause, ${home} mène d'une courte tête. La seconde période peut encore tout changer.`;
+        } else if (diff === -1) {
+          liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${away} prend les commandes`;
+          liveIntro = `À la pause, ${away} mène d'un but. ${home} devra réagir au retour des vestiaires.`;
+        } else if (totalGoals >= 2) {
+          liveTitle = `${home} ${homeScore}–${awayScore} ${away} : un match déjà animé`;
+          liveIntro = `À la pause, les deux équipes ont déjà fait trembler les filets. La seconde période promet encore du mouvement.`;
+        } else {
+          liveTitle = `${home} ${homeScore}–${awayScore} ${away} : tout reste à faire`;
+          liveIntro = `À la pause, rien n'est joué. Le prochain but peut complètement faire basculer la rencontre.`;
+        }
+      } else if (diff >= 3) {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${home} déroule`;
+        liveIntro = `${minute} et ${home} a pris une avance très nette. Sauf retournement, la tendance est clairement en faveur des locaux.`;
+      } else if (diff === 2) {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${home} fait le break`;
+        liveIntro = `${minute} et ${home} compte deux buts d'avance. ${away} doit désormais réagir pour revenir dans le match.`;
+      } else if (diff === 1) {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${home} prend l'avantage`;
+        liveIntro = `${minute} et ${home} mène d'un but. ${away} reste à portée, mais le prochain événement peut peser lourd sur les points de la compétition.`;
+      } else if (diff === -1) {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : ${away} prend les commandes`;
+        liveIntro = `${minute} et ${away} mène d'un but. ${home} doit réagir pour inverser la tendance.`;
+      } else if (totalGoals >= 3) {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : un scénario débridé`;
+        liveIntro = `${minute} et les buts s'enchaînent. Le résultat reste impossible à figer tant que le coup de sifflet final n'est pas donné.`;
+      } else if (totalGoals >= 1) {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : le match s'anime`;
+        liveIntro = `${minute} et un but a déjà fait évoluer la rencontre. Chaque nouvelle action peut encore modifier les points de vos joueurs.`;
+      } else {
+        liveTitle = `${home} ${homeScore}–${awayScore} ${away} : tout reste à faire`;
+        liveIntro = `${minute} et les deux équipes sont toujours à égalité. Un seul but peut faire basculer le match et la hiérarchie de la compétition.`;
+      }
+
+      const endGame =
+        minute === "90+'"
+          ? `À ${minute}, le résultat se joue dans les derniers instants : chaque but peut encore changer les points.`
+          : null;
+
+      return {
+        kicker: "ANALYSE EN DIRECT",
+        title: liveTitle,
+        intro: endGame ?? liveIntro,
+        paragraphs: [
+          `${done} match${done > 1 ? "s" : ""} ${done > 1 ? "sont" : "est"} déjà terminé${done > 1 ? "s" : ""} sur cette ${currentJournee.title}. La hiérarchie se construit donc encore en temps réel.`,
+          leader ? `${leader.name} occupe actuellement la première place avec ${leader.points} point${leader.points > 1 ? "s" : ""}. ${second ? `${second.name} suit à ${gap} point${gap > 1 ? "s" : ""}.` : ""}` : "Le classement se met en place au fil des résultats.",
+          `${moverName} est pour l'instant le joueur qui profite le plus des résultats déjà enregistrés${mover?.pointsToday ? ` avec ${mover.pointsToday} point${mover.pointsToday > 1 ? "s" : ""} pris sur la journée.` : "."}`,
+        ],
+      };
+    }
+
+    if (!done) {
+      return {
+        kicker: "AVANT LE COUP D'ENVOI",
+        title: `${currentJournee.title} : la course va commencer`,
+        intro: "Aucun résultat n'est encore figé. Les premiers matchs vont donner le ton de la journée.",
+        paragraphs: [
+          `${total} rencontre${total > 1 ? "s" : ""} sont programmée${total > 1 ? "s" : ""}. Les pronostics sont en place et la première évolution du classement apparaîtra dès le premier score officiel.`,
+          "La Gazette suivra ensuite les changements de points, les scores exacts et les mouvements du podium sans attendre la fin de la journée.",
+        ],
+      };
+    }
+
+    const lastHome = shortTeam(getTeamHome(lastFinished));
+    const lastAway = shortTeam(getTeamAway(lastFinished));
+    const lastScore = `${getScoreHome(lastFinished)}–${getScoreAway(lastFinished)}`;
+    const lastResult = getResult1N2(getScoreHome(lastFinished), getScoreAway(lastFinished));
+    const resultText = lastResult === "1" ? `${lastHome} s'impose` : lastResult === "2" ? `${lastAway} s'impose` : "les deux équipes se quittent sur un nul";
+
+    const variants = [
+      `${resultText} (${lastScore}) et le résultat vient de remettre le classement de la compétition en mouvement.`,
+      `Le dernier coup de sifflet a encore déplacé les lignes : ${lastHome}–${lastAway} (${lastScore}) devient le nouveau point de référence de la journée.`,
+      `Après ${lastHome}–${lastAway}, conclu ${lastScore}, les écarts commencent à prendre une vraie signification dans la bataille entre vos pronostiqueurs.`,
+      `Le résultat ${lastHome}–${lastAway} (${lastScore}) ajoute un nouvel épisode à la course au classement. Les prochains matchs peuvent encore tout changer.`,
+    ];
+
+    const exactCount = finishedMatches.reduce((sum, { match }) => {
+      let count = 0;
+      profiles.forEach((profile) => {
+        const prono = predictionsByUser.get(profile.id)?.byMatch.get(String(match.id));
+        if (isExactPrediction(match, prono)) count += 1;
+      });
+      return sum + count;
+    }, 0);
+
+    return {
+      kicker: `${currentJournee.title} · ${done}/${total} MATCH${total > 1 ? "S" : ""}`,
+      title: leader ? `${leader.name} garde la main, mais la journée n'a pas livré son dernier mot` : "La hiérarchie commence à se dessiner",
+      intro: variants[variant],
+      paragraphs: [
+        leader ? `${leader.name} mène actuellement avec ${leader.points} point${leader.points > 1 ? "s" : ""}. ${second ? `${second.name} reste à ${gap} point${gap > 1 ? "s" : ""}, tandis que ${third ? third.name : "le troisième joueur"} complète le podium.` : ""}` : "Les premiers points sont désormais enregistrés.",
+        mover ? `${mover.name} est le joueur qui a le plus profité des matchs déjà joués, avec ${mover.pointsToday} point${mover.pointsToday > 1 ? "s" : ""} pris sur cette journée${mover.exactToday ? ` et ${mover.exactToday} score exact.` : "."}` : "Les différences entre les joueurs restent encore faibles.",
+        exactCount > 0 ? `${exactCount} score${exactCount > 1 ? "s" : ""} exact${exactCount > 1 ? "s" : ""} ont déjà été trouvé${exactCount > 1 ? "s" : ""}. Ces détails peuvent devenir décisifs lorsque les écarts au classement se resserrent.` : "Aucun score exact n'a encore été enregistré sur les matchs terminés.",
+      ],
+    };
+  }, [currentJournee, journeeFinishedMatches, currentJourneeAllMatches.length, liveMatches, evolution, leader, second, third, lastFinishedId, profiles, predictionsByUser, clock]);
+
+  const dynamicStat = useMemo(() => {
+    const finished = finishedMatches.length;
+    const total = allCurrentMatches.length;
+    const totalPoints = rankedPlayers.reduce((sum, p) => sum + p.points, 0);
+    const exacts = rankedPlayers.reduce((sum, p) => sum + p.exactScores, 0);
+    const movers = evolution?.moves.filter((p) => p.pointsToday > 0).length ?? 0;
+    const index = Math.floor(clock / 12000) % 4;
+
+    const stats = [
+      { value: finished, label: `match${finished > 1 ? "s" : ""} terminé${finished > 1 ? "s" : ""} sur ${total || 0}` },
+      { value: exacts, label: `score${exacts > 1 ? "s" : ""} exact${exacts > 1 ? "s" : ""} enregistré${exacts > 1 ? "s" : ""}` },
+      { value: totalPoints, label: `point${totalPoints > 1 ? "s" : ""} actuellement distribu${totalPoints > 1 ? "és" : "é"}` },
+      { value: movers, label: `joueur${movers > 1 ? "s" : ""} ayant déjà marqué sur la journée` },
+    ];
+
+    return stats[index];
+  }, [finishedMatches.length, allCurrentMatches.length, rankedPlayers, evolution, clock]);
+
+  const weekendMatch = useMemo(() => {
+    if (!currentJourneeAllMatches.length) return null;
+    const scoredPopularity = [...currentJourneeAllMatches].map((item) => {
+      let predictions = 0;
+      profiles.forEach((profile) => {
+        if (predictionsByUser.get(profile.id)?.byMatch.has(String(item.match.id))) predictions += 1;
+      });
+      const kickoff = getKickoffTimestamp(item.match);
+      const teams = `${clean(getTeamHome(item.match))} ${clean(getTeamAway(item.match))}`;
+      const prestige = /psg|paris|marseille|om|lyon|ol|monaco|lille|lens/.test(teams) ? 20 : 0;
+      return { ...item, predictions, kickoff, prestige };
+    });
+    return scoredPopularity.sort((a, b) => b.prestige - a.prestige || b.predictions - a.predictions || a.kickoff - b.kickoff)[0] ?? null;
+  }, [currentJourneeAllMatches, profiles, predictionsByUser]);
+
+  const bigPerformance = useMemo(() => {
+    if (!journeeFinishedMatches.length) return null;
+    const candidates: any[] = [];
+    journeeFinishedMatches.forEach(({ match }) => {
+      profiles.forEach((profile) => {
+        const prono = predictionsByUser.get(profile.id)?.byMatch.get(String(match.id));
+        if (!prono || Number(prono.points || 0) <= 0) return;
+        candidates.push({
+          player: rankedPlayers.find((p) => p.id === profile.id) ?? { name: profile.pseudo || "Joueur", avatar: profile.avatar_url || "" },
+          match,
+          points: Number(prono.points || 0),
+          exact: isExactPrediction(match, prono),
+        });
+      });
+    });
+    return candidates.sort((a, b) => Number(b.exact) - Number(a.exact) || b.points - a.points)[0] ?? null;
+  }, [journeeFinishedMatches, profiles, predictionsByUser, rankedPlayers]);
+
+  const matchStatusLabel = (match: any) => {
+    const state = getMatchState(match);
+    if (state === "live") return getDisplayedLiveMinute(match, clock);
+    if (state === "finished" || hasScore(match)) return "TERMINÉ";
+    const kickoff = getKickoffTimestamp(match);
+    if (Number.isFinite(kickoff)) {
+      return new Date(kickoff).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    }
+    return "À VENIR";
+  };
+
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="mx-auto max-w-6xl space-y-5 px-4 pb-28 pt-6">
+          <SkeletonBlock className="h-32 w-full rounded-[28px]" />
+          <SkeletonBlock className="h-72 w-full rounded-[28px]" />
+          <div className="grid gap-4 md:grid-cols-2"><SkeletonBlock className="h-44 rounded-2xl" /><SkeletonBlock className="h-44 rounded-2xl" /></div>
+        </div>
+      </AppShell>
+    );
   }
 
-  const rankedPlayers = useMemo(
-    () => buildRankedPlayers(),
-    [profiles, predictionsByUser, matchesByIdMap],
-  );
-
-  const rankedPlayersBeforeLast = useMemo(
-    () => buildRankedPlayers(selectedJournee?.id),
-    [profiles, predictionsByUser, matchesByIdMap, selectedJournee],
-  );
-
-  const currentDayMatches = useMemo<DayMatch[]>(
-    () =>
-      selectedJournee
-        ? [
-            ...selectedJournee.matches.map((match) => ({
-              match,
-              journee: selectedJournee,
-              isBonus: false,
-            })),
-            ...selectedJournee.bonus.map((match) => ({
-              match,
-              journee: selectedJournee,
-              isBonus: true,
-            })),
-          ].filter(({ match }) => hasScore(match))
-        : [],
-    [selectedJournee]
-  );
-
-  // État de la journée : "upcoming" (pas commencée), "live" (partielle/en
-  // cours) ou "finished" (tous les matchs joués). Sert à ne jamais présenter
-  // une statistique partielle comme si elle était définitive.
-  const dayStatus = useMemo(() => {
-    if (!selectedJournee) {
-      return { status: "upcoming" as const, total: 0, finished: 0 };
-    }
-    const all = [...selectedJournee.matches, ...selectedJournee.bonus];
-    const total = all.length;
-    const finished = currentDayMatches.length;
-    const status =
-      total === 0 || finished === 0
-        ? ("upcoming" as const)
-        : finished >= total
-          ? ("finished" as const)
-          : ("live" as const);
-    return { status, total, finished };
-  }, [selectedJournee, currentDayMatches]);
-
-  // Répartition 1/N/2 des pronostics des joueurs sur la journée courante.
-  const dayPredictionStats = useMemo(() => {
-    const distribution = { "1": 0, N: 0, "2": 0 };
-    let totalPredictions = 0;
-    let totalExact = 0;
-
-    const matchRows: {
-      dayMatch: DayMatch;
-      picks: { result: string; exact: boolean }[];
-    }[] = [];
-
-    profiles.forEach((profile) => {
-      const playerPronos = predictionsByUser.get(profile.id);
-      currentDayMatches.forEach((dayMatch) => {
-        const prono = playerPronos?.byMatch.get(String(dayMatch.match.id));
-        if (!prono) return;
-        const pick = pickResult(prono);
-        const exact = isExactPrediction(dayMatch.match, prono);
-
-        if (pick === "1" || pick === "N" || pick === "2") {
-          distribution[pick] += 1;
-          totalPredictions += 1;
-        }
-        if (exact) totalExact += 1;
-
-        let row = matchRows.find(
-          (entry) => entry.dayMatch.match === dayMatch.match
-        );
-        if (!row) {
-          row = { dayMatch, picks: [] };
-          matchRows.push(row);
-        }
-        row.picks.push({ result: pick || "", exact });
-      });
-    });
-
-    return { distribution, totalPredictions, totalExact, matchRows };
-  }, [profiles, predictionsByUser, currentDayMatches]);
-
-  // ===== FOCUS JOURNÉE
-  const focusStats = useMemo(() => {
-    let goals = 0;
-    let matchesPlayed = 0;
-    currentDayMatches.forEach(({ match }) => {
-      goals += Number(getScoreHome(match) || 0) + Number(getScoreAway(match) || 0);
-      matchesPlayed += 1;
-    });
-
-    return {
-      goals,
-      matchesPlayed,
-      average: matchesPlayed > 0 ? goals / matchesPlayed : 0,
-      exactScores: dayPredictionStats.totalExact,
-      goalsAvailable: matchesPlayed > 0,
-      exactAvailable: dayPredictionStats.totalPredictions > 0,
-    };
-  }, [currentDayMatches, dayPredictionStats]);
-
-  // ===== FOCUS JOURNÉE : match "en tête d'affiche" — le premier de la
-  // journée par coup d'envoi (celui qui ouvre le bal), données réelles
-  // uniquement (équipes, logos, date, heure). Aucun stade en base
-  // (matches n'a pas de colonne venue) : jamais inventé, simplement omis.
-  const focusMatch = useMemo(() => {
-    if (!selectedJournee) return null;
-    const withKickoff = selectedJournee.matches.filter(
-      (m: any) => m.kickoff ?? m.kickoff_time,
+  if (error) {
+    return (
+      <AppShell>
+        <section className="mx-auto max-w-4xl px-4 pb-28 pt-10">
+          <div className="rounded-[28px] border border-red-400/20 bg-[#08111d]/95 p-10 text-center">
+            <Newspaper className="mx-auto size-10 text-red-300" />
+            <h1 className="mt-4 font-display text-2xl font-black text-white">Gazette indisponible</h1>
+            <p className="mt-2 text-sm text-slate-400">Les données de la compétition n'ont pas pu être chargées.</p>
+            <button onClick={() => loadData()} className="mt-5 rounded-xl bg-emerald-300 px-5 py-3 font-display text-sm font-black text-slate-950">RÉESSAYER</button>
+          </div>
+        </section>
+      </AppShell>
     );
-    const sorted = [...withKickoff].sort((a: any, b: any) => {
-      const ka = new Date(a.kickoff ?? a.kickoff_time).getTime();
-      const kb = new Date(b.kickoff ?? b.kickoff_time).getTime();
-      return ka - kb;
-    });
-    return sorted[0] ?? selectedJournee.matches[0] ?? null;
-  }, [selectedJournee]);
+  }
 
-  // ===== LES TEMPS FORTS
-  const highlights = useMemo(() => {
-    if (currentDayMatches.length === 0) return null;
-
-    const biggestWin = [...currentDayMatches].sort((a, b) => {
-      const ga = Math.abs(
-        Number(getScoreHome(a.match) || 0) - Number(getScoreAway(a.match) || 0)
-      );
-      const gb = Math.abs(
-        Number(getScoreHome(b.match) || 0) - Number(getScoreAway(b.match) || 0)
-      );
-      return gb - ga;
-    })[0];
-
-    const mostGoals = [...currentDayMatches].sort((a, b) => {
-      const ta =
-        Number(getScoreHome(a.match) || 0) + Number(getScoreAway(a.match) || 0);
-      const tb =
-        Number(getScoreHome(b.match) || 0) + Number(getScoreAway(b.match) || 0);
-      return tb - ta;
-    })[0];
-
-    const attackMap = new Map<string, number>();
-    currentDayMatches.forEach(({ match }) => {
-      const home = getTeamHome(match);
-      const away = getTeamAway(match);
-      attackMap.set(home, (attackMap.get(home) || 0) + Number(getScoreHome(match) || 0));
-      attackMap.set(away, (attackMap.get(away) || 0) + Number(getScoreAway(match) || 0));
-    });
-    const bestAttack = [...attackMap.entries()].sort((a, b) => b[1] - a[1])[0];
-
-    const surpriseCandidates = dayPredictionStats.matchRows
-      .map((row) => {
-        const actual = getResult1N2(
-          getScoreHome(row.dayMatch.match),
-          getScoreAway(row.dayMatch.match)
-        );
-        const votes = row.picks.filter((pick) => pick.result === actual).length;
-        return {
-          ...row,
-          actual,
-          percentage: row.picks.length
-            ? Math.round((votes / row.picks.length) * 100)
-            : 100,
-        };
-      })
-      .filter((row) => row.actual)
-      .sort((a, b) => a.percentage - b.percentage)[0];
-
-    return { biggestWin, mostGoals, bestAttack, surprise: surpriseCandidates || null };
-  }, [currentDayMatches, dayPredictionStats]);
-
-  // ===== LE PRONO SURPRISE
-  // On identifie le match sur lequel les joueurs sont le plus unanimes
-  // (le % du résultat dominant le plus élevé) pour contextualiser le pronostic.
-  const pronoSurprise = useMemo(() => {
-    const total = dayPredictionStats.totalPredictions;
-    if (!total) return null;
-
-    const homePctGlobal = Math.round((dayPredictionStats.distribution["1"] / total) * 100);
-    const drawPctGlobal = Math.round((dayPredictionStats.distribution.N / total) * 100);
-    const awayPctGlobal = Math.max(0, 100 - homePctGlobal - drawPctGlobal);
-
-    // Le match le plus "unanime" : celui dont le résultat dominant concentre
-    // le plus grand pourcentage de votes.
-    const matchConsensus = dayPredictionStats.matchRows
-      .map((row) => {
-        const counts = { "1": 0, N: 0, "2": 0 };
-        row.picks.forEach((pick) => {
-          if (pick.result === "1" || pick.result === "N" || pick.result === "2") {
-            counts[pick.result] += 1;
-          }
-        });
-        const n = counts["1"] + counts.N + counts["2"];
-        if (!n) return null;
-        const winner: "1" | "N" | "2" =
-          counts["1"] >= counts.N && counts["1"] >= counts["2"]
-            ? "1"
-            : counts.N >= counts["2"]
-              ? "N"
-              : "2";
-        const pct = Math.round((counts[winner] / n) * 100);
-        return { row, winner, pct, n };
-      })
-      .filter((x): x is NonNullable<typeof x> => Boolean(x))
-      .sort((a, b) => b.pct - a.pct || b.n - a.n)[0];
-
-    // Si aucun consensus clair par match, on retombe sur la tendance globale.
-    const winner: "1" | "N" | "2" = matchConsensus
-      ? matchConsensus.winner
-      : homePctGlobal >= drawPctGlobal && homePctGlobal >= awayPctGlobal
-        ? "1"
-        : drawPctGlobal >= awayPctGlobal
-          ? "N"
-          : "2";
-
-    const label =
-      winner === "1"
-        ? "victoire à domicile"
-        : winner === "2"
-          ? "victoire à l'extérieur"
-          : "match nul";
-
-    const pct = matchConsensus
-      ? matchConsensus.pct
-      : winner === "1"
-        ? homePctGlobal
-        : winner === "2"
-          ? awayPctGlobal
-          : drawPctGlobal;
-
-    const matchRef = matchConsensus?.row.dayMatch.match ?? null;
-    const home = matchRef ? getTeamHome(matchRef) : "";
-    const away = matchRef ? getTeamAway(matchRef) : "";
-
-    return {
-      pct,
-      label,
-      total: matchConsensus?.n ?? total,
-      matchLabel: matchRef ? `${shortTeam(home)} — ${shortTeam(away)}` : null,
-    };
-  }, [dayPredictionStats]);
-
-  // ===== LA TENDANCE
-  const tendance = useMemo(() => {
-    const merged = rankedPlayers.map((player) => {
-      const before = rankedPlayersBeforeLast.find((p) => p.id === player.id);
-      const oldRank = before?.rank ?? player.rank;
-      return { ...player, oldRank, evolution: oldRank - player.rank };
-    });
-    const best = [...merged].sort(
-      (a, b) => b.evolution - a.evolution || b.points - a.points
-    )[0];
-    if (!best || best.evolution <= 0) return null;
-    return best;
-  }, [rankedPlayers, rankedPlayersBeforeLast]);
-
-  // ===== LA UNE : gros événement prioritaire, sinon fait marquant réel.
-  const laUne = useMemo(() => {
-    if (currentDayMatches.length === 0) return null;
-
-    // Priorité 1 : le plus gros score (événement marquant).
-    const sorted = [...currentDayMatches].sort((a, b) => {
-      const ta =
-        Number(getScoreHome(a.match) || 0) + Number(getScoreAway(a.match) || 0);
-      const tb =
-        Number(getScoreHome(b.match) || 0) + Number(getScoreAway(b.match) || 0);
-      return tb - ta;
-    });
-    const top = sorted[0];
-    const home = getTeamHome(top.match);
-    const away = getTeamAway(top.match);
-    const scoreH = Number(getScoreHome(top.match) || 0);
-    const scoreA = Number(getScoreAway(top.match) || 0);
-    const totalGoals = scoreH + scoreA;
-
-    const result1N2 = getResult1N2(scoreH, scoreA);
-    let title = `${shortTeam(home)} ${scoreH}–${scoreA} ${shortTeam(away)}`;
-    let subtitle = "";
-
-    if (result1N2 === "1") subtitle = `${home} s'impose face à ${away}.`;
-    else if (result1N2 === "2") subtitle = `${away} s'impose face à ${home}.`;
-    else subtitle = `${home} et ${away} se neutralisent.`;
-
-    if (totalGoals >= 4) {
-      title = `${shortTeam(home)}–${shortTeam(away)} : ${totalGoals} buts !`;
-    }
-
-    return {
-      title,
-      subtitle,
-      badge: `JOURNÉE ${selectedJournee?.title || ""}`,
-      teamName: scoreH >= scoreA ? home : away,
-      home,
-      away,
-      scoreH,
-      scoreA,
-      totalGoals,
-    };
-  }, [currentDayMatches, selectedJournee]);
-
-  // ===== CLASSEMENT LIGUE 1 (provisoire, réel) — calculé uniquement à
-  // partir des matchs Ligue 1 déjà joués et enregistrés (journees[].matches
-  // avec score). Aucune donnée externe : sert uniquement à détecter une
-  // course serrée (titre / Europe / maintien) pour la Rubrique du moment.
-  const ligue1Standings = useMemo(() => {
-    const table = new Map<string, { team: string; points: number; played: number; diff: number }>();
-    journees.forEach((j) => {
-      j.matches.forEach((m: any) => {
-        if (!hasScore(m)) return;
-        const home = getTeamHome(m);
-        const away = getTeamAway(m);
-        const hs = Number(getScoreHome(m) || 0);
-        const as = Number(getScoreAway(m) || 0);
-        ([[home, hs, as], [away, as, hs]] as const).forEach(([team, gf, ga]) => {
-          if (!team) return;
-          const row = table.get(team) || { team, points: 0, played: 0, diff: 0 };
-          row.played += 1;
-          row.diff += gf - ga;
-          row.points += gf > ga ? 3 : gf === ga ? 1 : 0;
-          table.set(team, row);
-        });
-      });
-    });
-    return [...table.values()].sort((a, b) => b.points - a.points || b.diff - a.diff);
-  }, [journees]);
-
-  // ===== RUBRIQUE DU MOMENT — remplace automatiquement Mercato quand la
-  // période n'est pas active (voir mercatoActive, réglage admin). Choisit un
-  // thème éditorial selon le contexte réel de la saison, jamais une donnée
-  // externe ni inventée. Architecture volontairement en cascade (if/else if)
-  // pour rester facile à étendre avec de nouveaux thèmes.
-  const rubriqueDuMoment = useMemo(() => {
-    const MIN_PLAYED_FOR_RACE = 5; // trop tôt en saison, un écart de points ne veut encore rien dire.
-    const top = ligue1Standings;
-
-    const titleRace =
-      top.length >= 2 && top[0].played >= MIN_PLAYED_FOR_RACE && top[0].points - top[1].points <= 3;
-    const europeRace =
-      top.length >= 6 &&
-      top[3].played >= MIN_PLAYED_FOR_RACE &&
-      top[3].points - top[5].points <= 3;
-    const relegationRace =
-      top.length >= 4 &&
-      top[top.length - 1].played >= MIN_PLAYED_FOR_RACE &&
-      top[top.length - 4].points - top[top.length - 1].points <= 4;
-
-    if (relegationRace) {
-      const last4 = top.slice(-4);
-      return {
-        emoji: "⚠️",
-        label: "La course au maintien",
-        accentClass: "bg-red-400",
-        title: `${last4.length} équipes se tiennent en ${last4[0].points - last4[last4.length - 1].points} points`,
-        text: `${last4.map((t) => shortTeam(t.team)).join(", ")} sont engagées dans la lutte pour le maintien.`,
-      };
-    }
-    if (titleRace) {
-      return {
-        emoji: "🏆",
-        label: "La course au titre",
-        accentClass: "bg-amber-400",
-        title: `${shortTeam(top[0].team)} mène avec ${top[0].points} pts`,
-        text: `Seulement ${top[0].points - top[1].points} point${top[0].points - top[1].points > 1 ? "s" : ""} d'avance sur ${shortTeam(top[1].team)} — la course au titre est lancée.`,
-      };
-    }
-    if (europeRace) {
-      return {
-        emoji: "🔥",
-        label: "La course à l'Europe",
-        accentClass: "bg-cyan-400",
-        title: "Les places européennes se resserrent",
-        text: `De la ${4}ᵉ à la ${6}ᵉ place, seulement ${top[3].points - top[5].points} points séparent les prétendants à l'Europe.`,
-      };
-    }
-    if (focusMatch && !hasScore(focusMatch)) {
-      return {
-        emoji: "⚽",
-        label: "Le match du jour",
-        accentClass: "bg-emerald-400",
-        title: `${shortTeam(getTeamHome(focusMatch))} — ${shortTeam(getTeamAway(focusMatch))}`,
-        text: `Rendez-vous à suivre pour la ${selectedJournee?.title || "prochaine journée"} de Ligue 1.`,
-      };
-    }
-    if (dayStatus.status === "finished" && laUne) {
-      return {
-        emoji: "📋",
-        label: "Ce qu'il faut retenir",
-        accentClass: "bg-sky-400",
-        title: laUne.title,
-        text: laUne.subtitle,
-      };
-    }
-    if (highlights?.biggestWin) {
-      const m = highlights.biggestWin.match;
-      return {
-        emoji: "⭐",
-        label: "La performance du week-end",
-        accentClass: "bg-fuchsia-400",
-        title: `${shortTeam(getTeamHome(m))} ${getScoreHome(m)}–${getScoreAway(m)} ${shortTeam(getTeamAway(m))}`,
-        text: "La plus large victoire de la journée en Ligue 1.",
-      };
-    }
-    if (laUne) {
-      return {
-        emoji: "🔥",
-        label: "À ne pas manquer",
-        accentClass: "bg-emerald-400",
-        title: laUne.title,
-        text: laUne.subtitle,
-      };
-    }
-    return null;
-  }, [ligue1Standings, focusMatch, selectedJournee, dayStatus, laUne, highlights]);
-
-  // ===== DERNIÈRES ACTUS : un mix éditorial des faits réels de la journée.
-  // Chaque carte raconte une information DIFFÉRENTE : on déduplique par
-  // match pour ne jamais afficher deux fois le même événement (ex. "RCL 1-0 AJA"
-  // répété). Les titres sont éditorialisés mais toujours dérivés des données réelles.
-  const derniereActus = useMemo(() => {
-    const items: {
-      id: string;
-      title: string;
-      subtitle?: string;
-      badge: string;
-      kickoff?: string;
-      teamName?: string;
-    }[] = [];
-
-    const usedMatchIds = new Set<string>();
-
-    // Carte 1 — Résultat marquant (la plus large victoire).
-    if (highlights?.biggestWin) {
-      const m = highlights.biggestWin.match;
-      const h = getTeamHome(m);
-      const a = getTeamAway(m);
-      const hScore = Number(getScoreHome(m) || 0);
-      const aScore = Number(getScoreAway(m) || 0);
-      const winner = hScore >= aScore ? h : a;
-      usedMatchIds.add(String(m.id));
-      items.push({
-        id: `win-${m.id}`,
-        title: `${shortTeam(winner)} signe la plus large victoire`,
-        subtitle: `${shortTeam(h)} ${hScore}–${aScore} ${shortTeam(a)}`,
-        badge: "RÉSULTAT",
-        kickoff: formatKickoff(m.kickoff ?? m.kickoff_time),
-        teamName: winner,
-      });
-    }
-
-    // Carte 2 — Match le plus prolifique (si c'est un AUTRE match que la carte 1).
-    if (highlights?.mostGoals && !usedMatchIds.has(String(highlights.mostGoals.match.id))) {
-      const m = highlights.mostGoals.match;
-      const h = getTeamHome(m);
-      const a = getTeamAway(m);
-      const total =
-        Number(getScoreHome(m) || 0) + Number(getScoreAway(m) || 0);
-      usedMatchIds.add(String(m.id));
-      items.push({
-        id: `goals-${m.id}`,
-        title: `${shortTeam(h)}–${shortTeam(a)} : ${total} buts au total`,
-        subtitle: `Le match le plus prolifique de la journée`,
-        badge: "LIGUE 1",
-        kickoff: formatKickoff(m.kickoff ?? m.kickoff_time),
-        teamName: total >= 3 ? h : a,
-      });
-    }
-
-    // Carte 3 — Surprise de la journée (si c'est encore un AUTRE match).
-    if (
-      highlights?.surprise &&
-      !usedMatchIds.has(String(highlights.surprise.dayMatch.match.id))
-    ) {
-      const m = highlights.surprise.dayMatch.match;
-      const h = getTeamHome(m);
-      const a = getTeamAway(m);
-      usedMatchIds.add(String(m.id));
-      items.push({
-        id: `surprise-${m.id}`,
-        title: `Les joueurs avaient-ils vu juste ?`,
-        subtitle: `${shortTeam(h)} ${getScoreHome(m)}–${getScoreAway(m)} ${shortTeam(a)} · ${highlights.surprise.percentage}% de bons pronos`,
-        badge: "SURPRISE",
-        kickoff: formatKickoff(m.kickoff ?? m.kickoff_time),
-        teamName: h,
-      });
-    }
-
-    // Carte 4 — Classement / progression (toujours une info différente).
-    const bestScore = rankedPlayers[0];
-    if (bestScore) {
-      items.push({
-        id: `leader-${bestScore.id}`,
-        title: `${bestScore.name} prend les commandes`,
-        subtitle: `${bestScore.points} points au classement général`,
-        badge: "CLASSEMENT",
-        teamName: null as any,
-      });
-    }
-
-    return items.slice(0, 4);
-  }, [highlights, rankedPlayers]);
-
-  // ===== ACTUALITÉS EXTERNES — regroupements dérivés (voir
-  // externalArticles + fetchExternalGazetteNews plus haut). Purs ajouts :
-  // ne touchent à aucun calcul interne existant (laUne, derniereActus,
-  // highlights restent inchangés et servent toujours de repli). =====
-  const externalMercatoArticles = useMemo(
-    () => externalArticles.filter((a) => a.category === "mercato"),
-    [externalArticles]
-  );
-  const externalGeneralArticles = useMemo(
-    () => externalArticles.filter((a) => a.category !== "mercato"),
-    [externalArticles]
-  );
-
-  // "À la une" : la meilleure vraie actu externe si disponible, sinon
-  // l'événement interne calculé (laUne ci-dessus) — jamais les deux mélangés.
-  const effectiveLaUne = useMemo(() => {
-    const top = externalGeneralArticles[0];
-    if (!top) return laUne;
-    return {
-      title: top.title,
-      subtitle: top.summary,
-      badge: top.source.toUpperCase(),
-      teamName: top.clubLabel,
-      imageUrl: top.imageUrl,
-      sourceUrl: top.sourceUrl,
-    };
-  }, [externalGeneralArticles, laUne]);
-
-  // "Dernières actus" : jusqu'à 5 vraies actus externes (on saute celle déjà
-  // utilisée en Une pour ne jamais répéter la même info), sinon les cartes
-  // internes existantes.
-  const effectiveDerniereActus = useMemo(() => {
-    if (externalGeneralArticles.length === 0) return derniereActus;
-    const usedAsUneId = externalGeneralArticles[0]?.id;
-    const pool = externalGeneralArticles.filter((a) => a.id !== usedAsUneId);
-    return (pool.length > 0 ? pool : externalGeneralArticles).slice(0, 5).map((a) => ({
-      id: a.id,
-      title: a.title,
-      subtitle: a.summary,
-      badge: a.source.toUpperCase(),
-      kickoff: formatKickoff(a.publishedAt),
-      teamName: a.clubLabel || undefined,
-      imageUrl: a.imageUrl || undefined,
-      onClick: () => window.open(a.sourceUrl, "_blank", "noopener,noreferrer"),
-    }));
-  }, [externalGeneralArticles, derniereActus]);
-
-  // "Les temps forts" : ligne secondaire de vraies actus externes, en plus
-  // du résumé statistique interne — jamais à la place (voir JSX plus bas).
-  const externalHighlightExtras = useMemo(() => {
-    const usedIds = new Set(
-      [externalGeneralArticles[0]?.id, ...effectiveDerniereActus.map((a: any) => a.id)].filter(Boolean)
-    );
-    return externalGeneralArticles.filter((a) => !usedIds.has(a.id)).slice(0, 3);
-  }, [externalGeneralArticles, effectiveDerniereActus]);
-
-  const hasAnyData = journees.length > 0;
+  const liveCount = liveMatches.length;
+  const totalMatches = allCurrentMatches.length;
+  const finishedCount = finishedMatches.length;
 
   return (
     <AppShell>
-      <style>{`
-        @keyframes gazette-fade-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
-        .gazette-fade-up { animation: gazette-fade-up .55s cubic-bezier(.22,1,.36,1) both; }
-        @media (prefers-reduced-motion: reduce) {
-          .gazette-fade-up { animation: none; }
-        }
-      `}</style>
+      <div className="relative z-10 mx-auto max-w-[1320px] px-3 pb-28 md:px-6 md:pb-20">
+        <article className="overflow-hidden rounded-[30px] border border-slate-800/90 bg-[#07101c]/96 shadow-[0_30px_100px_rgba(0,0,0,.45)]">
 
-      <div className="relative z-10 mx-auto max-w-6xl space-y-5 pb-28 md:space-y-7 md:pb-20">
-        {/* ===== HEADER PREMIUM COMPACT ===== */}
-        <header className="gazette-fade-up flex items-center justify-between gap-3 rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-4 backdrop-blur-xl shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-          <div className="flex items-center gap-3">
-            <div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-[#060b16]">
-              <img
-                src="/logo%20ligue%201%20white.png"
-                alt="Ligue 1"
-                className="h-8 w-auto object-contain"
-              />
+          {/* 1 — GAZETTE LIVE */}
+          <header className="border-b border-slate-800 px-5 py-6 md:px-10 md:py-8">
+            <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="flex items-center gap-3">
+                  <span className="relative flex size-3"><span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" /><span className="relative size-3 rounded-full bg-emerald-400" /></span>
+                  <span className="font-mono text-[10px] font-black uppercase tracking-[.25em] text-emerald-300">GAZETTE LIVE</span>
+                </div>
+                <h1 className="mt-2 font-display text-5xl font-black uppercase leading-none tracking-[-.05em] text-white md:text-7xl">LA GAZETTE</h1>
+                <p className="mt-3 text-sm text-slate-400">{new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })} · la vie de votre compétition, match après match.</p>
+              </div>
+              <div className="flex flex-wrap gap-2 font-mono text-[9px] font-bold uppercase tracking-[.12em]">
+                <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-emerald-300">{currentJournee?.title ?? "J—"}</span>
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-400">
+                  {finishedCount}/{totalMatches} terminés · {todaysMatches.filter((x) => !x.isBonus).length} L1 · {todaysMatches.filter((x) => x.isBonus).length} bonus
+                </span>
+                {liveCount > 0 && <span className="rounded-full border border-red-400/30 bg-red-400/10 px-3 py-2 text-red-300">{liveCount} LIVE</span>}
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-500">MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "—"}</span>
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-500">JOUR {new Date(clock).toLocaleDateString("fr-FR", { weekday: "long" })}</span>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h1
-                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-2xl font-black uppercase leading-none tracking-[-0.02em] text-transparent md:text-3xl"
-                style={{
-                  filter:
-                    "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 16px rgba(22,82,240,.16))",
-                }}
-              >
-                La Gazette
-              </h1>
-              <p className="mt-1 text-[11px] leading-tight text-slate-400">
-                Toute l'actualité de la <span className="text-emerald-400">Ligue 1</span>
-              </p>
-              {lastUpdated && (
-                <p className="mt-1 flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[.1em] text-slate-600">
-                  <span className="size-1 rounded-full bg-emerald-400/70" />
-                  Actualisé à{" "}
-                  {lastUpdated.toLocaleTimeString("fr-FR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </p>
-              )}
-            </div>
-          </div>
+          </header>
 
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              aria-label="Notifications"
-              className="tap relative flex size-10 items-center justify-center rounded-full border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white"
-            >
-              <Bell className="size-4" />
-              {hasAnyData && (
-                <span className="absolute right-2 top-2 size-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_2px_rgba(52,211,153,.55)]" />
-              )}
-            </button>
-            <button
-              type="button"
-              aria-label="Menu"
-              className="tap flex size-10 items-center justify-center rounded-full border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white"
-            >
-              <Menu className="size-4" />
-            </button>
-          </div>
-        </header>
-
-        {/* ===== ÉTAT CHARGEMENT ===== */}
-        {loading ? (
-          <div className="space-y-8">
-            <HeroSkeleton />
-            <section>
-              <SkeletonBlock className="mb-4 h-5 w-40" />
-              <div className="space-y-3">
-                <ActuSkeleton />
-                <ActuSkeleton />
-                <ActuSkeleton />
+          {/* Direct compact */}
+          {liveMatches.length > 0 && (
+            <section className="border-b border-red-400/20 bg-gradient-to-r from-red-500/[.10] via-slate-950/70 to-emerald-500/[.06] px-5 py-4 md:px-10">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="rounded-full bg-red-400 px-2.5 py-1 font-mono text-[9px] font-black uppercase text-slate-950">EN DIRECT</span>
+                {liveMatches.map(({ match }) => (
+                  <div key={String(match.id)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                    <span className="flex items-center gap-2 font-display text-sm font-black text-white"><GazetteTeamLogo teams={teams} match={match} side="home" size="size-7" />{shortTeam(getTeamHome(match))} {getScoreHome(match) ?? 0}–{getScoreAway(match) ?? 0} {shortTeam(getTeamAway(match))}<GazetteTeamLogo teams={teams} match={match} side="away" size="size-7" /></span>
+                    <span className="ml-3 font-mono text-[9px] font-black text-red-300">{getDisplayedLiveMinute(match, clock)}</span>
+                  </div>
+                ))}
               </div>
             </section>
-            <FocusSkeleton />
-          </div>
-        ) : error ? (
-          /* ===== ÉTAT ERREUR ===== */
-          <section className="rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-8 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-red-400/20 bg-red-500/10">
-              <Newspaper className="size-6 text-red-400" />
-            </div>
-            <p className="mt-4 font-display text-lg font-bold text-white">
-              Données momentanément indisponibles.
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Réessaie dans un instant, la Gazette se met à jour régulièrement.
-            </p>
-            <button
-              type="button"
-              onClick={() => loadData()}
-              className="tap mt-6 flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-display text-sm font-bold text-slate-950"
-            >
-              RÉESSAYER <ArrowRight className="size-4" />
-            </button>
-          </section>
-        ) : !hasAnyData ? (
-          /* ===== ÉTAT VIDE ===== */
-          <section className="rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-8 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-emerald-400/20 bg-emerald-500/10">
-              <Newspaper className="size-6 text-emerald-400" />
-            </div>
-            <p className="mt-4 font-display text-lg font-bold text-white">
-              La Gazette se prépare.
-            </p>
-            <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">
-              Les actualités et statistiques apparaîtront après les premiers matchs de la saison.
-            </p>
-          </section>
-        ) : (
-          <>
-            {/* ===== À LA UNE ===== */}
-            <section className="gazette-fade-up">
-              {effectiveLaUne ? (
-                <article
-                  className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 shadow-[0_0_50px_rgba(0,0,0,0.7)]"
-                  style={{ minHeight: 260 }}
-                >
-                  <div
-                    aria-hidden
-                    className="absolute inset-0 bg-cover bg-center"
-                    style={{
-                      backgroundImage: `url('${
-                        (effectiveLaUne as any).imageUrl || clubAsset(effectiveLaUne.teamName).background
-                      }')`,
-                    }}
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#030914] via-[#030914]/45 to-transparent" />
+          )}
 
-                  {/* Badge À LA UNE (+ indicateur d'autres actus disponibles) */}
-                  <div className="absolute left-5 top-5 z-10 flex items-center gap-2">
-                    <div className="flex items-center gap-2 rounded-full border border-emerald-400/30 bg-black/40 px-3 py-1.5 backdrop-blur-md">
-                      <Zap className="size-3 text-emerald-400" />
-                      <span className="font-mono text-[9px] font-bold tracking-[.16em] text-emerald-300">
-                        À LA UNE
-                      </span>
-                    </div>
-                    {effectiveDerniereActus.length > 0 && (
-                      <span className="rounded-full border border-white/10 bg-black/40 px-2.5 py-1.5 font-mono text-[9px] font-bold text-slate-300 backdrop-blur-md">
-                        +{effectiveDerniereActus.length} actu{effectiveDerniereActus.length > 1 ? "s" : ""}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="relative z-10 flex min-h-[260px] flex-col justify-end p-5 md:p-7">
-                    <span className="mb-2 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 font-mono text-[9px] font-bold tracking-[.14em] text-slate-300 backdrop-blur-sm">
-                      <Trophy className="size-3 text-emerald-400" />
-                      {effectiveLaUne.badge}
-                    </span>
-
-                    <h2
-                      className="max-w-2xl font-display text-3xl font-black uppercase leading-[0.95] text-white md:text-5xl"
-                      style={{ textShadow: "0 2px 20px rgba(0,0,0,.7)" }}
-                    >
-                      {effectiveLaUne.title}
-                    </h2>
-                    <p
-                      className="mt-2.5 max-w-md text-sm leading-relaxed text-slate-200 md:text-base"
-                      style={{ textShadow: "0 1px 6px rgba(0,0,0,.7)" }}
-                    >
-                      {effectiveLaUne.subtitle}
-                    </p>
-
-                    <div className="mt-5 flex items-center gap-3">
-                      {(effectiveLaUne as any).sourceUrl ? (
-                        <a
-                          href={(effectiveLaUne as any).sourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="tap flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)]"
-                        >
-                          LIRE L'ARTICLE <ArrowRight className="size-4" />
-                        </a>
-                      ) : (
-                        <Link
-                          to="/pronostics"
-                          className="tap flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)]"
-                        >
-                          LIRE L'ARTICLE <ArrowRight className="size-4" />
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                </article>
-              ) : (
-                <EditorialEmptyState
-                  icon={Zap}
-                  title="Aucune actualité disponible pour le moment."
-                  description="La une s'activera automatiquement dès les premiers résultats de la saison."
-                />
-              )}
-            </section>
-
-            {/* ===== DERNIÈRES ACTUS ===== */}
-            <section className="gazette-fade-up" style={{ animationDelay: "70ms" }}>
-              <SectionTitle hint="MISE À JOUR EN DIRECT">
-                Dernières actus
-              </SectionTitle>
-
-              {effectiveDerniereActus.length === 0 ? (
-                <EditorialEmptyState
-                  icon={Newspaper}
-                  title="Aucune actualité disponible pour le moment."
-                  description="Les résultats et faits marquants de chaque journée apparaîtront ici automatiquement."
-                />
-              ) : (
-                <div className="flex items-stretch gap-3">
-                  <div className="grid flex-1 gap-2">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {effectiveDerniereActus.slice(0, 2).map((item: any) => (
-                        <ActuCard
-                          key={item.id}
-                          {...item}
-                          teamName={item.teamName || undefined}
-                        />
-                      ))}
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {effectiveDerniereActus.slice(2, 4).map((item: any) => (
-                        <ActuCard
-                          key={item.id}
-                          {...item}
-                          teamName={item.teamName || undefined}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <Link
-                    to="/pronostics"
-                    className="tap hidden shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-[#0d1322]/60 px-5 text-center hover:border-emerald-500/40 sm:flex"
-                  >
-                    <ChevronRight className="size-5 text-emerald-400" />
-                    <span className="max-w-[80px] font-mono text-[9px] font-bold tracking-[.14em] text-slate-400">
-                      VOIR TOUT
-                    </span>
-                  </Link>
+          {/* 2 — ANALYSE ÉVOLUTIVE */}
+          <section className="border-b border-slate-800 px-5 py-8 md:px-10 md:py-10">
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-[9px] font-black uppercase tracking-[.22em] text-emerald-300">{analysis.kicker}</span>
+                  <div className="h-px flex-1 bg-slate-800" />
                 </div>
-              )}
-            </section>
-
-            {/* ===== FOCUS JOURNÉE ===== */}
-            <section className="gazette-fade-up" style={{ animationDelay: "120ms" }}>
-              <SectionTitle
-                accentClass="bg-amber-400"
-                hint={`${selectedJournee?.title || ""}${
-                  dayStatus.status === "live"
-                    ? ` · ${dayStatus.finished}/${dayStatus.total} matchs`
-                    : dayStatus.status === "finished"
-                      ? " · TERMINÉE"
-                      : " · EN ATTENTE"
-                }`}
-              >
-                Focus journée
-              </SectionTitle>
-
-              {focusMatch ? (
-                <div className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl">
-                  <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 px-5 pt-4">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/10 px-2.5 py-1 font-mono text-[9px] font-bold tracking-[.14em] text-amber-300">
-                      <Trophy className="size-3" />
-                      JOURNÉE {selectedJournee?.number}
-                    </span>
-                    <span
-                      className={`font-mono text-[9px] font-bold uppercase tracking-[.14em] ${
-                        hasScore(focusMatch) ? "text-slate-500" : "text-emerald-400"
-                      }`}
-                    >
-                      {hasScore(focusMatch) ? "Terminé" : "Match à venir"}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-5 py-5 sm:gap-6 sm:py-6">
-                    <div className="flex flex-col items-center gap-2.5 text-center">
-                      <div
-                        className="flex size-14 items-center justify-center rounded-2xl bg-white/[0.04] bg-contain bg-center bg-no-repeat sm:size-16"
-                        style={{ backgroundImage: clubAsset(getTeamHome(focusMatch)).logo ? `url('${clubAsset(getTeamHome(focusMatch)).logo}')` : undefined }}
-                      />
-                      <span className="line-clamp-2 max-w-[7rem] font-display text-xs font-black uppercase leading-tight text-white sm:text-sm">
-                        {getTeamHome(focusMatch)}
-                      </span>
-                    </div>
-
-                    {hasScore(focusMatch) ? (
-                      <div className="font-display text-2xl font-black text-white sm:text-3xl">
-                        {getScoreHome(focusMatch)}–{getScoreAway(focusMatch)}
-                      </div>
-                    ) : (
-                      <div className="font-mono text-xs font-bold uppercase tracking-[.14em] text-slate-500">
-                        VS
-                      </div>
-                    )}
-
-                    <div className="flex flex-col items-center gap-2.5 text-center">
-                      <div
-                        className="flex size-14 items-center justify-center rounded-2xl bg-white/[0.04] bg-contain bg-center bg-no-repeat sm:size-16"
-                        style={{ backgroundImage: clubAsset(getTeamAway(focusMatch)).logo ? `url('${clubAsset(getTeamAway(focusMatch)).logo}')` : undefined }}
-                      />
-                      <span className="line-clamp-2 max-w-[7rem] font-display text-xs font-black uppercase leading-tight text-white sm:text-sm">
-                        {getTeamAway(focusMatch)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 px-5 py-3.5">
-                    {(focusMatch.kickoff ?? focusMatch.kickoff_time) && (
-                      <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold text-slate-400">
-                        <Clock3 className="size-3.5 text-amber-400" />
-                        {new Date(focusMatch.kickoff ?? focusMatch.kickoff_time).toLocaleDateString("fr-FR", {
-                          weekday: "short",
-                          day: "2-digit",
-                          month: "short",
-                        })}{" "}
-                        —{" "}
-                        {new Date(focusMatch.kickoff ?? focusMatch.kickoff_time).toLocaleTimeString("fr-FR", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    )}
-                    <Link
-                      to="/pronostics"
-                      className="tap ml-auto flex items-center gap-1.5 font-display text-xs font-bold text-amber-300 hover:text-amber-200"
-                    >
-                      LIRE LE FOCUS <ArrowRight className="size-3.5" />
-                    </Link>
-                  </div>
+                <h2 className="mt-4 max-w-5xl font-display text-3xl font-black uppercase leading-[.98] tracking-[-.035em] text-white md:text-5xl">{analysis.title}</h2>
+                <p className="mt-5 max-w-4xl border-l-2 border-emerald-300 pl-4 font-display text-base font-bold leading-7 text-slate-200 md:text-lg">{analysis.intro}</p>
+                <div className="mt-7 max-w-4xl space-y-5 text-[14px] leading-7 text-slate-400 md:text-[15px] md:leading-8">
+                  {analysis.paragraphs.map((paragraph, index) => <p key={`${lastFinishedId}-${index}`}>{paragraph}</p>)}
                 </div>
-              ) : (
-                <EditorialEmptyState
-                  icon={Trophy}
-                  title="Aucun match programmé pour le moment."
-                  description="Le focus de la journée apparaîtra dès la publication du calendrier."
-                />
-              )}
-            </section>
+              </div>
+              <aside className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                {/* 1 — LEADER */}
+                <div className="rounded-2xl border border-amber-400/25 bg-amber-400/[.06] p-4 shadow-[0_10px_35px_rgba(245,158,11,.05)]">
+                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-amber-300">LEADER</p>
+                  <p className="mt-2 font-display text-xl font-black leading-tight text-white">
+                    {gazetteDynamicBlocks.leader?.name ?? "—"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {gazetteDynamicBlocks.leader?.points ?? 0} point{(gazetteDynamicBlocks.leader?.points ?? 0) > 1 ? "s" : ""}
+                  </p>
+                </div>
 
-            {/* ===== À SURVEILLER + LE CHIFFRE (côte à côte dès que la place le permet) ===== */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {/* ----- À SURVEILLER ----- */}
-              <section className="gazette-fade-up" style={{ animationDelay: "150ms" }}>
-                <SectionTitle accentClass="bg-emerald-400">À surveiller</SectionTitle>
+                {/* 2 — PLUS BELLE PROGRESSION */}
+                <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[.05] p-4 shadow-[0_10px_35px_rgba(16,185,129,.05)]">
+                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-emerald-300">PLUS BELLE PROGRESSION</p>
 
-                {tendance ? (
-                  <Link
-                    to="/classement"
-                    className="tap group flex h-full items-center gap-3.5 rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-4 backdrop-blur-xl hover:border-emerald-500/30"
-                  >
-                    <div className="relative shrink-0">
-                      {tendance.avatar ? (
-                        <img
-                          src={tendance.avatar}
-                          alt=""
-                          className="size-14 rounded-2xl border border-emerald-400/30 object-cover"
-                        />
-                      ) : (
-                        <div className="flex size-14 items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-500/10 font-display text-lg font-black text-emerald-300">
-                          {tendance.name.slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
-                      <span className="absolute -bottom-1.5 -right-1.5 flex items-center gap-0.5 rounded-full bg-emerald-400 px-1.5 py-0.5 font-mono text-[9px] font-black text-slate-950 shadow-[0_0_8px_rgba(52,211,153,.6)]">
-                        <TrendingUp className="size-2.5" />+{tendance.evolution}
-                      </span>
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-display text-base font-black text-white">
-                        {tendance.name}
-                      </p>
-                      <p className="mt-0.5 text-[11px] font-semibold text-emerald-400">
-                        ↑ Progression au classement
-                      </p>
-                      <p className="mt-1 font-mono text-xs font-bold text-slate-300">
-                        #{tendance.rank} · {tendance.points} pts
-                      </p>
-                    </div>
-
-                    <ChevronRight className="size-4 shrink-0 self-center text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-emerald-400" />
-                  </Link>
-                ) : (
-                  <EditorialEmptyState
-                    compact
-                    icon={TrendingUp}
-                    title="Pas encore de tendance notable."
-                    description="Le joueur qui progresse le plus apparaîtra ici après la prochaine journée."
-                  />
-                )}
-              </section>
-
-              {/* ----- LE CHIFFRE ----- */}
-              <section className="gazette-fade-up" style={{ animationDelay: "180ms" }}>
-                <SectionTitle accentClass="bg-sky-400">Le chiffre</SectionTitle>
-
-                {focusStats.goalsAvailable ? (
-                  <div className="relative flex h-full flex-col items-center justify-center overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-5 text-center backdrop-blur-xl">
-                    <div
-                      aria-hidden
-                      className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-sky-400/10 to-transparent"
-                    />
-                    <div className="relative flex items-center justify-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-sky-300">
-                      <Hash className="size-3" />
-                      Statistique du jour
-                    </div>
-                    <div
-                      className="relative mt-1 font-display text-5xl font-black text-white"
-                      style={{ textShadow: "0 0 30px rgba(56,189,248,.35)" }}
-                    >
-                      {focusStats.goals}
-                    </div>
-                    <p className="relative mt-1 text-xs font-semibold text-slate-300">
-                      but{focusStats.goals > 1 ? "s" : ""} marqué{focusStats.goals > 1 ? "s" : ""} · {selectedJournee?.title || "journée"}
-                    </p>
-                    <p className="relative mt-1 font-mono text-[10px] text-slate-500">
-                      {focusStats.average.toFixed(2)} but{focusStats.average >= 2 ? "s" : ""}/match
-                      {focusStats.exactAvailable ? ` · ${focusStats.exactScores} exact${focusStats.exactScores > 1 ? "s" : ""}` : ""}
-                    </p>
-                  </div>
-                ) : (
-                  <EditorialEmptyState
-                    compact
-                    icon={Hash}
-                    title="Les statistiques arrivent après les premiers matchs."
-                    description="Buts et moyennes apparaîtront ici dès les premiers résultats."
-                  />
-                )}
-              </section>
-            </div>
-
-            {/* ===== DANS NOTRE COMPÉTITION ===== */}
-            <section className="gazette-fade-up" style={{ animationDelay: "210ms" }}>
-              <SectionTitle accentClass="bg-amber-400">
-                Dans notre compétition
-              </SectionTitle>
-
-              {rankedPlayers.length === 0 ? (
-                <EditorialEmptyState
-                  icon={Trophy}
-                  title="Le classement démarre avec les premiers pronostics."
-                  description="Reviens ici dès que les premières journées seront jouées."
-                />
-              ) : (
-                <div className="rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-4 backdrop-blur-xl md:p-5">
-                  <div className="space-y-2">
-                    {rankedPlayers.slice(0, 3).map((player) => (
-                      <div
-                        key={player.id}
-                        className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-black/15 px-3.5 py-2.5"
-                      >
-                        <span
-                          className={`grid size-6 shrink-0 place-items-center rounded-full font-display text-[11px] font-black ${
-                            player.rank === 1
-                              ? "bg-amber-400 text-slate-950"
-                              : player.rank === 2
-                                ? "bg-slate-300 text-slate-950"
-                                : "bg-orange-400/80 text-slate-950"
-                          }`}
-                        >
-                          {player.rank}
+                  {gazetteDynamicBlocks.progression ? (
+                    <>
+                      <div className="mt-2 flex items-baseline gap-2">
+                        <span className="font-display text-3xl font-black leading-none text-white">
+                          +{gazetteDynamicBlocks.progression.movement}
                         </span>
-
-                        {player.avatar ? (
-                          <img
-                            src={player.avatar}
-                            alt=""
-                            className="size-8 shrink-0 rounded-full border border-white/10 object-cover"
-                          />
-                        ) : (
-                          <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-slate-800 font-display text-[10px] font-black text-slate-400">
-                            {player.name.slice(0, 2).toUpperCase()}
-                          </div>
-                        )}
-
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-display text-sm font-bold text-white">
-                            {player.name}
-                          </p>
-                          {player.exactScores > 0 && (
-                            <p className="text-[10px] text-slate-500">
-                              {player.exactScores} score{player.exactScores > 1 ? "s" : ""} exact{player.exactScores > 1 ? "s" : ""}
-                            </p>
-                          )}
-                        </div>
-
-                        <span className="shrink-0 font-mono text-sm font-black text-emerald-300">
-                          {player.points} pts
+                        <span className="font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300">
+                          place{gazetteDynamicBlocks.progression.movement > 1 ? "s" : ""}
                         </span>
                       </div>
-                    ))}
-                  </div>
-
-                  <Link
-                    to="/classement"
-                    className="tap mt-3 flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-900/80 py-2.5 font-display text-xs font-bold uppercase tracking-wide text-slate-300 hover:border-emerald-500/40 hover:text-emerald-300"
-                  >
-                    VOIR LE CLASSEMENT <ArrowRight className="size-3.5" />
-                  </Link>
-                </div>
-              )}
-            </section>
-
-            {/* ===== LES TEMPS FORTS ===== */}
-            <section className="gazette-fade-up" style={{ animationDelay: "170ms" }}>
-              <SectionTitle accentClass="bg-cyan-400">
-                Les temps forts
-              </SectionTitle>
-
-              {!highlights ? (
-                <EditorialEmptyState
-                  icon={Flame}
-                  title="Aucun temps fort disponible pour le moment."
-                  description="Les faits marquants de la journée apparaîtront ici dès les premiers résultats."
-                />
-              ) : (
-                <div className="overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl">
-                  <div className="flex items-center gap-2 border-b border-slate-800/80 px-5 py-3.5">
-                    <Flame className="size-4 text-cyan-400" />
-                    <span className="font-display text-sm font-black uppercase tracking-wide text-white">
-                      Résumé de {selectedJournee?.title || "la journée"}
-                    </span>
-                  </div>
-
-                  <div className="grid gap-px bg-slate-800/60 p-px sm:grid-cols-2">
-                    {highlights.biggestWin && (
-                      <div className="tap bg-[#0d1322] p-4">
-                        <div className="flex items-center gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-emerald-400">
-                          <Trophy className="size-3.5" /> Plus large victoire
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-2 font-display text-lg font-black text-white">
-                          <span>{shortTeam(getTeamHome(highlights.biggestWin.match))}</span>
-                          <span className="text-emerald-300">
-                            {getScoreHome(highlights.biggestWin.match)}–
-                            {getScoreAway(highlights.biggestWin.match)}
-                          </span>
-                          <span>{shortTeam(getTeamAway(highlights.biggestWin.match))}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {highlights.bestAttack && (
-                      <div className="tap bg-[#0d1322] p-4">
-                        <div className="flex items-center gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-amber-400">
-                          <Flame className="size-3.5" />{" "}
-                          {dayStatus.status === "live" ? "Meilleur départ" : "Meilleure attaque"}
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-2 font-display text-lg font-black text-white">
-                          <span className="truncate">{highlights.bestAttack[0]}</span>
-                          <span className="text-amber-300">{highlights.bestAttack[1]} buts</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {highlights.mostGoals && (
-                      <div className="tap bg-[#0d1322] p-4">
-                        <div className="flex items-center gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-cyan-400">
-                          <Zap className="size-3.5" /> Match le plus prolifique
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-2 font-display text-lg font-black text-white">
-                          <span>{shortTeam(getTeamHome(highlights.mostGoals.match))}</span>
-                          <span className="text-cyan-300">
-                            {getScoreHome(highlights.mostGoals.match)}–
-                            {getScoreAway(highlights.mostGoals.match)}
-                          </span>
-                          <span>{shortTeam(getTeamAway(highlights.mostGoals.match))}</span>
-                        </div>
-                        <div className="mt-1 text-right font-mono text-[9px] text-slate-500">
-                          {Number(getScoreHome(highlights.mostGoals.match) || 0) +
-                            Number(getScoreAway(highlights.mostGoals.match) || 0)}{" "}
-                          buts au total
-                        </div>
-                      </div>
-                    )}
-
-                    {highlights.surprise ? (
-                      <div className="tap bg-[#0d1322] p-4">
-                        <div className="flex items-center gap-2 font-mono text-[9px] font-bold tracking-[.14em] text-fuchsia-400">
-                          <Lightbulb className="size-3.5" /> Surprise de la journée
-                        </div>
-                        <div className="mt-2 flex items-center justify-between gap-2 font-display text-lg font-black text-white">
-                          <span>
-                            {shortTeam(getTeamHome(highlights.surprise.dayMatch.match))}
-                          </span>
-                          <span className="text-fuchsia-300">
-                            {getScoreHome(highlights.surprise.dayMatch.match)}–
-                            {getScoreAway(highlights.surprise.dayMatch.match)}
-                          </span>
-                          <span>
-                            {shortTeam(getTeamAway(highlights.surprise.dayMatch.match))}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-right font-mono text-[9px] text-slate-500">
-                          {highlights.surprise.percentage}% l'avaient vu venir
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center bg-[#0d1322] p-4">
-                        <p className="text-xs text-slate-600">
-                          Pas encore de surprise notable cette journée.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {externalHighlightExtras.length > 0 && (
-                    <div className="border-t border-slate-800/80 p-3">
-                      <p className="mb-2 px-1 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-500">
-                        Dans les médias
+                      <p className="mt-2 truncate font-display text-base font-black text-white">
+                        {gazetteDynamicBlocks.progression.name}
                       </p>
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        {externalHighlightExtras.map((a) => (
-                          <button
-                            key={a.id}
-                            type="button"
-                            onClick={() => window.open(a.sourceUrl, "_blank", "noopener,noreferrer")}
-                            className="tap rounded-xl border border-slate-800 bg-[#0d1322] p-3 text-left hover:border-cyan-500/30"
-                          >
-                            <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 font-mono text-[9px] font-bold tracking-[.1em] text-cyan-400">
-                              {a.source.toUpperCase()}
-                            </span>
-                            <p className="mt-1.5 line-clamp-2 font-display text-xs font-bold leading-snug text-white">
-                              {a.title}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Après le dernier match terminé
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-2 font-display text-2xl font-black text-white">—</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        La prochaine évolution apparaîtra après un match.
+                      </p>
+                    </>
                   )}
                 </div>
-              )}
-            </section>
 
-            {/* ===== LE PRONO SURPRISE ===== */}
-            {pronoSurprise && (
-              <section className="gazette-fade-up" style={{ animationDelay: "220ms" }}>
-                <SectionTitle accentClass="bg-fuchsia-400">
-                  Le prono surprise
-                </SectionTitle>
+                {/* 3 — DERNIER COUP */}
+                <div className="rounded-2xl border border-sky-400/25 bg-sky-400/[.05] p-4 shadow-[0_10px_35px_rgba(56,189,248,.05)]">
+                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-sky-300">DERNIER COUP</p>
 
-                <div className="rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-5 backdrop-blur-xl md:p-6">
-                  <div className="flex flex-col items-center gap-5 sm:flex-row sm:gap-7">
-                    {/* Cercle de progression */}
-                    <div className="relative flex size-28 shrink-0 items-center justify-center md:size-32">
-                      <svg viewBox="0 0 120 120" className="size-full -rotate-90">
-                        <circle
-                          cx="60"
-                          cy="60"
-                          r="52"
-                          fill="none"
-                          stroke="#172033"
-                          strokeWidth="10"
-                        />
-                        <circle
-                          cx="60"
-                          cy="60"
-                          r="52"
-                          fill="none"
-                          stroke="#e879f9"
-                          strokeWidth="10"
-                          strokeLinecap="round"
-                          strokeDasharray={`${(pronoSurprise.pct / 100) * (2 * Math.PI * 52)} ${
-                            2 * Math.PI * 52
-                          }`}
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="font-display text-4xl font-black text-white md:text-5xl">
-                          {pronoSurprise.pct}
-                          <span className="text-[0.55em] align-top text-fuchsia-300">%</span>
-                        </span>
-                        <span className="mt-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-400">
-                          des joueurs
+                  {gazetteDynamicBlocks.performance ? (
+                    <>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Target className="size-4 text-sky-300" />
+                        <span className="font-mono text-[9px] font-black uppercase tracking-[.12em] text-sky-300">
+                          {gazetteDynamicBlocks.performance.exact ? "SCORE EXACT" : "BON PRONO"}
                         </span>
                       </div>
+                      <p className="mt-2 truncate font-display text-base font-black text-white">
+                        {gazetteDynamicBlocks.performance.profile.pseudo || "Joueur"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {shortTeam(getTeamHome(lastFinished))}{" "}
+                        {getScoreHome(lastFinished)}–{getScoreAway(lastFinished)}{" "}
+                        {shortTeam(getTeamAway(lastFinished))}
+                      </p>
+                      <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-[.12em] text-white">
+                        +{gazetteDynamicBlocks.performance.points} point{gazetteDynamicBlocks.performance.points > 1 ? "s" : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-2 font-display text-2xl font-black text-white">—</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        En attente du prochain résultat.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          {/* 3 — MATCHS DU JOUR */}
+          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
+            <div className="flex items-end justify-between gap-4"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">3 · LE DIRECT</p><h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">Les matchs du jour</h2><p className="mt-1 text-xs font-bold capitalize text-slate-500">{new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</p></div><span className="font-mono text-[9px] font-bold uppercase text-slate-600">{totalMatches} match{totalMatches > 1 ? "s" : ""} aujourd’hui · {todaysMatches.filter((x) => !x.isBonus).length} L1 + {todaysMatches.filter((x) => x.isBonus).length} bonus</span></div>
+            <div className="mt-5 grid gap-2">
+              {allCurrentMatches.map(({ match, isBonus }) => {
+                const state = getMatchState(match);
+                const finished = state === "finished" || hasScore(match);
+                const live = state === "live";
+                return <div key={String(match.id)} className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border px-4 py-4 ${live ? "border-red-400/30 bg-red-400/[.06]" : finished ? "border-emerald-400/15 bg-emerald-400/[.025]" : "border-slate-800 bg-slate-950/30"}`}>
+                  <div className="w-14 text-center"><p className={`font-mono text-[9px] font-black ${live ? "text-red-300" : finished ? "text-emerald-300" : "text-slate-500"}`}>{matchStatusLabel(match)}</p><p className="mt-1 font-mono text-[7px] uppercase tracking-[.12em] text-slate-600">{isBonus ? "BONUS" : "L1"}</p></div>
+                  <div className="flex min-w-0 items-center justify-center gap-2 font-display text-sm font-black text-white md:gap-4 md:text-base">
+                    <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+                      <span className="truncate text-right">{shortTeam(getTeamHome(match))}</span>
+                      <GazetteTeamLogo teams={teams} match={match} side="home" size="size-9 md:size-10" />
                     </div>
-
-                    <div className="min-w-0 flex-1 text-center sm:text-left">
-                      <p className="font-display text-2xl font-bold text-white">
-                        {pronoSurprise.label}
-                      </p>
-                      {pronoSurprise.matchLabel && (
-                        <p className="mt-1 font-display text-lg font-black tracking-wide text-fuchsia-300">
-                          {pronoSurprise.matchLabel}
-                        </p>
-                      )}
-                      <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                        {pronoSurprise.total} pronostics analysés
-                        {pronoSurprise.matchLabel ? " sur ce match" : ""} ·{" "}
-                        {selectedJournee?.title || "journée en cours"}
-                      </p>
-
-                      <Link
-                        to="/pronostics"
-                        className="tap mt-6 inline-flex items-center gap-2 rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-6 py-3 font-display text-sm font-bold text-fuchsia-300 hover:bg-fuchsia-500/20"
-                      >
-                        DÉCOUVRIR <ArrowRight className="size-4" />
-                      </Link>
+                    <span className={`min-w-14 shrink-0 rounded-lg px-2 py-1 text-center ${live ? "bg-red-400 text-slate-950" : finished ? "bg-slate-800 text-white" : "text-slate-500"}`}>{finished || live ? `${getScoreHome(match) ?? "—"} – ${getScoreAway(match) ?? "—"}` : "VS"}</span>
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <GazetteTeamLogo teams={teams} match={match} side="away" size="size-9 md:size-10" />
+                      <span className="truncate">{shortTeam(getTeamAway(match))}</span>
                     </div>
                   </div>
-                </div>
-              </section>
-            )}
+                  <div className="hidden text-right sm:block"><p className="font-mono text-[8px] text-slate-600">{formatKickoff(match.kickoff ?? match.kickoff_time)}</p></div>
+                </div>;
+              })}
+            </div>
+          </section>
 
-            {/* ===== MERCATO (si actif) OU RUBRIQUE DU MOMENT (sinon) ===== */}
-            {mercatoActive ? (
-              <section className="gazette-fade-up" style={{ animationDelay: "300ms" }}>
-                <SectionTitle accentClass="bg-amber-400">Mercato</SectionTitle>
+          {/* 4 — CLASSEMENT */}
+          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
+            <div className="flex items-center gap-3"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">4 · DANS NOTRE COMPÉTITION</p><h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">Le classement</h2></div><div className="h-px flex-1 bg-slate-800" /><Link to="/classement" className="font-mono text-[9px] font-black uppercase text-emerald-300">Voir tout</Link></div>
+            <div className="mt-5 grid gap-2 md:grid-cols-3">
+              {[leader, second, third].filter(Boolean).map((player: any) => <div key={player.id} className={`flex items-center gap-3 rounded-2xl border p-4 ${player.rank===1?"border-amber-400/40 bg-amber-400/[.08]":player.rank===2?"border-slate-300/30 bg-slate-300/[.05]":"border-orange-400/30 bg-orange-400/[.06]"}`}>
+                <span className={`font-display text-xl font-black ${player.rank===1?"text-amber-300":player.rank===2?"text-slate-200":"text-orange-300"}`}>#{player.rank}</span>
+                {player.avatar ? <img src={player.avatar} alt="" className="size-10 rounded-full border border-white/10 object-cover"/> : <div className="flex size-10 items-center justify-center rounded-full bg-slate-800 font-display text-xs font-black text-slate-300">{player.name.slice(0,2).toUpperCase()}</div>}
+                <div className="min-w-0 flex-1"><p className="truncate font-display text-sm font-black text-white">{player.name}</p><p className="font-mono text-[8px] text-slate-500">{player.exactScores} score{player.exactScores>1?"s":""} exact</p></div>
+                <div className="text-right"><p className="font-display text-xl font-black text-white">{player.points}</p><p className="font-mono text-[7px] uppercase text-slate-600">points</p></div>
+              </div>)}
+            </div>
+          </section>
 
-                {externalMercatoArticles.length > 0 ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {externalMercatoArticles.slice(0, 4).map((a) => {
-                      const typeLabel =
-                        a.newsType === "officiel"
-                          ? "OFFICIEL"
-                          : a.newsType === "en_discussion"
-                          ? "EN DISCUSSION"
-                          : "RUMEUR";
-                      const typeClass =
-                        a.newsType === "officiel"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : a.newsType === "en_discussion"
-                          ? "bg-sky-500/10 text-sky-400"
-                          : "bg-amber-500/10 text-amber-400";
-                      return (
-                        <button
-                          key={a.id}
-                          type="button"
-                          onClick={() => window.open(a.sourceUrl, "_blank", "noopener,noreferrer")}
-                          className="tap rounded-2xl border border-slate-800 bg-[#0d1322]/80 p-3.5 text-left hover:border-amber-500/30"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-bold tracking-[.12em] ${typeClass}`}>
-                              {typeLabel}
-                            </span>
-                            <span className="font-mono text-[9px] text-slate-500">{a.source}</span>
-                          </div>
-                          <p className="mt-1.5 line-clamp-2 font-display text-sm font-bold leading-snug text-white">
-                            {a.title}
-                          </p>
-                          <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-400">
-                            {a.summary}
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <EditorialEmptyState
-                    compact
-                    icon={ArrowLeftRight}
-                    title="Mercato"
-                    description="Les informations apparaîtront ici dès qu'une actualité mercato Ligue 1 sera détectée."
-                  />
-                )}
-              </section>
-            ) : rubriqueDuMoment ? (
-              <section className="gazette-fade-up" style={{ animationDelay: "300ms" }}>
-                <SectionTitle accentClass={rubriqueDuMoment.accentClass}>
-                  {rubriqueDuMoment.emoji} {rubriqueDuMoment.label}
-                </SectionTitle>
+          {/* 5 — CHIFFRE DYNAMIQUE */}
+          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
+            <div className="rounded-[24px] border border-sky-400/15 bg-gradient-to-r from-sky-400/[.06] via-slate-950/40 to-emerald-400/[.04] p-6 md:p-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-sky-300">5 · LE CHIFFRE</p><p className="mt-1 text-sm text-slate-500">La statistique change automatiquement pendant la journée.</p></div><div className="text-left sm:text-right"><p className="font-display text-6xl font-black leading-none text-white md:text-7xl">{dynamicStat.value}</p><p className="mt-2 max-w-[240px] text-xs font-bold uppercase tracking-[.08em] text-slate-400 sm:text-right">{dynamicStat.label}</p></div></div>
+            </div>
+          </section>
 
-                <div className="rounded-3xl border border-slate-800 bg-[#0d1322]/75 p-4 backdrop-blur-xl">
-                  <p className="font-display text-base font-black text-white">
-                    {rubriqueDuMoment.title}
-                  </p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                    {rubriqueDuMoment.text}
-                  </p>
-                </div>
-              </section>
-            ) : null}
-          </>
-        )}
+          {/* 6 + 7 */}
+          <section className="grid gap-0 md:grid-cols-2">
+            <div className="border-b border-slate-800 p-5 md:border-b-0 md:border-r md:p-10">
+              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-orange-300">6 · GROS MATCH DU WEEK-END</p>
+              <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">Le rendez-vous à suivre</h2>
+              {weekendMatch ? <div className="mt-5 rounded-[24px] border border-orange-400/20 bg-orange-400/[.05] p-6 text-center"><div className="flex items-center justify-center gap-4 md:gap-7"><div className="flex min-w-0 flex-1 items-center justify-end gap-3"><p className="truncate font-display text-xl font-black text-white">{shortTeam(getTeamHome(weekendMatch.match))}</p><GazetteTeamLogo teams={teams} match={weekendMatch.match} side="home" size="size-12 md:size-14" /></div><span className="shrink-0 font-display text-2xl font-black text-orange-300">{hasScore(weekendMatch.match)?`${getScoreHome(weekendMatch.match)}–${getScoreAway(weekendMatch.match)}`:"VS"}</span><div className="flex min-w-0 flex-1 items-center gap-3"><GazetteTeamLogo teams={teams} match={weekendMatch.match} side="away" size="size-12 md:size-14" /><p className="truncate text-left font-display text-xl font-black text-white">{shortTeam(getTeamAway(weekendMatch.match))}</p></div></div><p className="mt-4 font-mono text-[9px] uppercase tracking-[.15em] text-slate-500">{matchStatusLabel(weekendMatch.match)} · {formatKickoff(weekendMatch.match.kickoff ?? weekendMatch.match.kickoff_time)}</p></div> : <EditorialEmptyState compact icon={Flame} title="Affiche à venir" description="Le gros match apparaîtra dès que le calendrier sera disponible."/>}
+            </div>
+            <div className="p-5 md:p-10">
+              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-fuchsia-300">7 · GROSSE PERF DU WEEK-END</p>
+              <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">La performance</h2>
+              {bigPerformance ? <div className="mt-5 rounded-[24px] border border-fuchsia-400/20 bg-fuchsia-400/[.05] p-6"><div className="flex items-center gap-4">{bigPerformance.player.avatar ? <img src={bigPerformance.player.avatar} alt="" className="size-12 rounded-full object-cover"/> : <div className="flex size-12 items-center justify-center rounded-full bg-slate-800 font-display font-black text-white">{bigPerformance.player.name.slice(0,2).toUpperCase()}</div>}<div className="min-w-0 flex-1"><p className="font-display text-lg font-black text-white">{bigPerformance.player.name}</p><p className="mt-1 font-mono text-[9px] uppercase tracking-[.12em] text-slate-500">{shortTeam(getTeamHome(bigPerformance.match))} {getScoreHome(bigPerformance.match)}–{getScoreAway(bigPerformance.match)} {shortTeam(getTeamAway(bigPerformance.match))}</p></div><div className="text-right"><p className="font-display text-3xl font-black text-fuchsia-300">+{bigPerformance.points}</p><p className="font-mono text-[8px] uppercase text-slate-600">points</p></div></div><p className="mt-4 text-sm font-bold leading-6 text-slate-300">{bigPerformance.exact ? "Score exact : une lecture parfaite du match." : "Une des meilleures performances enregistrées sur les matchs déjà terminés."}</p></div> : <EditorialEmptyState compact icon={Zap} title="Performance en attente" description="La grosse performance apparaîtra après les premiers résultats."/>}
+            </div>
+          </section>
+        </article>
       </div>
     </AppShell>
   );
+}
+
+function getDisplayedLiveMinute(match: any, now: number) {
+  const rawStatus = String(
+    match?.live_status ??
+    match?.status ??
+    match?.fixture?.status?.short ??
+    ""
+  ).toUpperCase();
+
+  // Le statut FINISHED/FT est prioritaire : le chrono s'arrête.
+  if (["FINISHED", "FT", "AET", "PEN"].includes(rawStatus)) {
+    return "FT";
+  }
+
+  // À la mi-temps, on affiche MT et on ne continue surtout pas à compter.
+  if (["PAUSED", "HT", "HALFTIME"].includes(rawStatus)) {
+    return "MT";
+  }
+
+  const kickoff = getKickoffTimestamp(match);
+  if (!Number.isFinite(kickoff)) {
+    return "LIVE";
+  }
+
+  const elapsedWallMinutes = Math.max(
+    0,
+    Math.floor((now - kickoff) / 60000)
+  );
+
+  /*
+   * football-data.org fournit le statut et le score, mais pas une minute
+   * "elapsed" fiable comme certaines autres APIs.
+   *
+   * On reconstruit donc la minute à partir du coup d'envoi en retirant
+   * les ~15 minutes de pause entre les deux mi-temps.
+   *
+   * 0-45 min réelles  -> 0-45'
+   * pause              -> MT (géré par le statut API)
+   * après la reprise   -> on retire 15 min de temps mur
+   * au-delà de 90'     -> 90+'
+   */
+  let matchMinute = elapsedWallMinutes;
+
+  if (elapsedWallMinutes >= 60) {
+    matchMinute = elapsedWallMinutes - 15;
+  }
+
+  matchMinute = Math.max(1, matchMinute);
+
+  if (matchMinute >= 90) {
+    return "90+'";
+  }
+
+  return `${matchMinute}'`;
 }

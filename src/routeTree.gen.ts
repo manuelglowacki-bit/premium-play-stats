@@ -11,13 +11,17 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AdminBonusPersistantRouteImport } from './routes/admin-bonus-persistant'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ClassementRouteImport } from './routes/classement'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as GazetteRouteImport } from './routes/gazette'
 import { Route as ProfilRouteImport } from './routes/profil'
 import { Route as PronosticsRouteImport } from './routes/pronostics'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as StatsRouteImport } from './routes/stats'
 import { Route as TropheesRouteImport } from './routes/trophees'
+import { Route as StatsBackup20260812085935RouteImport } from './routes/stats.backup-20260812-085935'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,6 +33,11 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminBonusPersistantRoute = AdminBonusPersistantRouteImport.update({
+  id: '/admin-bonus-persistant',
+  path: '/admin-bonus-persistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
@@ -37,6 +46,11 @@ const AuthRoute = AuthRouteImport.update({
 const ClassementRoute = ClassementRouteImport.update({
   id: '/classement',
   path: '/classement',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GazetteRoute = GazetteRouteImport.update({
@@ -54,6 +68,11 @@ const PronosticsRoute = PronosticsRouteImport.update({
   path: '/pronostics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StatsRoute = StatsRouteImport.update({
   id: '/stats',
   path: '/stats',
@@ -64,86 +83,119 @@ const TropheesRoute = TropheesRouteImport.update({
   path: '/trophees',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StatsBackup20260812085935Route =
+  StatsBackup20260812085935RouteImport.update({
+    id: '/backup-20260812-085935',
+    path: '/backup-20260812-085935',
+    getParentRoute: () => StatsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/admin-bonus-persistant': typeof AdminBonusPersistantRoute
   '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
-  '/stats': typeof StatsRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/stats': typeof StatsRouteWithChildren
   '/trophees': typeof TropheesRoute
+  '/stats/backup-20260812-085935': typeof StatsBackup20260812085935Route
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/admin-bonus-persistant': typeof AdminBonusPersistantRoute
   '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
-  '/stats': typeof StatsRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/stats': typeof StatsRouteWithChildren
   '/trophees': typeof TropheesRoute
+  '/stats/backup-20260812-085935': typeof StatsBackup20260812085935Route
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/admin-bonus-persistant': typeof AdminBonusPersistantRoute
   '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
+  '/forgot-password': typeof ForgotPasswordRoute
   '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
-  '/stats': typeof StatsRoute
+  '/reset-password': typeof ResetPasswordRoute
+  '/stats': typeof StatsRouteWithChildren
   '/trophees': typeof TropheesRoute
+  '/stats/backup-20260812-085935': typeof StatsBackup20260812085935Route
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/admin'
+    | '/admin-bonus-persistant'
     | '/auth'
     | '/classement'
+    | '/forgot-password'
     | '/gazette'
     | '/profil'
     | '/pronostics'
+    | '/reset-password'
     | '/stats'
     | '/trophees'
+    | '/stats/backup-20260812-085935'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/admin'
+    | '/admin-bonus-persistant'
     | '/auth'
     | '/classement'
+    | '/forgot-password'
     | '/gazette'
     | '/profil'
     | '/pronostics'
+    | '/reset-password'
     | '/stats'
     | '/trophees'
+    | '/stats/backup-20260812-085935'
   id:
     | '__root__'
     | '/'
     | '/admin'
+    | '/admin-bonus-persistant'
     | '/auth'
     | '/classement'
+    | '/forgot-password'
     | '/gazette'
     | '/profil'
     | '/pronostics'
+    | '/reset-password'
     | '/stats'
     | '/trophees'
+    | '/stats/backup-20260812-085935'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  AdminBonusPersistantRoute: typeof AdminBonusPersistantRoute
   AuthRoute: typeof AuthRoute
   ClassementRoute: typeof ClassementRoute
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   GazetteRoute: typeof GazetteRoute
   ProfilRoute: typeof ProfilRoute
   PronosticsRoute: typeof PronosticsRoute
-  StatsRoute: typeof StatsRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
+  StatsRoute: typeof StatsRouteWithChildren
   TropheesRoute: typeof TropheesRoute
 }
 
@@ -163,6 +215,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin-bonus-persistant': {
+      id: '/admin-bonus-persistant'
+      path: '/admin-bonus-persistant'
+      fullPath: '/admin-bonus-persistant'
+      preLoaderRoute: typeof AdminBonusPersistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth': {
       id: '/auth'
       path: '/auth'
@@ -175,6 +234,13 @@ declare module '@tanstack/react-router' {
       path: '/classement'
       fullPath: '/classement'
       preLoaderRoute: typeof ClassementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/gazette': {
@@ -198,6 +264,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PronosticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/stats': {
       id: '/stats'
       path: '/stats'
@@ -212,18 +285,38 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TropheesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/stats/backup-20260812-085935': {
+      id: '/stats/backup-20260812-085935'
+      path: '/backup-20260812-085935'
+      fullPath: '/stats/backup-20260812-085935'
+      preLoaderRoute: typeof StatsBackup20260812085935RouteImport
+      parentRoute: typeof StatsRoute
+    }
   }
 }
+
+interface StatsRouteChildren {
+  StatsBackup20260812085935Route: typeof StatsBackup20260812085935Route
+}
+
+const StatsRouteChildren: StatsRouteChildren = {
+  StatsBackup20260812085935Route: StatsBackup20260812085935Route,
+}
+
+const StatsRouteWithChildren = StatsRoute._addFileChildren(StatsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  AdminBonusPersistantRoute: AdminBonusPersistantRoute,
   AuthRoute: AuthRoute,
   ClassementRoute: ClassementRoute,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   GazetteRoute: GazetteRoute,
   ProfilRoute: ProfilRoute,
   PronosticsRoute: PronosticsRoute,
-  StatsRoute: StatsRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
+  StatsRoute: StatsRouteWithChildren,
   TropheesRoute: TropheesRoute,
 }
 export const routeTree = rootRouteImport

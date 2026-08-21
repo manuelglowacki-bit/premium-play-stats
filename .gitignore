@@ -33,3 +33,8 @@ dist-ssr
 
 .vercel
 .env*
+
+# Paire de clés VAPID générée localement (contient la clé privée Push,
+# jamais destinée à git — voir brancher-rappels-pronos-vapid.ps1 /
+# brancher-push-vestiaire-corrige.ps1 qui la lisent/écrivent).
+.push-vapid.local.json

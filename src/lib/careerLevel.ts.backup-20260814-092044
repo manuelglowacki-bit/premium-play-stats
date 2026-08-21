@@ -1,0 +1,86 @@
+﻿/**
+ * Systeme de carriere Prono Ligue 1 LM
+ *
+ * REGLE :
+ * score de carriere = points cumules sur toutes les saisons
+ *                  + (scores exacts cumules x 2)
+ *
+ * Les seuils des 30 niveaux restent volontairement internes.
+ * Aucun compteur de progression n'est expose a l'utilisateur.
+ */
+
+export type CareerStats = {
+  points: number;
+  exactScores: number;
+};
+
+export type CareerResult = CareerStats & {
+  careerScore: number;
+  level: number;
+};
+
+export const CAREER_LEVEL_THRESHOLDS: readonly number[] = [
+  0,
+  35,
+  80,
+  135,
+  200,
+  280,
+  375,
+  485,
+  610,
+  750,
+  905,
+  1075,
+  1260,
+  1460,
+  1675,
+  1905,
+  2150,
+  2410,
+  2685,
+  2975,
+  3280,
+  3600,
+  3935,
+  4285,
+  4650,
+  5030,
+  5425,
+  5835,
+  6260,
+  6700,
+];
+
+/**
+ * Retourne le niveau courant entre 1 et 30.
+ * Les seuils sont volontairement non affiches dans l'UI.
+ */
+export function getCareerLevel(careerScore: number): number {
+  const score = Math.max(0, Number(careerScore) || 0);
+  let level = 1;
+
+  for (let i = 0; i < CAREER_LEVEL_THRESHOLDS.length; i += 1) {
+    if (score >= CAREER_LEVEL_THRESHOLDS[i]) {
+      level = i + 1;
+    } else {
+      break;
+    }
+  }
+
+  return Math.min(30, Math.max(1, level));
+}
+
+export function calculateCareerScore(stats: CareerStats): CareerResult {
+  const points = Math.max(0, Number(stats.points) || 0);
+  const exactScores = Math.max(0, Number(stats.exactScores) || 0);
+
+  const careerScore = points + exactScores * 2;
+
+  return {
+    points,
+    exactScores,
+    careerScore,
+    level: getCareerLevel(careerScore),
+  };
+}

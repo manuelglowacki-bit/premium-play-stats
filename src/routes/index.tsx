@@ -46,6 +46,12 @@ function IndexPage() {
   const [pendingTeamId, setPendingTeamId] = useState("");
   const [savingTeam, setSavingTeam] = useState(false);
 
+  // Verrouillage de l'équipe de cœur : même règle que le Profil,
+  // appliquée aussi à l'Accueil pour empêcher tout contournement.
+  const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState<Date | null>(null);
+  const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(true);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [myStats, setMyStats] = useState({
     rank: 0,
@@ -119,7 +125,7 @@ function IndexPage() {
           // table que src/routes/profil.tsx) — pas de nouvelle table/policy.
           supabase
             .from("app_settings")
-            .select("entry_fee")
+            .select("entry_fee, favorite_team_deadline, favorite_team_auto_lock")
             .eq("id", 1)
             .maybeSingle(),
           supabase
@@ -375,6 +381,18 @@ setLeaderboard(rankedRankings);
           });
         }
 
+        // -------- Verrouillage équipe de cœur --------
+        // La date est stockée en UTC dans app_settings. On la convertit en
+        // objet Date pour comparer l'instant réel, indépendamment du fuseau.
+        if (!settingsError) {
+          const rawDeadline = settingsRow?.favorite_team_deadline;
+          const parsedDeadline = rawDeadline ? new Date(rawDeadline) : null;
+          setFavoriteTeamDeadline(
+            parsedDeadline && !Number.isNaN(parsedDeadline.getTime()) ? parsedDeadline : null,
+          );
+          setFavoriteTeamAutoLock(settingsRow?.favorite_team_auto_lock ?? true);
+        }
+
         // -------- Cagnotte --------
         // Cagnotte théorique = nombre de joueurs inscrits × droit d'entrée
         // (Admin → Réglages) — jamais basée sur qui a réellement payé (le
@@ -395,6 +413,19 @@ setLeaderboard(rankedRankings);
     return () => { cancelled = true; };
   }, [user?.id, teams]);
 
+  // Horloge légère pour que le verrouillage se déclenche sans rechargement
+  // lorsque la date limite est atteinte alors que la page reste ouverte.
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const isFavoriteTeamLocked = Boolean(
+    favoriteTeamAutoLock &&
+      favoriteTeamDeadline &&
+      currentTime >= favoriteTeamDeadline,
+  );
+
   // 3. Équipe favorite par défaut
   useEffect(() => {
     if (favoriteTeamId) {
@@ -414,12 +445,30 @@ setLeaderboard(rankedRankings);
   } = useTeamTheme(activeClub?.name ?? null);
 
   const openTeamPicker = () => {
+    if (isFavoriteTeamLocked) {
+      alert("La période de choix de l'équipe de cœur est terminée.");
+      return;
+    }
     setPendingTeamId(clubId);
     setIsChangingTeam(true);
   };
 
   const handleConfirmTeamChange = async () => {
     if (!pendingTeamId) return;
+
+    // Recontrôle au moment exact de l'enregistrement pour éviter qu'un
+    // sélecteur déjà ouvert puisse être validé après l'heure limite.
+    const lockedNow = Boolean(
+      favoriteTeamAutoLock &&
+        favoriteTeamDeadline &&
+        new Date() >= favoriteTeamDeadline,
+    );
+    if (lockedNow) {
+      setIsChangingTeam(false);
+      alert("La période de choix de l'équipe de cœur est terminée.");
+      return;
+    }
+
     setSavingTeam(true);
     try {
       await saveFavoriteTeam(pendingTeamId);
@@ -692,14 +741,20 @@ setLeaderboard(rankedRankings);
             <div className="relative z-10 mt-6 pt-5 border-t border-slate-800/80 flex flex-wrap items-center gap-3 justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 {!isChangingTeam ? (
-                  <button
-                    type="button"
-                    onClick={openTeamPicker}
+                  !isFavoriteTeamLocked ? (
+                    <button
+                      type="button"
+                      onClick={openTeamPicker}
                     className="tap flex items-center gap-2 rounded-xl border bg-slate-900/80 px-4 py-2.5 text-[13px] font-display font-bold text-slate-200 hover:border-red-500/50 hover:text-red-400 transition-all"
-                    style={{ borderColor: clubTheme.primary + "55" }}
-                  >
-                    <Heart size={14} style={{ color: clubTheme.primary }} /> Changer mon équipe
-                  </button>
+                      style={{ borderColor: clubTheme.primary + "55" }}
+                    >
+                      <Heart size={14} style={{ color: clubTheme.primary }} /> Changer mon équipe
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-xs font-bold text-red-300">
+                      <span aria-hidden="true">🔒</span> Choix verrouillé
+                    </span>
+                  )
                 ) : (
                   <div className="flex flex-wrap items-center gap-2">
                     <select

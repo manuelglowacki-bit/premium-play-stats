@@ -1,0 +1,220 @@
+import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
+import {
+  Home,
+  Target,
+  Trophy,
+  Newspaper,
+  BarChart3,
+  User,
+  Shield,
+  LogIn,
+  LogOut,
+  MessageCircle,
+} from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const routerState = useRouterState();
+  const currentPath = routerState.location.pathname;
+  const navigate = useNavigate();
+  // Même source de vérité que le reste de l'app (AuthContext) plutôt qu'un
+  // second abonnement local à la session Supabase — `isAdmin` en découle
+  // déjà (profiles.is_admin), c'est le mécanisme déjà utilisé par
+  // AdminRoute pour protéger la route /admin, réutilisé ici pour la nav.
+  const { user, isAdmin, signOut } = useAuth();
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate({ to: "/auth" });
+  };
+
+  const navItems = [
+    { label: "Accueil", to: "/", icon: Home },
+    { label: "Pronos", to: "/pronostics", icon: Target },
+    { label: "Classement", to: "/classement", icon: Trophy },
+    { label: "Gazette", to: "/gazette", icon: Newspaper },
+    { label: "Vestiaire", to: "/trophees", icon: MessageCircle },
+    // La route /trophees contient actuellement le Vestiaire.
+    { label: "Stats", to: "/stats", icon: BarChart3 },
+    { label: "Profil", to: "/profil", icon: User },
+    // Invisible pour les joueurs : aucun lien/bouton Admin dans la nav tant
+    // que profiles.is_admin n'est pas vrai. L'URL /admin reste en plus
+    // protégée côté route par AdminRoute (voir src/routes/admin.tsx).
+    ...(isAdmin ? [{ label: "Admin", to: "/admin", icon: Shield }] : []),
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#030712] text-slate-100 relative flex flex-col font-sans">
+      
+      {/* ================= ARRIÈRE-PLAN GLOBAL PREMIUM ================= */}
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-[#050b14]">
+        
+        {/* Calque 1 : fond global officiel de tout le site (public/arriere plan
+            general.png — même fichier, jamais régénéré ni remplacé). "cover" +
+            position "top" pour remplir tout l'écran sans bandes vides tout en
+            gardant le haut de l'image (où se trouve le stade + le logo Ligue 1
+            d'origine) visible en priorité, quel que soit le format d'écran. */}
+        <div
+          className="absolute inset-0 bg-cover bg-top bg-no-repeat"
+          style={{
+            backgroundImage: "url('/arriere%20plan%20general.png')",
+            backgroundAttachment: "fixed",
+          }}
+        />
+
+        {/* Calque 2 : Vignette légère (assombrit à peine les bords, pour ne pas dénaturer l'image d'origine) */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(6,11,22,0)_0%,rgba(3,7,18,0.35)_100%)]" />
+
+        {/* Calque 3 : Reflets subtils aux couleurs de la Ligue 1 (émeraude/bleu) */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/10 via-transparent to-emerald-500/5 mix-blend-overlay" />
+      </div>
+
+      {/* Les deux badges "Ligue 1" décoratifs fixes (haut-droite / bas-gauche)
+          qui vivaient ici ont été retirés : depuis le passage au nouveau fond
+          global (public/arriere plan general.png), qui porte déjà son propre
+          logo Ligue 1 dans la photo elle-même, ces badges superposés
+          faisaient doublon sur toutes les pages. Le logo Ligue 1 fonctionnel
+          (navigation, favicon d'onglet) n'est pas concerné, seulement ces
+          deux images purement décoratives. */}
+
+      {/* ================= HEADER / NAVIGATION ================= */}
+      {/* paddingTop env(...) pousse le contenu sous l'encoche/la barre de statut
+          sur mobile (iOS/Android) sans changer la hauteur visuelle sur les
+          navigateurs qui ne la définissent pas — env() vaut alors 0px. Fond
+          et bordure du header couvrent quand même toute la zone au-dessus.
+          En style inline (et non en classe Tailwind arbitraire) : le
+          minifieur CSS du build émettait un warning sur `env()` à l'intérieur
+          d'un sélecteur généré, sans le casser, mais autant l'éviter. */}
+      <header
+        className="sticky top-0 z-50 border-b border-slate-800/80 bg-[#060b16]/75 backdrop-blur-xl"
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3.5 md:px-8">
+          
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="size-10 rounded-2xl overflow-hidden border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.2)] group-hover:scale-105 transition-transform flex items-center justify-center bg-[#0d1322]">
+              <img
+                src="/logo%20ligue%201%20white.png"
+                alt="Ligue 1"
+                className="w-7 h-7 object-contain"
+              />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-display text-base font-extrabold uppercase tracking-wider text-white">
+                  Prono Ligue 1
+                </span>
+                <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <span className="font-mono text-[10px] text-slate-400 uppercase tracking-widest block">
+                Saison 2026-2027
+              </span>
+            </div>
+          </Link>
+
+          {/* gap/padding resserrés entre lg (1024px, seuil d'activation de cette
+              nav) et xl (1280px) : avec 7-8 liens (dont "Trophées"), la nav au
+              padding "confortable" d'origine (px-4) dépassait la largeur de
+              l'écran pile à 1024px — logo + nav + badge/Quitter arrivaient à
+              ~1042px pour ~960px disponibles, provoquant un scroll horizontal
+              sur TOUTES les pages (bug préexistant, découvert en testant le
+              palier 1024px demandé pour cette refonte). Restauré à l'identique
+              à partir de xl, où la place ne manque plus. */}
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-1.5 bg-[#0d1322]/90 border border-slate-800 p-1.5 rounded-2xl shadow-inner">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = currentPath === item.to;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`flex items-center gap-1.5 xl:gap-2 px-2.5 xl:px-4 py-2 rounded-xl font-display text-xs font-bold transition-all ${
+                    isActive
+                      ? "bg-emerald-500 text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                  }`}
+                >
+                  <Icon size={15} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* SECTION DROITE : BADGE + BOUTON CONNEXION / DÉCONNEXION */}
+          <div className="hidden sm:flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-[#0d1322] px-3.5 py-1.5 shadow-inner">
+              <span className="size-2 rounded-full bg-emerald-500" />
+              <span className="font-mono text-xs font-bold text-slate-300">J1 • 2026</span>
+            </div>
+
+            {user ? (
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white font-mono text-xs font-bold transition-all shadow-inner"
+                title="Se déconnecter"
+              >
+                <LogOut size={14} />
+                <span>Quitter</span>
+              </button>
+            ) : (
+              <Link
+                to="/auth"
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-slate-950 font-mono text-xs font-bold transition-all shadow-inner"
+              >
+                <LogIn size={14} />
+                <span>Connexion</span>
+              </Link>
+            )}
+          </div>
+
+        </div>
+      </header>
+
+      {/* ================= CONTENU DE LA PAGE ================= */}
+      <main className="relative z-10 flex-1 px-4 py-6 md:px-8 md:py-10">
+        {children}
+      </main>
+
+      {/* ================= NAVIGATION MOBILE ================= */}
+      {/* bottom via style inline : décale la nav au-dessus de la barre de
+          gestes (iOS) / navigation Android au lieu du seul bottom-4 fixe —
+          env() vaut 0px par défaut, donc identique à avant sur tout le reste.
+          Style inline plutôt que classe Tailwind arbitraire pour la même
+          raison que le header ci-dessus (warning du minifieur CSS, inoffensif
+          mais évitable). */}
+      <div
+        className="lg:hidden fixed left-4 right-4 z-50"
+        style={{ bottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+      >
+        {/* justify-around centre les items tant qu'ils tiennent ; l'ajout de "Trophées"
+            (7e/8e lien) peut dépasser la largeur disponible sur les très petits écrans
+            (ex. 360px) — le padding/icône/texte ont donc été légèrement resserrés pour
+            que tout tienne sans rien retirer, et overflow-x-auto + scrollbar masquée
+            servent de filet de sécurité (glissement au lieu d'un lien invisible/coupé)
+            si un écran encore plus étroit ou le lien Admin (utilisateurs admin) ne
+            laissait vraiment plus assez de place. */}
+        <nav className="flex items-center justify-around overflow-x-auto bg-[#060b16]/90 backdrop-blur-xl border border-slate-800/80 rounded-2xl p-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.8)] [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPath === item.to;
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                className={`flex flex-shrink-0 flex-col items-center gap-0.5 px-1 py-2 rounded-xl transition-all ${
+                  isActive ? "text-emerald-400 bg-emerald-500/10" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Icon size={16} />
+                <span className="text-[9px] font-mono font-bold whitespace-nowrap">{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+    </div>
+  );
+}

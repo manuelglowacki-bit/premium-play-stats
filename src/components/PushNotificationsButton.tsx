@@ -1,0 +1,217 @@
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+}
+
+export default function PushNotificationsButton() {
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setEnabled(false);
+        return;
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.register("/push-sw.js");
+        const subscription = await registration.pushManager.getSubscription();
+
+        // "ACTIVÉ" doit refléter un état réellement fonctionnel, pas
+        // seulement "un objet PushSubscription existe dans ce navigateur"
+        // (bug identifié en Phase 2 — diagnostic notification : le
+        // navigateur ne désabonne jamais automatiquement une subscription
+        // simplement parce que la clé VAPID serveur a changé, ni parce que
+        // la permission a pu être révoquée entre-temps dans certains cas.
+        // Un ancien abonnement orphelin pouvait donc rester "présent" côté
+        // navigateur — et afficher "ACTIVÉ" — tout en étant inutilisable :
+        // aucune notification ne pouvait jamais arriver). On vérifie donc
+        // successivement : permission toujours accordée, subscription
+        // toujours présente, ET cette subscription précise (même endpoint)
+        // réellement enregistrée côté Supabase pour l'utilisateur connecté
+        // — c'est notre source de vérité, pas la simple présence locale.
+        if (
+          typeof Notification === "undefined" ||
+          Notification.permission !== "granted" ||
+          !subscription
+        ) {
+          setEnabled(false);
+          return;
+        }
+
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setEnabled(false);
+          return;
+        }
+
+        const { data: existingRow } = await supabase
+          .from("push_subscriptions")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("endpoint", subscription.endpoint)
+          .maybeSingle();
+
+        if (existingRow) {
+          setEnabled(true);
+        } else {
+          // Abonnement local orphelin (obsolète ou désynchronisé de
+          // Supabase, ex. nettoyé côté serveur après un envoi en échec) :
+          // désabonnement propre plutôt que d'afficher un "ACTIVÉ" trompeur
+          // qui ne mènera jamais à un rappel reçu. L'utilisateur peut alors
+          // recliquer "ACTIVER" pour recréer un abonnement à jour.
+          try {
+            await subscription.unsubscribe();
+          } catch (unsubError) {
+            console.warn("Nettoyage abonnement Push orphelin :", unsubError);
+          }
+          setEnabled(false);
+        }
+      } catch (error) {
+        console.error("Push init:", error);
+        setEnabled(false);
+      }
+    })();
+  }, []);
+
+  async function enablePush() {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+
+    try {
+      if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+        throw new Error("Les notifications Push ne sont pas disponibles sur cet appareil.");
+      }
+
+      if (!VAPID_PUBLIC_KEY) {
+        throw new Error("VITE_VAPID_PUBLIC_KEY est absent de .env.local.");
+      }
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Tu dois être connecté pour activer les notifications.");
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("Permission de notification refusée.");
+
+      const registration = await navigator.serviceWorker.register("/push-sw.js");
+
+      // On repart toujours d'un abonnement neuf ici : si l'utilisateur voit
+      // ce bouton "ACTIVER" (pas "ACTIVÉ"), c'est justement qu'on n'a pas pu
+      // confirmer qu'un abonnement existant est valide et à jour (voir
+      // l'effet de montage ci-dessus). Réutiliser un éventuel abonnement
+      // résiduel renverrait potentiellement une clé/endpoint périmés.
+      const staleSubscription = await registration.pushManager.getSubscription();
+      if (staleSubscription) {
+        try {
+          await staleSubscription.unsubscribe();
+        } catch (unsubError) {
+          console.warn("Désabonnement préalable impossible :", unsubError);
+        }
+      }
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+
+      const json = subscription.toJSON();
+      const endpoint = json.endpoint;
+      const p256dh = json.keys?.p256dh;
+      const auth = json.keys?.auth;
+
+      if (!endpoint || !p256dh || !auth) {
+        throw new Error("Abonnement Push incomplet.");
+      }
+
+      const { error } = await supabase
+        .from("push_subscriptions")
+        .upsert(
+          {
+            user_id: user.id,
+            endpoint,
+            p256dh,
+            auth,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id,endpoint" }
+        );
+
+      if (error) throw error;
+
+      setEnabled(true);
+      setMessage("Notifications activées ✓");
+    } catch (error) {
+      console.error("Activation Push:", error);
+      setMessage(error instanceof Error ? error.message : "Impossible d'activer les notifications.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disablePush() {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const registration = await navigator.serviceWorker.getRegistration("/push-sw.js");
+      const subscription = await registration?.pushManager.getSubscription();
+
+      if (user && subscription) {
+        await supabase
+          .from("push_subscriptions")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("endpoint", subscription.endpoint);
+      }
+
+      if (subscription) await subscription.unsubscribe();
+
+      setEnabled(false);
+      setMessage("Notifications désactivées.");
+    } catch (error) {
+      console.error("Désactivation Push:", error);
+      setMessage("Impossible de désactiver les notifications.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mx-3 my-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-sm font-black text-white">🔔 Rappels de pronostics</div>
+          <div className="mt-1 text-xs leading-relaxed text-slate-400">
+            Reçois une notification 1 h avant un match si tu n'as pas encore fait ton prono.
+          </div>
+          {message && <div className="mt-2 text-xs text-emerald-300">{message}</div>}
+        </div>
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void (enabled ? disablePush() : enablePush())}
+          className={`shrink-0 rounded-xl px-4 py-2 text-xs font-black transition ${
+            enabled
+              ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+              : "bg-emerald-400 text-[#06101c] hover:bg-emerald-300"
+          } disabled:opacity-50`}
+        >
+          {busy ? "..." : enabled ? "ACTIVÉ" : "ACTIVER"}
+        </button>
+      </div>
+    </div>
+  );
+}

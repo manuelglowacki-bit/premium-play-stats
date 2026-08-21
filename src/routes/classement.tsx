@@ -3,10 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  Crown,
   Minus,
-  ShieldCheck,
-  Sparkles,
   Target,
   Trophy,
 } from "lucide-react";
@@ -15,7 +12,6 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { matchday as currentMatchday } from "@/lib/prono-data";
 import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLevel";
-import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 
@@ -52,6 +48,8 @@ type RankedPlayer = PlayerProfile & {
   predictionsCount: number;
   /** Nombre de pronostics 1N2 réussis (cumul sur toutes les journées terminées) — sert au calcul de la régularité. */
   regularitySuccess: number;
+  /** Nombre de journées Ligue 1 sur lesquelles le joueur a effectivement pronostiqué. */
+  playedMatchdays: number;
   careerLevel: number;
   careerTitle: string;
 };
@@ -89,34 +87,39 @@ function RankMedal({ rank, scope, className }: { rank: 1 | 2 | 3; scope: string;
   return (
     <svg viewBox="0 0 64 64" className={className} style={{ width: "100%", height: "100%" }} aria-hidden="true">
       <defs>
-        <radialGradient id={gradId} cx="38%" cy="30%" r="75%">
+        <radialGradient id={gradId} cx="34%" cy="26%" r="78%">
           <stop offset="0%" stopColor={palette.from} />
           <stop offset="55%" stopColor={palette.mid} />
           <stop offset="100%" stopColor={palette.to} />
         </radialGradient>
       </defs>
-      {/* Ruban */}
-      <path d="M22 2 L30 25 L20 29 Z" fill={palette.ribbonA} />
-      <path d="M42 2 L34 25 L44 29 Z" fill={palette.ribbonB} />
-      {/* Disque */}
-      <circle cx="32" cy="37" r="21" fill={`url(#${gradId})`} stroke={palette.to} strokeWidth="1.5" />
-      <circle cx="32" cy="37" r="21" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="1" opacity="0.5" />
-      <circle cx="32" cy="37" r="15.5" fill="none" stroke={palette.from} strokeWidth="1" opacity="0.5" />
+      {/* Rubans */}
+      <path d="M21 2 L30 25 L19 30 Z" fill={palette.ribbonA} />
+      <path d="M43 2 L34 25 L45 30 Z" fill={palette.ribbonB} />
+      <path d="M24 3 L30 20 L27 23 L21 5 Z" fill="#fff" opacity="0.14" />
+      {/* Disque métallique */}
+      <circle cx="32" cy="38" r="22" fill={`url(#${gradId})`} stroke={palette.from} strokeWidth="1.4" />
+      <circle cx="32" cy="38" r="19" fill="none" stroke="rgba(255,255,255,.62)" strokeWidth="1.1" opacity="0.72" />
+      <circle cx="32" cy="38" r="15.5" fill="none" stroke={palette.to} strokeWidth="1.2" opacity="0.8" />
       {/* Reflet */}
-      <ellipse cx="25" cy="29" rx="9" ry="5" fill="#fff" opacity="0.18" />
+      <ellipse cx="25" cy="29" rx="9" ry="5" fill="#fff" opacity="0.24" />
       {/* Emblème étoile gravée */}
       <path
         d="M32,26 L34.12,32.09 L40.56,32.22 L35.42,36.11 L37.29,42.28 L32,38.6 L26.71,42.28 L28.58,36.11 L23.44,32.22 L29.88,32.09 Z"
         fill={palette.to}
-        opacity="0.92"
+        opacity="0.42"
       />
+      <text x="32" y="43" textAnchor="middle" fontSize="16" fontWeight="900"
+        fontFamily="Arial, sans-serif" fill="#fff" stroke="rgba(0,0,0,.22)"
+        strokeWidth="0.8" paintOrder="stroke">
+        {rank}
+      </text>
     </svg>
   );
 }
 
 function ClassementPage() {
   const { user } = useAuth();
-  const { theme: viewerTheme } = useTeamTheme();
 
   const [players, setPlayers] = useState<PlayerProfile[] | null>(null);
   const [teamsById, setTeamsById] = useState<Record<string, TeamRow>>({});
@@ -129,7 +132,10 @@ function ClassementPage() {
   // depuis Supabase (voir load() ci-dessous), jamais de valeur fictive.
   const [exactScoresByUser, setExactScoresByUser] = useState<Record<string, number>>({});
   const [regularitySuccessByUser, setRegularitySuccessByUser] = useState<Record<string, number>>({});
+  const [playedMatchdaysByUser, setPlayedMatchdaysByUser] = useState<Record<string, number>>({});
+  const [finishedMatchdayCount, setFinishedMatchdayCount] = useState(0);
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
+  const [previousRankByUser, setPreviousRankByUser] = useState<Record<string, number>>({});
   // Liste des journées Ligue 1 de la saison (id + numéro) — sert uniquement au
   // sélecteur visuel sous le titre. Le classement lui-même reste un cumul
   // saison complet : ce sélecteur est préparé pour un futur filtrage réel
@@ -160,6 +166,9 @@ function ClassementPage() {
       away_score: number | null;
       finished: boolean;
       is_bonus: boolean;
+      api_fixture_id?: number | null;
+      status?: string | null;
+      kickoff?: string | null;
     };
 
     type BonusOptionForRanking = {
@@ -238,7 +247,10 @@ function ClassementPage() {
             setPredictionsCountByUser({});
             setExactScoresByUser({});
             setRegularitySuccessByUser({});
+            setPlayedMatchdaysByUser({});
+            setFinishedMatchdayCount(0);
             setBestMatchday(null);
+            setPreviousRankByUser({});
           }
           return;
         }
@@ -251,9 +263,8 @@ function ClassementPage() {
           supabase
             .from("matches")
             .select(
-              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, home_score, away_score, finished, is_bonus",
+              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, home_score, away_score, finished, is_bonus, api_fixture_id, status, kickoff",
             )
-            .eq("finished", true)
             .eq("is_bonus", false)
             .in("matchday_id", matchdayIds),
         ]);
@@ -297,11 +308,67 @@ function ClassementPage() {
 
         const matches = ((finishedLigue1Matches ?? []) as MatchForRanking[]).filter(
           (m) =>
-            m.home_score != null &&
-            m.away_score != null &&
             !!m.matchday_id &&
             ligue1MatchdayIds.has(String(m.matchday_id)),
         );
+
+        // DIRECT LIVE :
+        // Supabase reste la source du calendrier et des pronostics, mais le
+        // score/statut en cours est rafraîchi depuis l'API football-data.org.
+        // L'endpoint /api/ligue1/matchs?competition=ALL renvoie Ligue 1 +
+        // les 4 championnats bonus avec le même apiFixtureId que celui stocké
+        // dans `matches.api_fixture_id`.
+        let liveApiByFixture = new Map<number, any>();
+
+        try {
+          const liveResponse = await fetch("/api/ligue1/matchs?season=2026&competition=ALL", {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+
+          if (liveResponse.ok) {
+            const livePayload = await liveResponse.json().catch(() => null);
+            const liveMatches = Array.isArray(livePayload?.allMatches)
+              ? livePayload.allMatches
+              : [];
+
+            liveApiByFixture = new Map(
+              liveMatches
+                .filter((m: any) => m?.apiFixtureId != null)
+                .map((m: any) => [Number(m.apiFixtureId), m]),
+            );
+          }
+        } catch (liveError) {
+          // Le classement continue avec Supabase si l'API live est
+          // momentanément indisponible.
+          console.warn("API live indisponible, conservation des données Supabase :", liveError);
+        }
+
+        const applyLiveScore = (match: MatchForRanking): MatchForRanking => {
+          if (match.api_fixture_id == null) return match;
+
+          const live = liveApiByFixture.get(Number(match.api_fixture_id));
+          if (!live) return match;
+
+          const status = String(live.statut ?? live.status ?? match.status ?? "SCHEDULED");
+          const upperStatus = status.toUpperCase();
+
+          return {
+            ...match,
+            status,
+            finished: ["FINISHED", "FT", "AET", "PEN"].includes(upperStatus),
+            home_score:
+              live.scoreDomicile != null
+                ? Number(live.scoreDomicile)
+                : match.home_score,
+            away_score:
+              live.scoreExterieur != null
+                ? Number(live.scoreExterieur)
+                : match.away_score,
+          };
+        };
+
+        const liveMatches = matches.map(applyLiveScore);
 
         // Les 4 matchs bonus sont rattachés à la journée Ligue 1 via
         // bonus_options.matchday_id. Le match bonus lui-même peut appartenir
@@ -333,20 +400,19 @@ function ClassementPage() {
           const { data: bonusMatchesData, error: bonusMatchesError } = await supabase
             .from("matches")
             .select(
-              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, home_score, away_score, finished, is_bonus",
+              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, home_score, away_score, finished, is_bonus, api_fixture_id, status, kickoff",
             )
-            .eq("finished", true)
             .in("id", bonusMatchIds);
 
           if (cancelled) return;
           if (bonusMatchesError) throw bonusMatchesError;
 
-          bonusMatches = (bonusMatchesData ?? []) as MatchForRanking[];
+          bonusMatches = ((bonusMatchesData ?? []) as MatchForRanking[]).map(applyLiveScore);
         }
 
         const allScoredMatchIds = [
           ...new Set([
-            ...matches.map((m) => String(m.id)),
+            ...liveMatches.map((m) => String(m.id)),
             ...bonusMatches.map((m) => String(m.id)),
           ]),
         ];
@@ -394,7 +460,7 @@ function ClassementPage() {
         });
 
         const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, pointsByMatchday, pointsByPredictionKey } =
-          computeLeagueStats(matches, bonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
+          computeLeagueStats(liveMatches, bonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
             seasonByMatchdayId: seasonByMatchdayIdObj,
             favoriteTeamBySeason,
           });
@@ -447,14 +513,139 @@ function ClassementPage() {
           },
         );
 
+        // ÉVOLUTION RÉELLE — comparaison avec le classement juste avant
+        // la dernière journée terminée. On ne fabrique pas une tendance
+        // selon la position actuelle : on recalcule le classement précédent
+        // avec exactement les mêmes pronostics/règles de points.
+        const l1NumberById = new Map<string, number>();
+        ligue1Matchdays.forEach((md: any) => {
+          if (ligue1MatchdayIds.has(String(md.id))) {
+            l1NumberById.set(String(md.id), Number(md.number ?? 0));
+          }
+        });
+
+        const matchdayNumberByMatchId = new Map<string, number>();
+        liveMatches.forEach((m) => {
+          if (m.matchday_id) {
+            matchdayNumberByMatchId.set(String(m.id), l1NumberById.get(String(m.matchday_id)) ?? 0);
+          }
+        });
+
+        // Les matchs bonus utilisent leur propre matchday_id dans `matches`,
+        // mais leur journée de compétition est portée par bonus_options.
+        const bonusParentNumberByMatchId = new Map<string, number>();
+        bonusOptions.forEach((option) => {
+          const number = l1NumberById.get(String(option.matchday_id));
+          if (number != null) {
+            bonusParentNumberByMatchId.set(String(option.match_id), number);
+          }
+        });
+        bonusMatches.forEach((m) => {
+          const parentNumber = bonusParentNumberByMatchId.get(String(m.id));
+          if (parentNumber != null) {
+            matchdayNumberByMatchId.set(String(m.id), parentNumber);
+          }
+        });
+
+        const finishedNumbers = [...new Set(
+          liveMatches
+            .filter((m) => m.finished && m.home_score != null && m.away_score != null)
+            .map((m) => m.matchday_id ? l1NumberById.get(String(m.matchday_id)) : undefined)
+            .filter((n): n is number => typeof n === "number" && n > 0)
+        )].sort((a, b) => a - b);
+
+        const latestFinishedNumber = finishedNumbers.at(-1) ?? null;
+        const previousFinishedNumber =
+          finishedNumbers.length >= 2 ? finishedNumbers[finishedNumbers.length - 2] : null;
+
+        // RÉGULARITÉ — ici on affiche le nombre de journées réellement jouées
+        // par chaque joueur depuis le début, et non un ratio de matchs réussis.
+        // Une journée compte dès qu'un joueur possède au moins un pronostic
+        // rattaché à cette journée Ligue 1 (bonus compris via son rattachement
+        // à la journée par bonus_options).
+        const playedMatchdaysSets: Record<string, Set<number>> = {};
+        for (const p of predictionsData ?? []) {
+          const userId = String(p.user_id ?? "");
+          const dayNumber = matchdayNumberByMatchId.get(String(p.match_id));
+          if (!userId || dayNumber == null || dayNumber <= 0) continue;
+          if (!playedMatchdaysSets[userId]) playedMatchdaysSets[userId] = new Set<number>();
+          playedMatchdaysSets[userId].add(dayNumber);
+        }
+        const playedMatchdaysByUser: Record<string, number> = {};
+        Object.entries(playedMatchdaysSets).forEach(([userId, days]) => {
+          playedMatchdaysByUser[userId] = days.size;
+        });
+
+        const previousPointsByUser: Record<string, number> = {};
+        const previousExactByUser: Record<string, number> = {};
+        const previousRegularityByUser: Record<string, number> = {};
+        const previousPredictionsByUser: Record<string, number> = {};
+
+        const outcomeCorrect = (p: any, m: any) => {
+          if (p.home_prediction == null || p.away_prediction == null || m?.home_score == null || m?.away_score == null) {
+            return false;
+          }
+          const predictedDiff = Number(p.home_prediction) - Number(p.away_prediction);
+          const actualDiff = Number(m.home_score) - Number(m.away_score);
+          return Math.sign(predictedDiff) === Math.sign(actualDiff);
+        };
+
+        if (previousFinishedNumber != null) {
+          for (const p of predictionsData ?? []) {
+            const userId = String(p.user_id ?? "");
+            const dayNumber = matchdayNumberByMatchId.get(String(p.match_id));
+            if (!userId || dayNumber == null || dayNumber > previousFinishedNumber) continue;
+
+            previousPredictionsByUser[userId] = (previousPredictionsByUser[userId] ?? 0) + 1;
+            previousPointsByUser[userId] =
+              (previousPointsByUser[userId] ?? 0) +
+              (pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0);
+
+            const match = matchByIdForCareer.get(String(p.match_id));
+            // Le classement précédent reste STRICTEMENT officiel : un match
+            // encore en direct ne doit jamais entrer dans la comparaison de
+            // l'évolution, même si son score live est déjà connu.
+            if (!match || !match.finished || match.home_score == null || match.away_score == null) continue;
+
+            if (isExactPrediction(p)) {
+              previousExactByUser[userId] = (previousExactByUser[userId] ?? 0) + 1;
+            }
+            if (outcomeCorrect(p, match)) {
+              previousRegularityByUser[userId] = (previousRegularityByUser[userId] ?? 0) + 1;
+            }
+          }
+        }
+
+        const previousRankedInput = profiles.map((p) => ({
+          ...p,
+          points: previousPointsByUser[p.id] ?? 0,
+          exactScores: previousExactByUser[p.id] ?? 0,
+          predictionsCount: previousPredictionsByUser[p.id] ?? 0,
+          regularitySuccess: previousRegularityByUser[p.id] ?? 0,
+          careerLevel: 1,
+          careerTitle: "Débutant",
+        }));
+
+        const previousRanking = previousFinishedNumber != null
+          ? rankPlayers(previousRankedInput as any)
+          : [];
+
+        const previousRanks: Record<string, number> = {};
+        previousRanking.forEach((player: any) => {
+          previousRanks[player.id] = player.rank;
+        });
+
         if (!cancelled) {
           setPlayers(profiles);
           setPointsByUser(points);
           setPredictionsCountByUser(predictionsCount);
           setExactScoresByUser(exactScores);
           setRegularitySuccessByUser(regularitySuccess);
+          setPlayedMatchdaysByUser(playedMatchdaysByUser);
+          setFinishedMatchdayCount(finishedNumbers.length);
           setBestMatchday(topMatchday);
           setCareerStatsByUser(Object.fromEntries(careerByUser));
+          setPreviousRankByUser(previousRanks);
         }
       } catch (error) {
         console.error("Erreur chargement/calcul du classement :", error);
@@ -464,8 +655,11 @@ function ClassementPage() {
           setPredictionsCountByUser({});
           setExactScoresByUser({});
           setRegularitySuccessByUser({});
+          setPlayedMatchdaysByUser({});
+          setFinishedMatchdayCount(0);
           setBestMatchday(null);
           setCareerStatsByUser({});
+          setPreviousRankByUser({});
         }
       }
     }
@@ -476,11 +670,17 @@ function ClassementPage() {
       load();
     };
 
+    // Le classement est vivant : pendant un match, le score de l'API peut
+    // changer sans qu'aucun événement Supabase ne soit déclenché. On recharge
+    // donc les données toutes les 30 secondes.
+    const liveRefreshTimer = window.setInterval(refreshRanking, 30_000);
+
     window.addEventListener("pronos-updated", refreshRanking);
     window.addEventListener("pronos-saved", refreshRanking);
 
     return () => {
       cancelled = true;
+      window.clearInterval(liveRefreshTimer);
       window.removeEventListener("pronos-updated", refreshRanking);
       window.removeEventListener("pronos-saved", refreshRanking);
     };
@@ -495,88 +695,69 @@ function ClassementPage() {
   const loading = players === null;
 
   // Statistiques dérivées mémoïsées avec DÉPARTAGE STRICT + ASSIDUITÉ
-  const {
-    totalPlayers,
-    leader,
-    avgPoints,
-    totalExactScores,
-    bestExactScorePlayerId,
-    top3,
-    others,
-  } = useMemo(() => {
-      const sortedList = (players ?? [])
-        .map((p) => ({
-          ...p,
-          points: pointsByUser[p.id] ?? 0,
-          exactScores: exactScoresByUser[p.id] ?? 0,
-          predictionsCount: predictionsCountByUser[p.id] ?? 0,
-          regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
-        
-          ...(() => {
-            const career = careerStatsByUser[p.id] ?? { points: 0, exactScores: 0 };
-            const result = calculateCareerScore(career);
-            return {
-              careerLevel: result.level,
-              careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
-            };
-          })(),}));
+  const { totalPlayers } = useMemo(() => {
+    const sortedList = (players ?? []).map((p) => ({
+      ...p,
+      points: pointsByUser[p.id] ?? 0,
+      exactScores: exactScoresByUser[p.id] ?? 0,
+      predictionsCount: predictionsCountByUser[p.id] ?? 0,
+      regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
+      playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
+      ...(() => {
+        const career = careerStatsByUser[p.id] ?? { points: 0, exactScores: 0 };
+        const result = calculateCareerScore(career);
+        return {
+          careerLevel: result.level,
+          careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
+        };
+      })(),
+    }));
 
-      // Tri + attribution du rang : source unique de vérité, réutilisée
-      // telle quelle par l'Accueil et le Profil (src/lib/leaderboardRanking.ts)
-      // pour qu'un joueur ait toujours le même rang partout.
-      const list: RankedPlayer[] = rankPlayers(sortedList);
+    const list: RankedPlayer[] = rankPlayers(sortedList);
+    return { totalPlayers: list.length };
+  }, [
+    players,
+    pointsByUser,
+    predictionsCountByUser,
+    exactScoresByUser,
+    regularitySuccessByUser,
+    careerStatsByUser,
+    playedMatchdaysByUser,
+  ]);
 
-      const total = list.length;
-      const sumPoints = list.reduce((sum, p) => sum + p.points, 0);
-      const sumExact = list.reduce((sum, p) => sum + p.exactScores, 0);
-      const maxExact = list.reduce((max, p) => Math.max(max, p.exactScores), 0);
-      // Total de pronostics tous joueurs confondus — simple somme de
-      // `predictionsCount` (déjà calculé par joueur ci-dessus), pour la
-      // barre d'infos sous le podium. Aucun nouveau calcul métier.
-      const sumPredictions = list.reduce((sum, p) => sum + p.predictionsCount, 0);
-
-      const othersPlayers = list.slice(3);
-
-      return {
-        ranked: list,
-        totalPlayers: total,
-        leader: list[0],
-        avgPoints: total > 0 ? sumPoints / total : 0,
-        totalExactScores: sumExact,
-        totalPredictions: sumPredictions,
-        bestExactScorePlayerId: maxExact > 0 ? list.find((p) => p.exactScores === maxExact)?.id ?? null : null,
-        top3: list.slice(0, 3),
-        others: othersPlayers,
-      };
-    }, [players, pointsByUser, predictionsCountByUser, exactScoresByUser, regularitySuccessByUser, careerStatsByUser]);
-
-
-  const avgExact = totalPlayers > 0 ? totalExactScores / totalPlayers : 0;
+  // Gains de fin de saison : 10 € par joueur.
+  // Base 50/30/20, avec arrondi à la dizaine supérieure.
+  // Le 3e reçoit le solde afin que le total reste exactement égal à la cagnotte.
+  const prizePool = totalPlayers * 10;
+  const roundUpToTen = (value: number) => Math.ceil(value / 10) * 10;
+  const prizeFirst = prizePool > 0 ? roundUpToTen(prizePool * 0.5) : 0;
+  const prizeSecond = prizePool > 0 ? roundUpToTen(prizePool * 0.3) : 0;
+  const prizeThird = Math.max(0, prizePool - prizeFirst - prizeSecond);
+  const prizeByRank: Record<number, number> = {
+    1: prizeFirst,
+    2: prizeSecond,
+    3: prizeThird,
+  };
 
   return (
     <AppShell>
-      <main className="relative mx-auto w-full max-w-[1400px] overflow-hidden px-3 pb-28 pt-2 sm:px-5 lg:px-8">
-        {/* Ambient depth */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[780px] overflow-hidden">
-          <div className="absolute left-1/2 top-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-emerald-500/[0.035] blur-[110px]" />
-          <div className="absolute left-[12%] top-[260px] h-[280px] w-[280px] rounded-full bg-emerald-400/[0.025] blur-[100px]" />
-          <div className="absolute right-[8%] top-[300px] h-[280px] w-[280px] rounded-full bg-amber-400/[0.025] blur-[100px]" />
+      <main className="relative mx-auto w-full max-w-[1400px] overflow-hidden px-3 pb-28 pt-3 sm:px-5 lg:px-8">
+        {/* Fond volontairement épuré : aucune bannière de podium. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[900px] overflow-hidden">
+          <div className="absolute left-1/2 top-20 h-[620px] w-[1000px] -translate-x-1/2 rounded-full bg-sky-500/[0.035] blur-[130px]" />
+          <div className="absolute left-[5%] top-[420px] h-[360px] w-[360px] rounded-full bg-cyan-400/[0.02] blur-[120px]" />
+          <div className="absolute right-[5%] top-[430px] h-[360px] w-[360px] rounded-full bg-orange-400/[0.018] blur-[120px]" />
         </div>
 
-        {/* =========================================================
-            HEADER — editorial / competition identity
-           ========================================================= */}
-        <header className="relative z-10 mx-auto max-w-5xl pt-4 text-center sm:pt-7">
+        <header className="relative z-10 mx-auto max-w-5xl pt-3 text-center sm:pt-6">
           <div className="mb-3 flex items-center justify-center gap-3 text-[9px] font-bold uppercase tracking-[0.32em] text-slate-500">
             <span className="h-px w-8 bg-gradient-to-r from-transparent to-slate-600" />
             <span>Prono Ligue 1 LM</span>
             <span className="h-px w-8 bg-gradient-to-l from-transparent to-slate-600" />
           </div>
-
-          <h1 className="font-display text-[clamp(2.25rem,7vw,4.6rem)] font-black uppercase leading-[0.88] tracking-[-0.045em] text-white drop-shadow-[0_8px_30px_rgba(0,0,0,.45)]">
+          <h1 className="font-display text-[clamp(2.2rem,6vw,4.2rem)] font-black uppercase leading-[0.9] tracking-[-0.045em] text-white drop-shadow-[0_8px_30px_rgba(0,0,0,.45)]">
             Classement
           </h1>
-
           <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[10px] font-bold uppercase tracking-[0.16em] sm:text-xs">
             <span className="text-emerald-300">{currentMatchday.label}</span>
             <span className="text-slate-700">•</span>
@@ -584,7 +765,6 @@ function ClassementPage() {
             <span className="text-slate-700">•</span>
             <span className="text-slate-500">Classement général</span>
           </div>
-
           <p className="mx-auto mt-2 max-w-xl text-xs leading-relaxed text-slate-500 sm:text-sm">
             Les meilleurs pronostiqueurs de la compétition, classés aux points.
           </p>
@@ -608,419 +788,363 @@ function ClassementPage() {
         )}
 
         {!loading && totalPlayers > 0 && (
-          <>
-            {/* =====================================================
-                HERO PODIUM — scene, not card
-               ===================================================== */}
-            <section className="relative mt-4 sm:mt-5">
-              <div className="relative mx-auto max-w-[1120px]">
-                {/* Desktop scene */}
-                <div
-                  className="relative hidden overflow-visible sm:block"
-                  style={{ aspectRatio: "1.9 / 1" }}
-                >
-                  <div
-                    className="absolute inset-[-4%_-2%_-5%] bg-cover bg-center bg-no-repeat"
-                    style={{
-                      backgroundImage: "url('/images/podium/podium-banners-stadium.png')",
-                      maskImage:
-                        "linear-gradient(to bottom, transparent 0%, black 7%, black 91%, transparent 100%), linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%)",
-                      WebkitMaskImage:
-                        "linear-gradient(to bottom, transparent 0%, black 7%, black 91%, transparent 100%), linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%)",
-                      WebkitMaskComposite: "source-in",
-                      maskComposite: "intersect",
-                    }}
-                  />
-
-                  <div className="absolute inset-0">
-                    {top3.map((p) => {
-                      const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
-                      const isMe = p.id === user?.id;
-                      const rankStyle =
-                        p.rank === 1
-                          ? {
-                              left: "50%",
-                              top: "26%",
-                              width: "25%",
-                              transform: "translateX(-50%)",
-                              tone: "text-amber-100",
-                              point: "text-amber-300",
-                              avatarBorder: "border-amber-200/70",
-                              avatarGlow: "shadow-[0_10px_32px_rgba(245,190,50,.28)]",
-                              medalSize: "clamp(42px,5vw,68px)",
-                              avatarSize: "clamp(54px,6.4vw,94px)",
-                              nameSize: "clamp(.8rem,1.5vw,1.08rem)",
-                              pointsSize: "clamp(1.9rem,3.8vw,3.7rem)",
-                            }
-                          : p.rank === 2
-                            ? {
-                                left: "22.8%",
-                                top: "30%",
-                                width: "19%",
-                                transform: "translateX(-50%)",
-                                tone: "text-sky-100",
-                                point: "text-sky-50",
-                                avatarBorder: "border-slate-200/60",
-                                avatarGlow: "shadow-[0_8px_24px_rgba(203,213,225,.22)]",
-                                medalSize: "clamp(34px,4vw,54px)",
-                                avatarSize: "clamp(46px,5.4vw,80px)",
-                                nameSize: "clamp(.68rem,1.2vw,.94rem)",
-                                pointsSize: "clamp(1.55rem,3vw,3rem)",
-                              }
-                            : {
-                                left: "77.2%",
-                                top: "30%",
-                                width: "19%",
-                                transform: "translateX(-50%)",
-                                tone: "text-orange-100",
-                                point: "text-orange-50",
-                                avatarBorder: "border-orange-200/55",
-                                avatarGlow: "shadow-[0_8px_24px_rgba(251,146,60,.2)]",
-                                medalSize: "clamp(34px,4vw,54px)",
-                                avatarSize: "clamp(46px,5.4vw,80px)",
-                                nameSize: "clamp(.68rem,1.2vw,.94rem)",
-                                pointsSize: "clamp(1.55rem,3vw,3rem)",
-                              };
-
-                      const nameScale = podiumNameScale(p.pseudo ?? "Joueur");
-
-                      return (
-                        <div
-                          key={p.id}
-                          className="absolute flex flex-col items-center text-center"
-                          style={{
-                            left: rankStyle.left,
-                            top: rankStyle.top,
-                            width: rankStyle.width,
-                            transform: rankStyle.transform,
-                          }}
-                        >
-                          {/* Médaille (+ couronne pour le 1er) */}
-                          <div
-                            className="relative flex shrink-0 items-center justify-center"
-                            style={{ width: rankStyle.medalSize, height: rankStyle.medalSize }}
-                          >
-                            {p.rank === 1 && (
-                              <Crown className="absolute -top-[60%] h-[52%] w-[52%] fill-amber-300 text-amber-200 drop-shadow-[0_0_14px_rgba(245,190,50,.55)]" />
-                            )}
-                            <RankMedal rank={p.rank as 1 | 2 | 3} scope="desktop" className="drop-shadow-[0_6px_14px_rgba(0,0,0,.45)]" />
-                          </div>
-
-                          {/* Avatar */}
-                          <div
-                            className={`mt-2.5 flex shrink-0 items-center justify-center overflow-hidden rounded-full border-2 bg-[#081020]/90 ${rankStyle.avatarBorder} ${rankStyle.avatarGlow}`}
-                            style={{ width: rankStyle.avatarSize, height: rankStyle.avatarSize }}
-                          >
-                            {p.avatar_url ? (
-                              <img src={p.avatar_url} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                              <span className="font-display text-base font-black text-white/90">
-                                {(p.pseudo ?? "?").slice(0, 2).toUpperCase()}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Nom — réduit automatiquement plutôt que d'être coupé */}
-                          <div
-                            className={`mt-2.5 w-full overflow-hidden whitespace-nowrap text-ellipsis px-1 font-display font-black leading-tight ${rankStyle.tone}`}
-                            style={{ fontSize: nameScale === 1 ? rankStyle.nameSize : `calc(${rankStyle.nameSize} * ${nameScale})` }}
-                          >
-                            {p.pseudo ?? "Joueur"}
-                          </div>
-
-                          {/* Logo du club — jamais le nom de l'équipe */}
-                          <div className="mt-1.5 flex h-5 items-center justify-center">
-                            {team?.logo_url ? (
-                              <img src={team.logo_url} alt="" className="h-5 w-5 object-contain drop-shadow-[0_2px_5px_rgba(0,0,0,.65)]" />
-                            ) : (
-                              <span className="h-5 w-5 rounded-full border border-white/10 bg-white/5" />
-                            )}
-                          </div>
-
-                          {/* Points — l'information dominante */}
-                          <div
-                            className={`mt-1.5 font-display font-black leading-none tracking-tight ${rankStyle.point}`}
-                            style={{ fontSize: rankStyle.pointsSize }}
-                          >
-                            {p.points}
-                          </div>
-                          <div className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.22em] text-white/55 sm:text-[10px]">PTS</div>
-
-                          {/* Exacts — nettement secondaire */}
-                          <div className="mt-1.5 font-mono text-[7px] font-bold uppercase tracking-[0.18em] text-white/50 sm:text-[9px]">
-                            {p.exactScores} exact{p.exactScores > 1 ? "s" : ""}
-                          </div>
-
-                          {isMe && (
-                            <span className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2 py-0.5 font-mono text-[7px] font-bold uppercase tracking-wider text-emerald-200">
-                              <ShieldCheck className="h-2.5 w-2.5" /> Vous
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Mobile podium — purpose-built, no desktop scaling */}
-                <div className="sm:hidden">
-                  <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[#050b16]/80 px-2 pb-4 pt-4 shadow-[0_25px_80px_rgba(0,0,0,.45)] backdrop-blur-xl">
-                    <div className="absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_50%_0%,rgba(245,190,50,.12),transparent_65%)]" />
-                    <div className="relative grid grid-cols-3 items-end gap-1">
-                      {[2, 1, 3].map((rank) => {
-                        const p = top3.find((x) => x.rank === rank);
-                        if (!p) return <div key={rank} />;
-                        const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
-                        const first = rank === 1;
-                        const isMe = p.id === user?.id;
-                        return (
-                          <div
-                            key={p.id}
-                            className={`relative flex flex-col items-center rounded-2xl border px-1.5 pb-3 pt-2.5 ${
-                              first
-                                ? "min-h-[240px] border-amber-300/40 bg-gradient-to-b from-amber-300/[0.12] to-black/30 shadow-[0_0_45px_rgba(245,190,50,.08)]"
-                                : rank === 2
-                                  ? "min-h-[205px] border-sky-300/25 bg-gradient-to-b from-sky-300/[0.08] to-black/30"
-                                  : "min-h-[205px] border-orange-300/25 bg-gradient-to-b from-orange-300/[0.07] to-black/30"
-                            }`}
-                          >
-                            {/* Médaille (+ couronne pour le 1er) */}
-                            <div className={`relative flex shrink-0 items-center justify-center ${first ? "h-9 w-9" : "h-7 w-7"}`}>
-                              {first && (
-                                <Crown className="absolute -top-4 h-5 w-5 fill-amber-300 text-amber-200 drop-shadow-[0_0_12px_rgba(245,190,50,.5)]" />
-                              )}
-                              <RankMedal rank={rank as 1 | 2 | 3} scope="mobile" className="drop-shadow-[0_4px_10px_rgba(0,0,0,.4)]" />
-                            </div>
-
-                            {/* Avatar */}
-                            <div
-                              className={`mt-1.5 flex items-center justify-center overflow-hidden rounded-full border border-white/30 bg-[#091120] ${
-                                first ? "h-12 w-12" : "h-10 w-10"
-                              }`}
-                            >
-                              {p.avatar_url ? (
-                                <img src={p.avatar_url} alt="" className="h-full w-full object-cover" />
-                              ) : (
-                                <span className="font-display text-xs font-black text-white">{(p.pseudo ?? "?").slice(0, 2).toUpperCase()}</span>
-                              )}
-                            </div>
-
-                            {/* Nom — réduit automatiquement plutôt que d'être coupé */}
-                            <span
-                              className="mt-1.5 block w-full overflow-hidden whitespace-nowrap text-ellipsis px-1 text-center font-display font-black text-white"
-                              style={{ fontSize: `calc(${first ? "11px" : "10px"} * ${podiumNameScale(p.pseudo ?? "Joueur")})` }}
-                            >
-                              {p.pseudo ?? "Joueur"}
-                            </span>
-
-                            {/* Logo du club — jamais le nom de l'équipe */}
-                            <div className="mt-1.5 h-4">
-                              {team?.logo_url && <img src={team.logo_url} alt="" className="h-4 w-4 object-contain" />}
-                            </div>
-
-                            {/* Points — l'information dominante */}
-                            <div
-                              className={`mt-2 font-display font-black ${first ? "text-2xl text-amber-300" : rank === 2 ? "text-xl text-sky-50" : "text-xl text-orange-50"}`}
-                            >
-                              {p.points}
-                            </div>
-                            <span className="font-mono text-[7px] font-bold uppercase tracking-wider text-white/45">pts</span>
-
-                            {/* Exacts — nettement secondaire */}
-                            <span className="mt-1.5 font-mono text-[7px] uppercase tracking-wider text-white/45">{p.exactScores} exacts</span>
-                            {isMe && <span className="mt-1.5 rounded-full border border-emerald-300/30 px-1.5 py-0.5 font-mono text-[7px] text-emerald-200">VOUS</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Soft transition into the content below */}
-                <div className="pointer-events-none absolute inset-x-8 -bottom-4 h-20 bg-[radial-gradient(ellipse_at_center,rgba(6,182,212,.08),transparent_68%)] blur-2xl" />
-              </div>
-            </section>
-
-            {/* =====================================================
-                LIGHT TRANSITION — no duplicate section title, just a rule
-               ===================================================== */}
-            <div className="relative z-10 mx-auto mt-6 flex max-w-6xl items-center gap-3 px-1 sm:mt-8">
+          <section className="relative z-10 mx-auto mt-7 max-w-[1180px] sm:mt-9">
+            <div className="mb-3 flex items-center gap-3 px-1">
               <span className="h-px flex-1 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
-              <span className="whitespace-nowrap font-mono text-[9px] font-bold uppercase tracking-[0.26em] text-slate-500">
-                Classement actuel · {totalPlayers} joueur{totalPlayers > 1 ? "s" : ""}
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="whitespace-nowrap font-mono text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                CLASSEMENT ACTUEL · {totalPlayers} JOUEURS
               </span>
+                <span className="hidden h-3 w-px bg-white/10 sm:block" />
+              </div>
               <span className="h-px flex-1 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
             </div>
 
-            {/* =====================================================
-                CARTES JOUEURS — même identité premium que le podium
-               ===================================================== */}
-            <section className="relative z-10 mx-auto mt-4 max-w-6xl sm:mt-5">
-              {/* Column labels */}
-              <div className="hidden grid-cols-[64px_minmax(0,1fr)_104px_92px_136px_60px] items-center gap-3 px-5 pb-2 font-mono text-[8px] font-bold uppercase tracking-[0.18em] text-slate-700 sm:grid">
+            {/* Desktop : 1er → dernier, une seule liste continue. */}
+            <div className="hidden sm:block">
+              <div className="grid grid-cols-[64px_minmax(0,1fr)_104px_82px_104px_150px_110px_92px] items-center gap-3 px-5 pb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
                 <span>#</span>
                 <span>Joueur</span>
                 <span className="text-center">Points</span>
-                <span className="text-center">Exacts</span>
+                <span className="text-center">Écart pts</span>
+                <span className="text-center">Gain</span>
+                <span className="text-center">Score exact</span>
                 <span>Régularité</span>
-                <span className="text-center">Forme</span>
+                <span className="text-center">Évolution</span>
               </div>
 
-              <div className="space-y-3">
-                {others.map((p) => {
-                  const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
-                  const isMe = p.id === user?.id;
-                  const ratio = p.predictionsCount > 0 ? Math.round((p.regularitySuccess / p.predictionsCount) * 100) : 0;
-                  const hasBestExact = bestExactScorePlayerId === p.id;
-                  const trend = p.rank <= 5 ? "up" : p.rank >= Math.max(8, totalPlayers - 2) ? "down" : "same";
-                  const trendTone =
-                    trend === "up"
-                      ? "border-emerald-300/25 bg-emerald-300/[0.06]"
-                      : trend === "down"
-                        ? "border-rose-300/25 bg-rose-300/[0.06]"
-                        : "border-white/[0.08] bg-white/[0.02]";
+              <div className="space-y-2.5">
+                {(() => {
+                  const ranked = (players ?? [])
+                    .map((p) => {
+                      const career = careerStatsByUser[p.id] ?? { points: 0, exactScores: 0 };
+                      const result = calculateCareerScore(career);
+                      return {
+                        ...p,
+                        points: pointsByUser[p.id] ?? 0,
+                        exactScores: exactScoresByUser[p.id] ?? 0,
+                        predictionsCount: predictionsCountByUser[p.id] ?? 0,
+                        regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
+                        playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
+                        careerLevel: result.level,
+                        careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
+                      };
+                    });
+                  const list = rankPlayers(ranked as any) as RankedPlayer[];
+                  const totalDays = finishedMatchdayCount;
+                  return list.map((p) => {
+                    const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
+                    const isMe = p.id === user?.id;
+                    const previousRank = previousRankByUser[p.id];
+                    const rankDelta = previousRank != null ? previousRank - p.rank : 0;
+                    const hasPreviousRanking = Object.keys(previousRankByUser).length > 0;
+                    const trend = !hasPreviousRanking ? "same" : rankDelta > 0 ? "up" : rankDelta < 0 ? "down" : "same";
+                    const trendLabel = rankDelta > 0 ? `+${rankDelta}` : rankDelta < 0 ? `${rankDelta}` : "—";
 
-                  return (
-                    <article
-                      key={p.id}
-                      className={`group relative overflow-hidden rounded-2xl border bg-gradient-to-br backdrop-blur-xl transition-all duration-300 hover:-translate-y-[2px] ${
-                        isMe
-                          ? "border-emerald-300/25 from-[#0c1a26]/92 via-[#0a1420]/88 to-[#060d17]/92 shadow-[0_0_0_1px_rgba(52,211,153,.05),0_18px_38px_rgba(0,0,0,.35)]"
-                          : "border-white/[0.08] from-[#0b1524]/92 via-[#0a1420]/86 to-[#060d17]/92 shadow-[0_14px_32px_rgba(0,0,0,.3)] hover:border-white/[0.14]"
-                      }`}
-                    >
-                      {/* Halo discret pour "Vous" — pas de grosse bordure verte */}
-                      {isMe && <div className="pointer-events-none absolute -inset-px rounded-2xl bg-emerald-300/[0.05] blur-md" />}
+                    const leaderPoints = list[0]?.points ?? 0;
+                    const pointsGap = Math.max(0, leaderPoints - p.points);
 
-                      {/* Texture très légère inspirée du grillage du stade */}
-                      <div
-                        className="pointer-events-none absolute inset-0 opacity-60"
-                        style={{
-                          backgroundImage:
-                            "repeating-linear-gradient(135deg, rgba(255,255,255,0.014) 0px, rgba(255,255,255,0.014) 1px, transparent 1px, transparent 9px)",
-                        }}
-                      />
-                      {/* Reflet supérieur + légère lumière latérale */}
-                      <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-white/[0.05] to-transparent" />
-                      <div className="pointer-events-none absolute inset-y-0 left-0 w-28 bg-gradient-to-r from-sky-400/[0.04] to-transparent" />
+                    const topTone =
+                      p.rank === 1
+                        ? "border-amber-200/95 from-amber-400/[0.44] via-[#173451]/78 to-[#081523]/88 shadow-[0_0_58px_rgba(245,158,11,.38),inset_0_0_38px_rgba(245,158,11,.16)]"
+                        : p.rank === 2
+                          ? "border-white/95 from-white/[0.38] via-[#30445b]/78 to-[#0a1624]/88 shadow-[0_0_54px_rgba(226,232,240,.34),inset_0_0_34px_rgba(226,232,240,.13)]"
+                          : p.rank === 3
+                            ? "border-orange-200/95 from-orange-400/[0.42] via-[#3a2b2b]/78 to-[#0c1723]/88 shadow-[0_0_56px_rgba(249,115,22,.36),inset_0_0_36px_rgba(249,115,22,.14)]"
+                            : p.rank === totalPlayers - 2
+                              ? "border-amber-300/90 from-amber-400/[0.34] via-[#5a3410]/88 to-[#1c1208]/94 shadow-[0_0_52px_rgba(245,158,11,.30),inset_0_0_32px_rgba(245,158,11,.12)]"
+                              : p.rank === totalPlayers - 1
+                                ? "border-orange-300/95 from-orange-500/[0.38] via-[#5a210b]/88 to-[#1d0c06]/94 shadow-[0_0_56px_rgba(249,115,22,.34),inset_0_0_34px_rgba(249,115,22,.14)]"
+                                : p.rank === totalPlayers
+                                  ? "border-rose-300/95 from-rose-500/[0.42] via-[#5b0b18]/88 to-[#24060b]/94 shadow-[0_0_62px_rgba(244,63,94,.38),inset_0_0_36px_rgba(244,63,94,.16)]"
+                                  : "border-white/[0.09] from-[#102238]/92 via-[#0c1b2c]/94 to-[#081421]/96";
 
-                      <div className="relative grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 sm:grid-cols-[64px_minmax(0,1fr)_104px_92px_136px_60px] sm:gap-3 sm:px-5 sm:py-4">
-                        {/* Position — petit bloc premium, pas un chiffre nu */}
-                        <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.1] bg-gradient-to-b from-white/[0.07] to-black/30 font-mono text-xs font-black text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,.1),0_4px_10px_rgba(0,0,0,.4)] sm:h-12 sm:w-12 sm:text-sm">
-                          <span className="absolute inset-x-1.5 top-0.5 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-                          {String(p.rank).padStart(2, "0")}
-                        </div>
+                    const rankTone =
+                      p.rank === 1 ? "text-amber-100" :
+                      p.rank === 2 ? "text-slate-100" :
+                      p.rank === 3 ? "text-orange-100" :
+                      p.rank === totalPlayers - 2 ? "text-amber-100" :
+                      p.rank === totalPlayers - 1 ? "text-orange-100" :
+                      p.rank === totalPlayers ? "text-rose-100" :
+                      "text-slate-100";
 
-                        {/* Joueur — avatar + logo club en badge, nom + titre */}
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="relative h-11 w-11 shrink-0 sm:h-[52px] sm:w-[52px]">
-                            <div className="h-full w-full overflow-hidden rounded-full border border-white/15 bg-[#0a1423] shadow-[0_6px_16px_rgba(0,0,0,.4)]">
-                              {p.avatar_url ? (
-                                <img src={p.avatar_url} alt="" className="h-full w-full object-cover" />
-                              ) : (
-                                <span className="flex h-full w-full items-center justify-center font-display text-xs font-black text-white/70">
-                                  {(p.pseudo ?? "?").slice(0, 2).toUpperCase()}
-                                </span>
-                              )}
-                            </div>
-                            {team?.logo_url && (
-                              <div className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-[#050b16] shadow-[0_2px_6px_rgba(0,0,0,.5)]">
-                                <img src={team.logo_url} alt="" className="h-3.5 w-3.5 object-contain" />
+                    const pointTone =
+                      p.rank === 1 ? "text-amber-300" :
+                      p.rank === 2 ? "text-slate-100" :
+                      p.rank === 3 ? "text-orange-300" :
+                      p.rank === totalPlayers - 2 ? "text-amber-100 drop-shadow-[0_0_12px_rgba(245,158,11,.62)]" :
+                      p.rank === totalPlayers - 1 ? "text-orange-100 drop-shadow-[0_0_12px_rgba(249,115,22,.68)]" :
+                      p.rank === totalPlayers ? "text-rose-100 drop-shadow-[0_0_14px_rgba(244,63,94,.72)]" :
+                      "text-white";
+
+                    const gapTone =
+                      p.rank === 1 ? "text-amber-200/90" :
+                      p.rank === 2 ? "text-slate-300" :
+                      p.rank === 3 ? "text-orange-200/90" :
+                      "text-slate-500";
+
+                    const evolutionTone =
+                      trend === "up" ? "border-emerald-300/35 bg-emerald-300/[0.09] text-emerald-200" :
+                      trend === "down" ? "border-rose-300/35 bg-rose-300/[0.09] text-rose-200" :
+                      "border-white/[0.08] bg-white/[0.025] text-slate-500";
+
+                    return (
+                      <article
+                        key={p.id}
+                        className={`group relative overflow-hidden rounded-2xl border bg-gradient-to-br shadow-[0_14px_34px_rgba(0,0,0,.22)] transition-all duration-300 hover:-translate-y-[1px] hover:border-white/[0.16] ${topTone} ${isMe ? "ring-1 ring-emerald-300/20" : ""}`}
+                      >
+                        <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-white/[0.045] to-transparent" />
+                        <div className="relative grid grid-cols-[64px_minmax(0,1fr)_104px_82px_104px_150px_110px_92px] items-center gap-4 px-5 py-4">
+                          <div className="relative flex h-14 w-14 items-center justify-center">
+                            {p.rank <= 3 ? (
+                              <div className={`h-14 w-14 transition-transform duration-300 group-hover:scale-110 ${
+                                p.rank === 1 ? "drop-shadow-[0_0_24px_rgba(245,158,11,.82)]" :
+                                p.rank === 2 ? "drop-shadow-[0_0_22px_rgba(226,232,240,.72)]" :
+                                "drop-shadow-[0_0_23px_rgba(249,115,22,.76)]"
+                              }`}>
+                                <RankMedal rank={p.rank as 1 | 2 | 3} scope="desktop" />
+                              </div>
+                            ) : (
+                              <div className={`relative flex h-12 w-12 items-center justify-center rounded-xl border bg-black/20 font-mono text-sm font-black shadow-[inset_0_1px_0_rgba(255,255,255,.1),0_4px_10px_rgba(0,0,0,.35)] ${p.rank > totalPlayers - 3 ? "border-white/20" : "border-white/[0.1]"} ${rankTone}`}>
+                                {String(p.rank).padStart(2, "0")}
                               </div>
                             )}
                           </div>
 
-                          <div className="min-w-0">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span className="truncate font-display text-sm font-black text-white sm:text-base">{p.pseudo ?? "Joueur"}</span>
-                              {isMe && (
-                                <span className="hidden shrink-0 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-1.5 py-0.5 font-mono text-[7px] font-bold uppercase tracking-wider text-emerald-200 sm:inline-flex">
-                                  Vous
-                                </span>
-                              )}
-                              {hasBestExact && (
-                                <span title="Meilleur total de scores exacts" className="hidden shrink-0 text-amber-300 sm:inline-flex">
-                                  <Sparkles className="h-3.5 w-3.5" />
-                                </span>
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="relative h-[58px] w-[58px] shrink-0">
+                              <div className="h-full w-full overflow-hidden rounded-full border border-white/15 bg-[#0a1423] shadow-[0_6px_16px_rgba(0,0,0,.4)]">
+                                {p.avatar_url ? (
+                                  <img src={p.avatar_url} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                  <span className="flex h-full w-full items-center justify-center font-display text-xs font-black text-white/70">
+                                    {(p.pseudo ?? "?").slice(0, 2).toUpperCase()}
+                                  </span>
+                                )}
+                              </div>
+                              {team?.logo_url && (
+                                <div className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-[#050b16] shadow-[0_2px_6px_rgba(0,0,0,.5)]">
+                                  <img src={team.logo_url} alt="" className="h-3.5 w-3.5 object-contain" />
+                                </div>
                               )}
                             </div>
-                            <span className="mt-1 inline-flex items-center rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-[7px] uppercase tracking-wider text-slate-400">
-                              {p.careerTitle} · Niv. {p.careerLevel}
-                            </span>
+                            <div className="min-w-0">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="truncate font-display text-base font-black text-white">{p.pseudo ?? "Joueur"}</span>
+                                {isMe && <span className="shrink-0 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-1.5 py-0.5 font-mono text-[7px] font-bold uppercase tracking-wider text-emerald-200">Vous</span>}
+                              </div>
+                              <span className="mt-1 inline-flex items-center rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-[7px] uppercase tracking-wider text-slate-400">
+                                {p.careerTitle} · Niv. {p.careerLevel}
+                              </span>
+                            </div>
                           </div>
-                        </div>
 
-                        {/* Points — toujours visible, l'info dominante */}
-                        <div className="text-right sm:text-center">
-                          <div className="font-display text-2xl font-black leading-none text-white drop-shadow-[0_0_16px_rgba(110,231,183,.16)] sm:text-3xl">
-                            {p.points}
+                          <div className="text-center">
+                            <div className={`font-display text-3xl font-black leading-none ${pointTone}`}>{p.points}</div>
+                            <div className="mt-1 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-500">pts</div>
                           </div>
-                          <div className="mt-1 font-mono text-[7px] font-bold uppercase tracking-widest text-emerald-300/60 sm:text-center">pts</div>
-                        </div>
 
-                        {/* Exacts — desktop uniquement, repris dans la bande mobile plus bas */}
-                        <div className="hidden text-center sm:flex sm:flex-col sm:items-center">
-                          <div className="flex items-center gap-1 text-sky-200">
-                            <Target className="h-3.5 w-3.5" />
-                            <span className="font-display text-lg font-black">{p.exactScores}</span>
+                          <div className={`text-center font-display text-base font-black ${gapTone}`}>
+                            {p.rank === 1 ? "—" : `-${pointsGap}`}
+                            <div className="mt-1 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-400">écart</div>
                           </div>
-                          <div className="mt-1 font-mono text-[7px] uppercase tracking-widest text-slate-600">exacts</div>
-                        </div>
-
-                        {/* Régularité — jauge fine turquoise, desktop uniquement */}
-                        <div className="hidden sm:block">
-                          <div className="mb-1.5 flex items-baseline justify-between gap-2 font-mono text-[7px] uppercase tracking-wider text-slate-500">
-                            <span className="font-bold text-slate-300">{p.regularitySuccess}/{p.predictionsCount}</span>
-                            <span>régularité</span>
-                          </div>
-                          <div className="h-[3px] overflow-hidden rounded-full bg-white/[0.06]">
-                            <div className="h-full rounded-full bg-gradient-to-r from-teal-300/70 to-emerald-300/60" style={{ width: `${ratio}%` }} />
-                          </div>
-                        </div>
-
-                        {/* Évolution — vraie flèche, animation au survol, desktop uniquement */}
-                        <div className="hidden sm:flex sm:items-center sm:justify-center">
-                          <div className={`flex h-8 w-8 items-center justify-center rounded-full border transition-transform duration-300 group-hover:scale-110 ${trendTone}`}>
-                            {trend === "up" ? (
-                              <ArrowUp className="h-4 w-4 text-emerald-300 transition-transform duration-300 group-hover:-translate-y-0.5" />
-                            ) : trend === "down" ? (
-                              <ArrowDown className="h-4 w-4 text-rose-300 transition-transform duration-300 group-hover:translate-y-0.5" />
+                          <div className="text-center">
+                            {p.rank <= 3 ? (
+                              <div className={`inline-flex min-w-[72px] items-center justify-center rounded-lg border px-2.5 py-2 font-display text-base font-black shadow-[0_0_16px_rgba(245,158,11,.10)] ${
+                                p.rank === 1
+                                  ? "border-amber-300/45 bg-amber-300/[0.10] text-amber-200"
+                                  : p.rank === 2
+                                    ? "border-slate-200/35 bg-white/[0.08] text-slate-100"
+                                    : "border-orange-300/45 bg-orange-300/[0.10] text-orange-200"
+                              }`}>
+                                {prizeByRank[p.rank]} €
+                              </div>
                             ) : (
-                              <Minus className="h-4 w-4 text-slate-500" />
+                              <span className="font-mono text-sm font-black text-slate-700">—</span>
                             )}
+                            <div className="mt-1 font-mono text-[6px] font-bold uppercase tracking-widest text-slate-600">gain</div>
                           </div>
-                        </div>
-                      </div>
 
-                      {/* Bande mobile — exacts / régularité / évolution, sans scroll horizontal */}
-                      <div className="relative flex items-center gap-3 border-t border-white/[0.05] px-3 py-2.5 sm:hidden">
-                        <div className="flex items-center gap-1 text-sky-200">
-                          <Target className="h-3 w-3" />
-                          <span className="font-mono text-[10px] font-bold">{p.exactScores}</span>
-                          <span className="font-mono text-[7px] uppercase tracking-wider text-slate-600">exacts</span>
-                        </div>
-                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                          <span className="shrink-0 font-mono text-[7px] text-slate-500">{p.regularitySuccess}/{p.predictionsCount}</span>
-                          <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                            <div className="h-full rounded-full bg-gradient-to-r from-teal-300/70 to-emerald-300/60" style={{ width: `${ratio}%` }} />
+<div className="flex flex-col items-center text-center">
+                            <div className="flex items-center gap-1 text-sky-200">
+                              <Target className="h-3.5 w-3.5" />
+                              <span className="font-display text-lg font-black">{p.exactScores}</span>
+                            </div>
+                            <div className="mt-1 font-mono text-[7px] uppercase tracking-widest text-slate-600">exacts</div>
+                          </div>
+
+                          <div>
+                            <div className="mb-1.5 flex items-baseline justify-between gap-2 font-mono text-[8px] uppercase tracking-wider text-slate-400">
+                              <span className="font-bold text-slate-300">{p.playedMatchdays}/{totalDays}</span>
+                              <span>régularité</span>
+                            </div>
+                            <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.06]">
+                              <div
+                                className={`h-full rounded-full ${
+                                  p.rank === 1 ? "bg-gradient-to-r from-amber-500 to-yellow-200" :
+                                  p.rank === 2 ? "bg-gradient-to-r from-slate-400 to-white" :
+                                  p.rank === 3 ? "bg-gradient-to-r from-orange-600 to-orange-300" :
+                                  p.rank === totalPlayers - 2 ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white" :
+                                  p.rank === totalPlayers - 1 ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white" :
+                                  p.rank === totalPlayers ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white" :
+                                  "bg-gradient-to-r from-slate-600 to-slate-400"
+                                }`}
+                                style={{ width: `${totalDays > 0 ? Math.round((p.playedMatchdays / totalDays) * 100) : 0}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-center">
+                            <div className={`flex min-w-[72px] h-8 items-center justify-center gap-1.5 rounded-full border px-2 transition-transform duration-300 group-hover:scale-105 ${evolutionTone}`}>
+                              {trend === "up" ? <ArrowUp className="h-3.5 w-3.5" /> : trend === "down" ? <ArrowDown className="h-3.5 w-3.5" /> : <Minus className="h-3 w-3" />}
+                              <span className="font-mono text-[10px] font-black">{trendLabel}</span>
+                            </div>
                           </div>
                         </div>
-                        <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${trendTone}`}>
-                          {trend === "up" ? (
-                            <ArrowUp className="h-3 w-3 text-emerald-300" />
-                          ) : trend === "down" ? (
-                            <ArrowDown className="h-3 w-3 text-rose-300" />
+                      </article>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            {/* Mobile : mêmes couleurs et même ordre, sans casser la largeur. */}
+            <div className="space-y-2.5 sm:hidden">
+              {(() => {
+                const ranked = (players ?? []).map((p) => {
+                  const career = careerStatsByUser[p.id] ?? { points: 0, exactScores: 0 };
+                  const result = calculateCareerScore(career);
+                  return {
+                    ...p,
+                    points: pointsByUser[p.id] ?? 0,
+                    exactScores: exactScoresByUser[p.id] ?? 0,
+                    predictionsCount: predictionsCountByUser[p.id] ?? 0,
+                    regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
+                    playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
+                    careerLevel: result.level,
+                    careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
+                  };
+                });
+                const list = rankPlayers(ranked as any) as RankedPlayer[];
+                const totalDays = finishedMatchdayCount;
+                return list.map((p) => {
+                  const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
+                  const isMe = p.id === user?.id;
+                  const previousRank = previousRankByUser[p.id];
+                  const rankDelta = previousRank != null ? previousRank - p.rank : 0;
+                  const hasPreviousRanking = Object.keys(previousRankByUser).length > 0;
+                  const trend = !hasPreviousRanking ? "same" : rankDelta > 0 ? "up" : rankDelta < 0 ? "down" : "same";
+                  const trendLabel = rankDelta > 0 ? `+${rankDelta}` : rankDelta < 0 ? `${rankDelta}` : "—";
+                  const tone =
+                    p.rank === 1 ? "border-amber-300/85 from-amber-400/[0.24] via-[#12253d]/90 to-[#081522]/95 shadow-[0_0_34px_rgba(245,158,11,.18)]" :
+                    p.rank === 2 ? "border-slate-100/80 from-white/[0.20] via-[#17283a]/90 to-[#091521]/95 shadow-[0_0_32px_rgba(226,232,240,.15)]" :
+                    p.rank === 3 ? "border-orange-300/85 from-orange-400/[0.23] via-[#1e2634]/90 to-[#0a1621]/95 shadow-[0_0_32px_rgba(249,115,22,.17)]" :
+                    p.rank === totalPlayers - 2 ? "border-amber-300/90 from-amber-400/[0.34] via-[#5a3410]/90 to-[#1c1208]/94 shadow-[0_0_42px_rgba(245,158,11,.30)]" :
+                    p.rank === totalPlayers - 1 ? "border-orange-300/95 from-orange-500/[0.38] via-[#5a210b]/90 to-[#1d0c06]/94 shadow-[0_0_46px_rgba(249,115,22,.34)]" :
+                    p.rank === totalPlayers ? "border-rose-300/95 from-rose-500/[0.42] via-[#5b0b18]/90 to-[#24060b]/94 shadow-[0_0_50px_rgba(244,63,94,.38)]" :
+                    "border-white/[0.09] from-[#102238]/92 to-[#081522]/96";
+                  const rankTone =
+                    p.rank === 1 ? "text-amber-100" :
+                    p.rank === 2 ? "text-slate-100" :
+                    p.rank === 3 ? "text-orange-100" :
+                    p.rank === totalPlayers - 2 ? "text-amber-100" :
+                    p.rank === totalPlayers - 1 ? "text-orange-100" :
+                    p.rank === totalPlayers ? "text-rose-100" :
+                    "text-slate-100";
+                  const pointTone =
+                    p.rank === 1 ? "text-amber-300" :
+                    p.rank === 2 ? "text-slate-100" :
+                    p.rank === 3 ? "text-orange-300" :
+                    p.rank === totalPlayers - 2 ? "text-amber-200" :
+                    p.rank === totalPlayers - 1 ? "text-orange-200" :
+                    p.rank === totalPlayers ? "text-rose-200" :
+                    "text-white";
+                  const evolutionTone =
+                    trend === "up" ? "border-emerald-300/35 bg-emerald-300/[0.09] text-emerald-200" :
+                    trend === "down" ? "border-rose-300/35 bg-rose-300/[0.09] text-rose-200" :
+                    "border-white/[0.08] bg-white/[0.025] text-slate-500";
+                  return (
+                    <article key={p.id} className={`overflow-hidden rounded-2xl border bg-gradient-to-br shadow-[0_12px_28px_rgba(0,0,0,.20)] ${tone} ${isMe ? "ring-1 ring-emerald-300/20" : ""}`}>
+                      <div className="flex items-center gap-3 px-3 py-3">
+                        <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
+                          {p.rank <= 3 ? (
+                            <div className={`h-12 w-12 ${
+                              p.rank === 1 ? "drop-shadow-[0_0_13px_rgba(245,158,11,.52)]" :
+                              p.rank === 2 ? "drop-shadow-[0_0_12px_rgba(226,232,240,.42)]" :
+                              "drop-shadow-[0_0_12px_rgba(249,115,22,.45)]"
+                            }`}>
+                              <RankMedal rank={p.rank as 1 | 2 | 3} scope="mobile" />
+                            </div>
                           ) : (
-                            <Minus className="h-3 w-3 text-slate-500" />
+                            <div className={`flex h-11 w-11 items-center justify-center rounded-xl border bg-black/20 font-mono text-xs font-black ${
+                               p.rank === totalPlayers - 2 ? "border-cyan-300/35 shadow-[0_0_14px_rgba(34,211,238,.12)]" :
+                               p.rank === totalPlayers - 1 ? "border-violet-300/35 shadow-[0_0_14px_rgba(167,139,250,.12)]" :
+                               p.rank === totalPlayers ? "border-rose-300/40 shadow-[0_0_14px_rgba(251,113,133,.14)]" :
+                               "border-white/10"
+                             } ${rankTone}`}>
+                              {String(p.rank).padStart(2, "0")}
+                            </div>
                           )}
                         </div>
+                        <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-white/15 bg-[#0a1423]">
+                          {p.avatar_url ? <img src={p.avatar_url} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center font-display text-[10px] font-black text-white/70">{(p.pseudo ?? "?").slice(0,2).toUpperCase()}</span>}
+                          {team?.logo_url && <img src={team.logo_url} alt="" className="absolute bottom-0 right-0 h-4 w-4 rounded-full bg-[#050b16] object-contain p-0.5" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-display text-[17px] font-black text-white">{p.pseudo ?? "Joueur"}</div>
+                          <div className="mt-0.5 font-mono text-[7px] uppercase tracking-wider text-slate-500">{p.careerTitle} · Niv. {p.careerLevel}</div>
+                        </div>
+                        <div className="flex shrink-0 items-end gap-2">
+                          <div className="text-right">
+                            <div className={`font-display text-xl font-black ${pointTone}`}>{p.points}</div>
+                            <div className="font-mono text-[6px] uppercase tracking-widest text-slate-500">pts</div>
+                          </div>
+                          <div className="text-right">
+                            {p.rank <= 3 ? (
+                              <div className={`font-display text-sm font-black ${
+                                p.rank === 1 ? "text-amber-200" :
+                                p.rank === 2 ? "text-slate-100" :
+                                "text-orange-200"
+                              }`}>
+                                {prizeByRank[p.rank]} €
+                              </div>
+                            ) : (
+                              <div className="font-mono text-[9px] font-black text-slate-700">—</div>
+                            )}
+                            <div className="font-mono text-[6px] uppercase tracking-widest text-slate-600">gain</div>
+                          </div>
+</div>
+                      </div>
+                      <div className="grid grid-cols-[1fr_auto] items-center gap-3 border-t border-white/[0.05] px-3 py-2.5">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="flex items-center gap-1 text-sky-200">
+                            <Target className="h-3 w-3" />
+                            <span className="font-mono text-[9px] font-bold">{p.exactScores}</span>
+                          </div>
+                          <span className="font-mono text-[7px] uppercase tracking-wider text-slate-600">exacts</span>
+                          <div className="ml-auto min-w-0 flex-1">
+                            <div className="mb-1 flex justify-between font-mono text-[7px] uppercase tracking-wider text-slate-400">
+                              <span>{p.playedMatchdays}/{totalDays}</span><span>régularité</span>
+                            </div>
+                            <div className="h-[5px] overflow-hidden rounded-full bg-white/[0.10]">
+                              <div className={`h-full rounded-full ${p.rank === 1 ? "bg-gradient-to-r from-amber-400 to-yellow-200" :
+                               p.rank === 2 ? "bg-gradient-to-r from-slate-300 to-white" :
+                               p.rank === 3 ? "bg-gradient-to-r from-orange-300 to-amber-200" :
+                               p.rank === totalPlayers - 2 ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white" :
+                               p.rank === totalPlayers - 1 ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white" :
+                               p.rank === totalPlayers ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white" :
+                               "bg-slate-400"}`} style={{width:`${totalDays ? Math.round((p.playedMatchdays/totalDays)*100) : 0}%`}} />
+                            </div>
+                          </div>
+                        </div>
+                        <div className={`flex h-6 min-w-6 items-center justify-center rounded-full border px-1.5 ${evolutionTone}`}>{trend === "up" ? <ArrowUp className="h-2.5 w-2.5" /> : trend === "down" ? <ArrowDown className="h-2.5 w-2.5" /> : <Minus className="h-2.5 w-2.5" />}<span className="font-mono text-[7px] font-black">{trendLabel}</span></div>
                       </div>
                     </article>
                   );
-                })}
-              </div>
-            </section>
-          </>
+                });
+              })()}
+            </div>
+          </section>
         )}
       </main>
     </AppShell>

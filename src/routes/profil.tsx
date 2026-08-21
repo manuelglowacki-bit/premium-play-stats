@@ -59,10 +59,10 @@ function ProfilPage() {
 
   const favoriteTeamName = teams.find((t) => t.id === favoriteTeamId)?.name || "";
 
-  const [favoriteTeamOverride, setFavoriteTeamOverride] = useState(false);
   const [deadlineStr, setDeadlineStr] = useState("");
   const [deadlineDate, setDeadlineDate] = useState<Date | null>(null);
   const [autoLock, setAutoLock] = useState(true);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [savingTeam, setSavingTeam] = useState(false);
 
   // Statistiques personnelles — alimentées par Supabase.
@@ -185,7 +185,6 @@ function ProfilPage() {
 
         if (profile) {
           setUsername(profile.pseudo || "Red evils");
-          setFavoriteTeamOverride(Boolean(profile.favorite_team_override));
           setAvatarUrl(profile.avatar_url || "");
         } else {
           const { error: profileCreateError } = await supabase
@@ -465,7 +464,17 @@ function ProfilPage() {
       cancelled = true;
     };
   }, []);
-  const isLocked = autoLock && deadlineDate && new Date() > deadlineDate && !favoriteTeamOverride;
+  // Horloge légère : le verrouillage devient effectif sans rechargement de page.
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const isLocked = Boolean(
+    autoLock &&
+      deadlineDate &&
+      currentTime >= deadlineDate,
+  );
 
   // Fond d'écran dynamique par équipe
   const teamWallpaperUrl = getTeamWallpaperSlug(favoriteTeamName)
@@ -597,7 +606,21 @@ function ProfilPage() {
   };
 
   const handleSaveFavoriteTeam = async () => {
-    if (!user || isLocked || !tempSelectedTeam) return;
+    if (!user || !tempSelectedTeam) return;
+
+    // Recontrôle au moment de la sauvegarde : impossible de valider un
+    // changement si la date limite vient d'être dépassée.
+    const lockedNow = Boolean(
+      autoLock &&
+        deadlineDate &&
+        new Date() >= deadlineDate,
+    );
+    if (lockedNow) {
+      setIsEditingTeam(false);
+      alert("La période de choix de l'équipe de cœur est terminée.");
+      return;
+    }
+
     setSavingTeam(true);
 
     try {

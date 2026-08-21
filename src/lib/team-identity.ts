@@ -12,6 +12,7 @@
 const TEAM_NAME_TO_ID: Array<{ match: string; id: string }> = [
   { match: "paris saint-germain", id: "psg" },
   { match: "paris-saint-germain", id: "psg" },
+  { match: "paris sg", id: "psg" },
   { match: "psg", id: "psg" },
   { match: "marseille", id: "om" },
   { match: "lyon", id: "ol" },

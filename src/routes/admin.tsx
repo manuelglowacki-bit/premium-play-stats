@@ -18,6 +18,7 @@ import {
   setPlayerAdmin,
   updatePlayer,
   getPayments,
+  regeneratePayments,
   setPaymentPaid,
   setPaymentAmount,
   generateMissingPayments,
@@ -93,6 +94,7 @@ import {
   Bell,
   Share2,
   Newspaper,
+  Trophy,
 } from "lucide-react";
 
 /** Onglets de l'espace admin, adressables via le search param `tab`
@@ -1816,8 +1818,39 @@ function PaymentsTab({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingAmount, setEditingAmount] = useState<Record<string, string>>({});
   const [generating, setGenerating] = useState(false);
-  const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [search, setSearch] = useState("");
+  // La cagnotte est automatiquement liée au nombre de joueurs inscrits.
+  // Chaque joueur verse 10 €.
+  const prizePlayerCount = players.length;
+  const prizePoolTotal = prizePlayerCount * 10;
+
+  // Base 50/30/20, puis arrondi aux dizaines pour que chaque gain
+  // se termine toujours par 0 et que la somme reste exactement égale
+  // à la cagnotte.
+  const prizeFirst = Math.round((prizePoolTotal * 0.50) / 10) * 10;
+  const prizeSecondBase = Math.round((prizePoolTotal * 0.30) / 10) * 10;
+  const prizeThirdBase = Math.round((prizePoolTotal * 0.20) / 10) * 10;
+
+  // On ajuste le 2e et le 3e rang pour respecter exactement la cagnotte.
+  // Le 1er reste à 50 % arrondi à la dizaine.
+  let prizeSecond = prizeSecondBase;
+  let prizeThird = prizePoolTotal - prizeFirst - prizeSecond;
+
+  if (prizeThird < 0) {
+    prizeSecond = Math.max(0, prizePoolTotal - prizeFirst);
+    prizeThird = 0;
+  }
+
+  // Le 3e doit également être une dizaine. On ajuste le 2e en conséquence.
+  prizeThird = Math.round(prizeThird / 10) * 10;
+  prizeSecond = prizePoolTotal - prizeFirst - prizeThird;
+
+  // Sécurité finale : tous les montants restent des dizaines et le total
+  // reste exactement égal à la cagnotte.
+  if (prizeSecond < 0) {
+    prizeSecond = 0;
+    prizeThird = prizePoolTotal - prizeFirst;
+  }
 
   const playerById = useMemo(() => {
     const map = new Map<string, Player>();
@@ -1825,23 +1858,68 @@ function PaymentsTab({
     return map;
   }, [players]);
 
+  /**
+   * Une seule ligne affichée par joueur.
+   *
+   * Si plusieurs lignes existent pour le même user_id (ancien doublon),
+   * on conserve en priorité :
+   * 1. une ligne PAYÉE ;
+   * 2. la ligne la plus récente.
+   *
+   * Cela protège l'interface même avant le nettoyage définitif en base.
+   */
+  const uniquePayments = useMemo(() => {
+    const byUser = new Map<string, Payment>();
+
+    for (const payment of payments) {
+      const userId = String(payment.user_id ?? "");
+      if (!userId || !playerById.has(userId)) continue;
+
+      const existing = byUser.get(userId);
+      if (!existing) {
+        byUser.set(userId, payment);
+        continue;
+      }
+
+      const existingDate = existing.payment_date ? new Date(existing.payment_date).getTime() : 0;
+      const currentDate = payment.payment_date ? new Date(payment.payment_date).getTime() : 0;
+
+      if (
+        (!existing.paid && payment.paid) ||
+        (existing.paid === payment.paid && currentDate > existingDate)
+      ) {
+        byUser.set(userId, payment);
+      }
+    }
+
+    return players
+      .map((player) => byUser.get(player.id))
+      .filter((payment): payment is Payment => Boolean(payment));
+  }, [payments, players, playerById]);
+
   const filteredPayments = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return payments;
-    return payments.filter((payment) => {
+    if (!query) return uniquePayments;
+
+    return uniquePayments.filter((payment) => {
       const pseudo = playerById.get(payment.user_id)?.pseudo ?? "";
       return pseudo.toLowerCase().includes(query);
     });
-  }, [payments, playerById, search]);
+  }, [uniquePayments, playerById, search]);
 
-  // Mise à jour optimiste : le badge de statut change immédiatement, on ne
-  // resynchronise depuis Supabase qu'en cas d'échec de la requête.
+  const missingCount = Math.max(players.length - uniquePayments.length, 0);
+
   async function togglePaid(payment: Payment) {
     setBusyId(payment.id);
     const nextPaid = !payment.paid;
-    setPayments((prev) => prev.map((p) => (p.id === payment.id ? { ...p, paid: nextPaid } : p)));
+
+    setPayments((prev) =>
+      prev.map((p) => (p.id === payment.id ? { ...p, paid: nextPaid } : p)),
+    );
+
     try {
       await setPaymentPaid(payment.id, nextPaid);
+      await onChanged();
     } catch (e: any) {
       notify(e.message ?? "Erreur lors de la mise à jour.");
       await onChanged();
@@ -1853,13 +1931,19 @@ function PaymentsTab({
   async function saveAmount(payment: Payment) {
     const raw = editingAmount[payment.id];
     if (raw === undefined) return;
+
     const amount = Number(raw.replace(",", "."));
-    if (Number.isNaN(amount) || amount < 0) return;
+    if (Number.isNaN(amount) || amount < 0) {
+      notify("Montant invalide.");
+      return;
+    }
 
     setBusyId(payment.id);
+
     try {
       await setPaymentAmount(payment.id, amount);
       await onChanged();
+
       setEditingAmount((prev) => {
         const next = { ...prev };
         delete next[payment.id];
@@ -1872,29 +1956,97 @@ function PaymentsTab({
     }
   }
 
-  async function handleGenerateMissing() {
+  /**
+   * Régénération complète :
+   * - crée les paiements des nouveaux joueurs ;
+   * - ne modifie pas les paiements existants ;
+   * - permet au service de nettoyer les doublons si sa fonction
+   *   de synchronisation complète est disponible.
+   *
+   * Le bouton reste disponible même quand aucun paiement ne manque,
+   * car il sert également à resynchroniser la liste.
+   */
+  async function handleRegenerate() {
     setGenerating(true);
+
     try {
-      await generateMissingPayments(players, payments, entryFee);
+      const result = await regeneratePayments(players, entryFee);
       await onChanged();
+      const details = [];
+      if (result.removedDuplicates > 0) {
+        details.push(`${result.removedDuplicates} doublon${result.removedDuplicates > 1 ? "s" : ""} supprimé${result.removedDuplicates > 1 ? "s" : ""}`);
+      }
+      if (result.created > 0) {
+        details.push(`${result.created} paiement${result.created > 1 ? "s" : ""} créé${result.created > 1 ? "s" : ""}`);
+      }
+      notify(details.length ? `✅ ${details.join(" • ")}.` : "✅ Paiements déjà synchronisés.");
     } catch (e: any) {
-      notify(e.message ?? "Erreur lors de la génération des paiements.");
+      notify(e.message ?? "Erreur lors de la régénération des paiements.");
     } finally {
       setGenerating(false);
-      setConfirmGenerate(false);
     }
   }
 
-  const missingCount = players.length - payments.length;
+  const displayedPaidCount = uniquePayments.filter((p) => p.paid).length;
+  const displayedTotalCollected = uniquePayments
+    .filter((p) => p.paid)
+    .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatPill label="Payé" value={`${paidCount} / ${players.length}`} />
-        <StatPill label="Collecté" value={`${totalCollected}€`} tone="text-gold" />
+        <StatPill label="Payé" value={`${displayedPaidCount} / ${players.length}`} />
+        <StatPill label="Collecté" value={`${displayedTotalCollected}€`} tone="text-gold" />
         <StatPill label="Attendu" value={`${totalExpected}€`} tone="text-sky-400" />
-        <StatPill label="Restant" value={`${Math.max(totalExpected - totalCollected, 0)}€`} tone="text-red-400" />
+        <StatPill
+          label="Restant"
+          value={`${Math.max(totalExpected - displayedTotalCollected, 0)}€`}
+          tone="text-red-400"
+        />
       </div>
+
+      <Card className="overflow-hidden border-amber-500/20 bg-gradient-to-br from-[#10182a] via-[#0b1325] to-[#0a1020] p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+              <Trophy size={18} className="text-amber-400" />
+              Gains de la saison
+            </div>
+            <p className="mt-1 text-xs text-slate-400">
+              Répartition basée sur 50 % / 30 % / 20 %, ajustée aux dizaines pour garder des montants ronds.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-slate-700 bg-slate-800/40 px-3 py-2 text-right">
+            <div className="font-mono text-[9px] uppercase tracking-widest text-slate-500">
+              {prizePlayerCount} joueur{prizePlayerCount > 1 ? "s" : ""} × 10 €
+            </div>
+            <div className="font-display text-lg font-black text-white">
+              {prizePoolTotal} €
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-amber-300">🥇 1er · 50 %</div>
+            <div className="mt-1 font-display text-2xl font-black text-white">{prizeFirst}€</div>
+          </div>
+          <div className="rounded-2xl border border-slate-500/30 bg-slate-500/10 p-4">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-300">🥈 2e · 30 %</div>
+            <div className="mt-1 font-display text-2xl font-black text-white">{prizeSecond}€</div>
+          </div>
+          <div className="rounded-2xl border border-orange-500/25 bg-orange-500/10 p-4">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-orange-300">🥉 3e · 20 %</div>
+            <div className="mt-1 font-display text-2xl font-black text-white">{prizeThird}€</div>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+          <span>Total réparti : {prizeFirst + prizeSecond + prizeThird}€</span>
+          <span>Chaque gain finit par 0</span>
+        </div>
+      </Card>
 
       <Card className="p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1902,15 +2054,19 @@ function PaymentsTab({
             <Wallet size={18} className="text-emerald-400" />
             Paiements
             <span className="ml-1 rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-0.5 font-mono text-[11px] font-bold text-slate-300">
-              {paidCount} payé{paidCount > 1 ? "s" : ""} / {players.length} inscrit{players.length > 1 ? "s" : ""}
+              {displayedPaidCount} payé{displayedPaidCount > 1 ? "s" : ""} / {players.length} inscrit
+              {players.length > 1 ? "s" : ""}
             </span>
           </h2>
-          {missingCount > 0 && (
-            <PrimaryButton onClick={() => setConfirmGenerate(true)} disabled={generating}>
-              {generating ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-              Générer {missingCount} paiement{missingCount > 1 ? "s" : ""} manquant{missingCount > 1 ? "s" : ""}
-            </PrimaryButton>
-          )}
+
+          <PrimaryButton onClick={() => void handleRegenerate()} disabled={generating}>
+            {generating ? (
+              <RefreshCw size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            {generating ? "Régénération…" : "Régénérer"}
+          </PrimaryButton>
         </div>
 
         {error && (
@@ -1919,7 +2075,7 @@ function PaymentsTab({
           </div>
         )}
 
-        {!error && payments.length > 0 && (
+        {!error && uniquePayments.length > 0 && (
           <div className="mb-4">
             <TextInput
               value={search}
@@ -1930,12 +2086,14 @@ function PaymentsTab({
           </div>
         )}
 
-        {!error && payments.length === 0 ? (
+        {!error && uniquePayments.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500">
-            Aucun paiement enregistré. Génère les paiements pour commencer.
+            Aucun paiement enregistré. Clique sur « Régénérer » pour synchroniser les joueurs.
           </p>
         ) : !error && filteredPayments.length === 0 ? (
-          <p className="py-10 text-center text-sm text-slate-500">Aucun joueur ne correspond à « {search} ».</p>
+          <p className="py-10 text-center text-sm text-slate-500">
+            Aucun joueur ne correspond à « {search} ».
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse">
@@ -1948,15 +2106,18 @@ function PaymentsTab({
                   <th className="pb-2 pr-0 text-right">Action</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredPayments.map((payment) => {
                   const player = playerById.get(payment.user_id);
                   const editValue = editingAmount[payment.id];
+
                   return (
                     <tr key={payment.id} className="border-b border-slate-800/60 last:border-0">
                       <td className="py-3 pr-3 font-semibold text-slate-100">
                         {player?.pseudo ?? "Joueur inconnu"}
                       </td>
+
                       <td className="py-3 pr-3">
                         <div className="flex items-center gap-2">
                           <TextInput
@@ -1964,16 +2125,20 @@ function PaymentsTab({
                             className="!w-24 !py-1.5"
                             value={editValue ?? String(payment.amount)}
                             onChange={(e) =>
-                              setEditingAmount((prev) => ({ ...prev, [payment.id]: e.target.value }))
+                              setEditingAmount((prev) => ({
+                                ...prev,
+                                [payment.id]: e.target.value,
+                              }))
                             }
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") saveAmount(payment);
+                              if (e.key === "Enter") void saveAmount(payment);
                             }}
                           />
                           <span className="text-xs text-slate-500">€</span>
+
                           {editValue !== undefined && editValue !== String(payment.amount) && (
                             <GhostButton
-                              onClick={() => saveAmount(payment)}
+                              onClick={() => void saveAmount(payment)}
                               title="Enregistrer le montant"
                               ariaLabel={`Enregistrer le montant de ${player?.pseudo ?? "ce joueur"}`}
                             >
@@ -1986,6 +2151,7 @@ function PaymentsTab({
                           )}
                         </div>
                       </td>
+
                       <td className="py-3 pr-3">
                         {payment.paid ? (
                           <span className="inline-flex items-center gap-1.5 rounded-full border border-mint/30 bg-mint/10 px-2.5 py-1 font-mono text-[10px] font-bold text-mint">
@@ -1999,19 +2165,28 @@ function PaymentsTab({
                           </span>
                         )}
                       </td>
+
                       <td className="py-3 pr-3 font-mono text-xs text-slate-400">
                         {payment.payment_date
-                          ? new Date(payment.payment_date).toLocaleDateString("fr-FR", { dateStyle: "medium" })
+                          ? new Date(payment.payment_date).toLocaleDateString("fr-FR", {
+                              dateStyle: "medium",
+                            })
                           : "—"}
                       </td>
+
                       <td className="py-3 pr-0 text-right">
-                        <GhostButton onClick={() => togglePaid(payment)}>
+                        <GhostButton
+                          onClick={() => void togglePaid(payment)}
+                          disabled={busyId === payment.id}
+                          title={payment.paid ? "Marquer non payé" : "Marquer payé"}
+                          ariaLabel={`${payment.paid ? "Marquer non payé" : "Marquer payé"} pour ${player?.pseudo ?? "ce joueur"}`}
+                        >
                           {busyId === payment.id ? (
                             <RefreshCw size={12} className="animate-spin" />
                           ) : (
                             <CheckCircle2 size={12} />
                           )}
-                          {payment.paid ? "Marquer non payé" : "Marquer payé"}
+                          {payment.paid ? "Non payé" : "Payé"}
                         </GhostButton>
                       </td>
                     </tr>
@@ -2021,24 +2196,25 @@ function PaymentsTab({
             </table>
           </div>
         )}
-      </Card>
 
-      {confirmGenerate && (
-        <ConfirmDialog
-          title="Générer les paiements manquants ?"
-          description={`${missingCount} paiement${missingCount > 1 ? "s" : ""} de ${entryFee}€ ${
-            missingCount > 1 ? "seront créés" : "sera créé"
-          } pour les joueurs qui n'en ont pas encore.`}
-          confirmLabel="Générer"
-          tone="primary"
-          busy={generating}
-          onCancel={() => setConfirmGenerate(false)}
-          onConfirm={handleGenerateMissing}
-        />
-      )}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-4 text-xs text-slate-500">
+          <span>
+            {uniquePayments.length} paiement{uniquePayments.length > 1 ? "s" : ""} affiché
+            {uniquePayments.length > 1 ? "s" : ""} pour {players.length} joueur
+            {players.length > 1 ? "s" : ""}.
+          </span>
+
+          {missingCount > 0 && (
+            <span className="font-semibold text-amber-400">
+              {missingCount} joueur{missingCount > 1 ? "s" : ""} sans paiement.
+            </span>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
+
 
 // ============================================================
 // ⚽ ONGLET MATCHS
@@ -3441,7 +3617,9 @@ function BonusTab({
     await updateMatch(match.id, {
       home_score: home,
       away_score: away,
-      finished: bothPresent ? true : match.finished,
+      // Le match n'est considéré terminé que si les DEUX scores sont présents.
+      // Cela permet aussi d'annuler proprement un score saisi par erreur.
+      finished: bothPresent,
     });
 
     // Reflète immédiatement le nouveau score dans l'état local de
@@ -3480,6 +3658,67 @@ function BonusTab({
   function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode, standings?: CompetitionStandings): BonusCandidate | null {
     return selectBestBonusMatch([toBonusMatch(match)], code, standings);
   }
+
+  async function clearBonusScore() {
+    if (!editingBonus) return;
+
+    const targetMatch = matches.find((m) => m.id === editingBonus.matchId);
+    if (!targetMatch) {
+      notify("Match introuvable.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Supprimer le score saisi par erreur et remettre ce match comme non terminé ?"
+    );
+    if (!confirmed) return;
+
+    setSavingBonusEdit(true);
+    try {
+      await updateMatch(targetMatch.id, {
+        home_score: null,
+        away_score: null,
+        finished: false,
+      });
+
+      if (selectedBonusKey) {
+        setBonusSelections((prev) => {
+          const sel = prev[selectedBonusKey];
+          const existing = sel?.[editingBonus.code];
+          if (!sel || !existing) return prev;
+
+          return {
+            ...prev,
+            [selectedBonusKey]: {
+              ...sel,
+              [editingBonus.code]: {
+                ...existing,
+                match: {
+                  ...existing.match,
+                  home_score: null,
+                  away_score: null,
+                  finished: false,
+                },
+              },
+            },
+          };
+        });
+      }
+
+      setEditingBonus((prev) =>
+        prev ? { ...prev, home: "", away: "" } : prev,
+      );
+
+      await onChanged();
+      notify("Score annulé. Le match est de nouveau en attente.");
+    } catch (e) {
+      console.error("Erreur lors de l'annulation du score :", e);
+      notify(errorMessage(e, "Impossible d'annuler le score"));
+    } finally {
+      setSavingBonusEdit(false);
+    }
+  }
+
 
   // ============================================================
   // Modal "Modifier le bonus" — championnat, match sélectionné (avec
@@ -3986,6 +4225,15 @@ function BonusTab({
             maxWidthClassName="max-w-xl"
             footer={
               <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={clearBonusScore}
+                  disabled={savingBonusEdit}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-3 font-display text-xs font-bold uppercase tracking-wide text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                >
+                  <Trash2 size={15} />
+                  Annuler le score
+                </button>
                 <GhostButton onClick={() => setEditingBonus(null)} disabled={savingBonusEdit} className="w-full sm:w-auto">
                   Annuler
                 </GhostButton>
@@ -4762,7 +5010,7 @@ function SettingsTab({
   // tant que settings n'est pas chargé.
   const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 1));
 
-  // Équipe de cÅ“ur
+  // Équipe de cœur
   const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState(settings?.favorite_team_deadline?.slice(0, 16) ?? "");
   const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(settings?.favorite_team_auto_lock ?? true);
 
@@ -4911,7 +5159,7 @@ function SettingsTab({
             ⭐
           </span>
           <div>
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cÅ“ur</h2>
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cœur</h2>
             <p className="text-xs text-slate-400">
               Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
             </p>
