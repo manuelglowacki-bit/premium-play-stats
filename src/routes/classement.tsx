@@ -1151,9 +1151,9 @@ function ClassementPage() {
                           )}
                         </div>
 
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-[120px] flex-1 overflow-visible">
                           <div className="flex min-w-0 items-center gap-1.5">
-                            <span className="block min-w-0 truncate font-display text-[17px] font-black leading-tight text-white">
+                            <span className="block min-w-0 whitespace-nowrap overflow-visible font-display text-[17px] font-black leading-tight text-white">
                               {p.pseudo ?? "Joueur"}
                             </span>
                             {isMe && (
@@ -1162,12 +1162,12 @@ function ClassementPage() {
                               </span>
                             )}
                           </div>
-                          <div className="mt-1 truncate font-mono text-[7px] font-bold uppercase tracking-[0.08em] text-slate-300">
+                          <div className="mt-1 whitespace-nowrap overflow-visible font-mono text-[7px] font-bold uppercase tracking-[0.08em] text-slate-300">
                             {p.careerTitle} · Niv. {p.careerLevel}
                           </div>
                         </div>
 
-                        <div className="shrink-0 text-right">
+                        <div className="w-[48px] shrink-0 text-right">
                           <div className={`font-display text-[25px] font-black leading-none ${pointTone}`}>
                             {p.points}
                           </div>
