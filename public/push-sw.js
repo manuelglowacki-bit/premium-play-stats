@@ -1,32 +1,32 @@
-// ============================================================
-// PWA — cache des ASSETS STATIQUES UNIQUEMENT (Lot PWA).
+﻿// ============================================================
+// PWA â€” cache des ASSETS STATIQUES UNIQUEMENT (Lot PWA).
 //
-// RÈGLE ABSOLUE : ce service worker ne doit JAMAIS devenir une source de
-// vérité parallèle à Supabase. Il ne met en cache QUE les fichiers
-// statiques buildés par Vite sous /assets/ (JS/CSS), dont le nom contient
-// déjà un hash de contenu — un cache-first sur ces URLs ne peut donc
-// jamais servir une version périmée : tout changement de contenu produit
-// une URL différente (nouveau hash), l'ancienne reste simplement inutilisée.
+// RÃˆGLE ABSOLUE : ce service worker ne doit JAMAIS devenir une source de
+// vÃ©ritÃ© parallÃ¨le Ã  Supabase. Il ne met en cache QUE les fichiers
+// statiques buildÃ©s par Vite sous /assets/ (JS/CSS), dont le nom contient
+// dÃ©jÃ  un hash de contenu â€” un cache-first sur ces URLs ne peut donc
+// jamais servir une version pÃ©rimÃ©e : tout changement de contenu produit
+// une URL diffÃ©rente (nouveau hash), l'ancienne reste simplement inutilisÃ©e.
 //
 // Tout le reste (pronostics, classement, profils, auth Supabase, bonus,
-// Admin, Gazette, /api/*, et le document HTML lui-même) n'est JAMAIS
-// intercepté : ces requêtes passent intégralement en direct au réseau,
+// Admin, Gazette, /api/*, et le document HTML lui-mÃªme) n'est JAMAIS
+// interceptÃ© : ces requÃªtes passent intÃ©gralement en direct au rÃ©seau,
 // exactement comme si ce service worker n'existait pas pour elles.
 // ============================================================
 const STATIC_CACHE_NAME = "prono-static-v1";
 
 self.addEventListener("install", (event) => {
-  // Prend effet immédiatement (pas d'attente de fermeture de tous les
-  // onglets) — nécessaire pour qu'une mise à jour du site ne reste jamais
-  // bloquée derrière un ancien service worker.
+  // Prend effet immÃ©diatement (pas d'attente de fermeture de tous les
+  // onglets) â€” nÃ©cessaire pour qu'une mise Ã  jour du site ne reste jamais
+  // bloquÃ©e derriÃ¨re un ancien service worker.
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      // Supprime les anciennes versions du cache statique (mise à jour du
-      // site) — ne touche à rien d'autre (pas de cache Supabase/API ici).
+      // Supprime les anciennes versions du cache statique (mise Ã  jour du
+      // site) â€” ne touche Ã  rien d'autre (pas de cache Supabase/API ici).
       const keys = await caches.keys();
       await Promise.all(
         keys
@@ -41,10 +41,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
-  // Uniquement GET, même origine, et strictement sous /assets/ (bundle
-  // JS/CSS hashé par Vite). Tout le reste (navigation HTML, /api/*,
-  // Supabase, manifest, images non hashées...) n'est pas intercepté du
-  // tout — comportement réseau natif inchangé.
+  // Uniquement GET, mÃªme origine, et strictement sous /assets/ (bundle
+  // JS/CSS hashÃ© par Vite). Tout le reste (navigation HTML, /api/*,
+  // Supabase, manifest, images non hashÃ©es...) n'est pas interceptÃ© du
+  // tout â€” comportement rÃ©seau natif inchangÃ©.
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
@@ -71,8 +71,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Prono Ligue 1 LM";
   const options = {
     body: data.body || "Tu as une nouvelle notification.",
-    icon: data.icon || "/pwa-192x192.png",
-    badge: data.badge || "/pwa-192x192.png",
+    icon: data.icon || "/pwa-192.png",
+    badge: data.badge || "/pwa-192.png",
     tag: data.tag || "prono-ligue1",
     data: data.data || { url: "/pronostics" },
     vibrate: [100, 50, 100],
