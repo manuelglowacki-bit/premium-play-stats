@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 export default defineConfig({
@@ -9,23 +10,52 @@ export default defineConfig({
     TanStackRouterVite(),
     react(),
     tailwindcss(),
+
+    VitePWA({
+      registerType: 'autoUpdate',
+
+      manifest: {
+        name: 'Prono Ligue 1 LM',
+        short_name: 'Prono L1 LM',
+        description: 'Application de pronostics Ligue 1 LM',
+        theme_color: '#07111f',
+        background_color: '#07111f',
+        display: 'standalone',
+        orientation: 'portrait',
+        start_url: '/',
+        scope: '/',
+        icons: [
+          {
+            src: '/pwa-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: '/pwa-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
+        ],
+      },
+
+      workbox: {
+        navigateFallback: '/',
+      },
+
+      devOptions: {
+        enabled: true,
+      },
+    }),
   ],
+
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+
   server: {
     proxy: {
-      // `vite dev` seul ne sait pas exécuter le dossier api/ (fonctions
-      // Vercel) : sans ce proxy, un fetch("/api/...") est traité comme une
-      // requête de fichier source et Vite renvoie le code TS transpilé de
-      // la route en 200 (Content-Type text/javascript), que le client
-      // essaie ensuite de parser comme du JSON — d'où des erreurs du type
-      // "réponse invalide (200)" alors que la requête a bien abouti.
-      // Lancer `npm run dev:api` (vercel dev --listen 3210) en parallèle
-      // pour que /api/* fonctionne en local ; en prod sur Vercel le
-      // routing est natif, ce proxy ne sert qu'au dev.
       '/api': {
         target: 'http://localhost:3210',
         changeOrigin: true,
