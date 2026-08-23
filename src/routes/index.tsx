@@ -202,26 +202,50 @@ function IndexPage() {
           return Number.isFinite(time) ? time : null;
         };
 
-        const upcoming = (reconciledMatches || [])
-          .map((m: any) => ({ match: m, at: kickoffOf(m) }))
-          .filter((entry) => entry.at !== null && (entry.at as number) > now)
-          .sort((a, b) => (a.at as number) - (b.at as number))[0];
+        // Le compte a rebours vise l'ouverture de la prochaine JOURNEE, pas
+        // le prochain match. Une journee se pronostique en bloc : des que son
+        // premier match est lance, elle n'est plus a preparer, et le compteur
+        // doit basculer sur la suivante. Viser le prochain match ferait au
+        // contraire redemarrer un decompte entre chaque rencontre d'une
+        // journee deja entamee.
+        const firstKickoffByDay = new Map<string, { at: number; match: any }>();
+        (reconciledMatches || []).forEach((m: any) => {
+          const at = kickoffOf(m);
+          if (at === null) return;
+          const dayKey = String(
+            m?.matchday_id ?? m?.matchday_code ?? m?.matchday ?? m?.match_day ?? "",
+          );
+          if (!dayKey) return;
 
-        if (upcoming) {
+          const known = firstKickoffByDay.get(dayKey);
+          if (!known || at < known.at) firstKickoffByDay.set(dayKey, { at, match: m });
+        });
+
+        // Premiere journee dont le coup d'envoi n'est pas encore passe.
+        const nextDay = [...firstKickoffByDay.values()]
+          .filter((entry) => entry.at > now)
+          .sort((a, b) => a.at - b.at)[0];
+
+        if (nextDay) {
           const raw =
-            upcoming.match.matchday_code ?? upcoming.match.matchday ?? upcoming.match.match_day;
+            nextDay.match.matchday_code ?? nextDay.match.matchday ?? nextDay.match.match_day;
           const dayLabel = String(raw ?? "").toUpperCase().startsWith("J")
             ? String(raw).toUpperCase()
             : raw
               ? `J${raw}`
               : "";
-          const dateLabel = new Date(upcoming.at as number).toLocaleDateString("fr-FR", {
+          const dateLabel = new Date(nextDay.at).toLocaleDateString("fr-FR", {
             day: "numeric",
             month: "long",
           });
+          // `label` ne porte QUE la date : le libelle affiche deja la journee
+          // juste avant, les deux se seraient repetes.
           setNextKickoff({
-            at: upcoming.at as number,
-            label: [dayLabel, dateLabel].filter(Boolean).join(" • "),
+            at: nextDay.at,
+            label: `${dateLabel} à ${new Date(nextDay.at).toLocaleTimeString("fr-FR", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}`,
             day: dayLabel,
           });
         } else {
@@ -702,7 +726,7 @@ setLeaderboard(rankedRankings);
                 <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 px-4 py-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-400">
-                      Prochain coup d'envoi · {nextKickoff.label}
+                      Ouverture de la {nextKickoff.day || "journée"} · {nextKickoff.label}
                     </span>
                   </div>
                   <CountdownBlocks target={nextKickoff.at} />
