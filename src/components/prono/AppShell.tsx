@@ -101,7 +101,74 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const headerRef = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLDivElement | null>(null);
   const [vestiaireUnread, setVestiaireUnread] = useState(0);
+  // Journee et saison affichees dans l'en-tete. Elles etaient ecrites en dur
+  // ("J1 • 2026", "Saison 2026-2027") et ne bougeaient donc jamais.
+  const [headerSeason, setHeaderSeason] = useState<string | null>(null);
+  const [headerDay, setHeaderDay] = useState<{ number: number; kickoff: number | null } | null>(null);
   useMeasuredChromeHeights(headerRef, navRef);
+
+  // Saison et journee de l'en-tete, lues en base. Aucun point n'est calcule
+  // ici : on cherche seulement le prochain match de Ligue 1 a jouer, pour
+  // afficher sa journee, sa date et son heure.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [{ data: settings }, { data: competitions }, { data: matchdays }] = await Promise.all([
+          supabase.from("app_settings").select("season").eq("id", 1).maybeSingle(),
+          supabase.from("competitions").select("id, code, external_code"),
+          supabase.from("matchdays").select("id, number, competition_id, season"),
+        ]);
+        if (cancelled) return;
+
+        const season = settings?.season ? String(settings.season) : null;
+        if (season) setHeaderSeason(season);
+
+        // Journees de LIGUE 1 uniquement : les 4 championnats bonus ont leurs
+        // propres J1/J2 et fausseraient le numero affiche.
+        const ligue1CompetitionIds = new Set(
+          (competitions ?? [])
+            .filter((c: any) => c.code === "FL1" || c.external_code === "FL1")
+            .map((c: any) => String(c.id)),
+        );
+        const numberByMatchdayId = new Map<string, number>();
+        (matchdays ?? []).forEach((md: any) => {
+          if (season && md.season && String(md.season) !== season) return;
+          if (md.competition_id && !ligue1CompetitionIds.has(String(md.competition_id))) return;
+          numberByMatchdayId.set(String(md.id), Number(md.number ?? 0));
+        });
+        if (numberByMatchdayId.size === 0) return;
+
+        const { data: matches } = await supabase
+          .from("matches")
+          .select("matchday_id, kickoff, is_bonus")
+          .in("matchday_id", [...numberByMatchdayId.keys()]);
+        if (cancelled) return;
+
+        const playable = (matches ?? [])
+          .filter((m: any) => m?.is_bonus !== true && m?.kickoff && m?.matchday_id)
+          .map((m: any) => ({
+            number: numberByMatchdayId.get(String(m.matchday_id)) ?? 0,
+            at: new Date(String(m.kickoff)).getTime(),
+          }))
+          .filter((m) => m.number > 0 && Number.isFinite(m.at))
+          .sort((a, b) => a.at - b.at);
+        if (playable.length === 0) return;
+
+        const now = Date.now();
+        const next = playable.find((m) => m.at > now);
+        const reference = next ?? playable[playable.length - 1];
+        setHeaderDay({ number: reference.number, kickoff: next ? reference.at : null });
+      } catch (error) {
+        console.warn("En-tete : journee non chargee", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!user?.id) {
@@ -256,7 +323,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <span className="inline-block size-1.5 rounded-full bg-emerald-500 animate-pulse" />
               </div>
               <span className="font-mono text-[10px] text-slate-400 uppercase tracking-widest block">
-                Saison 2026-2027
+                Saison {headerSeason ?? "—"}
               </span>
             </div>
           </Link>
@@ -288,9 +355,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* SECTION DROITE : BADGE + BOUTON CONNEXION / DÃ‰CONNEXION */}
           <div className="hidden sm:flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-[#0d1322] px-3.5 py-1.5 shadow-inner">
+            <div className="flex items-center gap-2.5 rounded-2xl border border-slate-800 bg-[#0d1322] px-3.5 py-1.5 shadow-inner">
               <span className="size-2 rounded-full bg-emerald-500" />
-              <span className="font-mono text-xs font-bold text-slate-300">J1 • 2026</span>
+              <span className="font-mono text-xs font-bold text-slate-200">
+                {headerDay ? `J${headerDay.number}` : "—"}
+              </span>
+              {headerDay && (
+                <>
+                  <span className="h-3 w-px bg-slate-700" />
+                  <span className="font-mono text-[11px] text-slate-400">
+                    {headerDay.kickoff
+                      ? new Date(headerDay.kickoff)
+                          .toLocaleString("fr-FR", {
+                            weekday: "short",
+                            day: "numeric",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                          .replace(",", " ·")
+                      : "journée terminée"}
+                  </span>
+                </>
+              )}
             </div>
 
             {user ? (
