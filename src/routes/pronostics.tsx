@@ -2150,13 +2150,25 @@ function PronosticsPage() {
                                 size="size-full drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)]"
                               />
                             </div>
-                            <b className="font-display text-base md:text-lg font-bold text-white truncate">
+                            {/* Le nom de l'equipe choisie s'allume : le joueur
+                                voit son pronostic sans avoir a traduire 1/N/2.
+                                Un nul laisse les deux noms au blanc. */}
+                            <b
+                              className={`truncate font-display text-base font-bold transition-colors md:text-lg ${
+                                current === "1" ? "text-emerald-300" : "text-white"
+                              }`}
+                            >
                               {home.name}
                             </b>
                           </div>
 
                           <div className="flex shrink-0 flex-col items-center gap-2 mx-auto">
-                            <div className="flex gap-1.5 rounded-2xl border border-black/50 bg-[#050A14] p-1 shadow-inner">
+                            {/* Les trois boutons etaient colles au centre : le
+                                "1" (victoire a domicile) se retrouvait aussi
+                                loin de l'equipe de gauche que le "2". Ils
+                                s'ecartent maintenant vers l'equipe qu'ils
+                                designent, sans quitter leur pilule commune. */}
+                            <div className="flex w-[164px] justify-between rounded-2xl border border-black/50 bg-[#050A14] p-1 shadow-inner">
                               {(["1", "N", "2"] as const).map((k) => (
                                 <button
                                   key={k}
@@ -2218,7 +2230,11 @@ function PronosticsPage() {
                           )}
 
                           <div className="flex flex-1 items-center gap-4 min-w-0 justify-end">
-                            <b className="font-display text-base md:text-lg font-bold text-white truncate text-right">
+                            <b
+                              className={`truncate text-right font-display text-base font-bold transition-colors md:text-lg ${
+                                current === "2" ? "text-emerald-300" : "text-white"
+                              }`}
+                            >
                               {away.name}
                             </b>
                             <div className="relative size-12 shrink-0 flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
