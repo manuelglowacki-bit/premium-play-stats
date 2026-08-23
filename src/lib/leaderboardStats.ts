@@ -75,19 +75,20 @@ export type LeagueStats = {
   predictionsCountByUser: Record<string, number>;
   exactScoresByUser: Record<string, number>;
   regularitySuccessByUser: Record<string, number>;
-  /** PARTICIPATION — combien de matchs Ligue 1 le joueur a effectivement
-   * pronostiqués, sur tous ceux déjà joués depuis le début de la saison.
-   * C'est le sens attendu de "régularité" : est-ce qu'il dépose ses
-   * pronostics à chaque journée, ou en saute-t-il ?
+  /** PARTICIPATION — combien de rencontres jouables le joueur a effectivement
+   * pronostiquées depuis le début de la saison. C'est le sens attendu de
+   * "régularité" : dépose-t-il ses pronostics à chaque journée, ou en
+   * saute-t-il ?
    * À ne pas confondre avec regularitySuccessByUser, qui compte les
    * pronostics AYANT RAPPORTÉ des points, et qui sert au départage du
    * classement (voir rankPlayers). */
-  ligue1PredictionsByUser: Record<string, number>;
-  /** Dénominateur commun de la participation : nombre de matchs Ligue 1
-   * réellement jouables (score connu, match commencé). Les matchs bonus en
-   * sont exclus des deux côtés — un seul compte par journée et il reste
-   * facultatif, l'inclure fausserait le taux. */
-  ligue1MatchCount: number;
+  participationByUser: Record<string, number>;
+  /** Dénominateur commun : les matchs Ligue 1 jouables, PLUS un bonus par
+   * journée en ayant proposé un. Une journée complète vaut donc 9 matchs de
+   * Ligue 1 + 1 bonus = 10 rencontres pronostiquables. Le bonus compte une
+   * seule fois par journée, quel que soit le nombre d'options proposées :
+   * le joueur n'en choisit qu'une. */
+  participationTotal: number;
   /** Points cumulés par journée (matchday_id), tous joueurs confondus —
    * sert à la stat "Meilleure journée" du Classement. */
   pointsByMatchday: Record<string, number>;
@@ -179,7 +180,7 @@ export function computeLeagueStats(
   const predictionsCount: Record<string, number> = {};
   const exactScores: Record<string, number> = {};
   const regularitySuccess: Record<string, number> = {};
-  const ligue1Predictions: Record<string, number> = {};
+  const participation: Record<string, number> = {};
   const pointsByMatchday: Record<string, number> = {};
   const pointsByUserAndMatchday: Record<string, Record<string, number>> = {};
   const pointsByPredictionKey: Record<string, number> = {};
@@ -196,7 +197,7 @@ export function computeLeagueStats(
     predictionsCount[profile.id] = 0;
     exactScores[profile.id] = 0;
     regularitySuccess[profile.id] = 0;
-    ligue1Predictions[profile.id] = 0;
+    participation[profile.id] = 0;
   });
 
   const profileById = new Map(profiles.map((p) => [p.id, p]));
@@ -242,6 +243,10 @@ export function computeLeagueStats(
       });
 
       predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
+      // Participation : le bonus de la journée a bien été joué. Il compte
+      // une seule fois par journée — `selected` garantit qu'on est sur LE
+      // pronostic bonus retenu pour ce joueur et cette journée.
+      participation[userId] = (participation[userId] ?? 0) + 1;
       pointsByPredictionKey[`${userId}:${matchId}`] = pts;
 
       if (pts > 0) {
@@ -289,7 +294,7 @@ export function computeLeagueStats(
     predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
     // Participation : ce pronostic Ligue 1 a bien été déposé, qu'il rapporte
     // des points ou non. C'est toute la différence avec regularitySuccess.
-    ligue1Predictions[userId] = (ligue1Predictions[userId] ?? 0) + 1;
+    participation[userId] = (participation[userId] ?? 0) + 1;
     pointsByPredictionKey[`${userId}:${matchId}`] = pts;
     const matchDayId = String(match.matchday_id);
 
@@ -305,17 +310,33 @@ export function computeLeagueStats(
     }
   });
 
+  // ------------------------------------------------------------------
+  // DÉNOMINATEUR DE LA PARTICIPATION
+  // Les matchs de Ligue 1 réellement jouables, plus UN bonus par journée en
+  // ayant proposé un qui soit jouable. Une journée complète vaut donc 9 + 1
+  // = 10 rencontres. Compter chaque option bonus séparément gonflerait le
+  // dénominateur de 4 par journée alors qu'un joueur n'en pronostique qu'une.
+  // ------------------------------------------------------------------
+  const isPlayable = (m: LeagueMatch) =>
+    m.home_score != null && m.away_score != null && m.finished === true;
+
+  const bonusDaysPlayable = new Set<string>();
+  bonusMatches.forEach((match) => {
+    if (!isPlayable(match)) return;
+    const dayId = bonusMatchdayByMatchId.get(String(match.id));
+    if (dayId) bonusDaysPlayable.add(dayId);
+  });
+
+  const participationTotal =
+    ligue1Matches.filter(isPlayable).length + bonusDaysPlayable.size;
+
   return {
     pointsByUser: points,
     predictionsCountByUser: predictionsCount,
     exactScoresByUser: exactScores,
     regularitySuccessByUser: regularitySuccess,
-    ligue1PredictionsByUser: ligue1Predictions,
-    // Dénominateur : les matchs Ligue 1 réellement scorables, c'est-à-dire
-    // exactement ceux sur lesquels un pronostic pouvait rapporter.
-    ligue1MatchCount: ligue1Matches.filter(
-      (m) => m.home_score != null && m.away_score != null && m.finished === true,
-    ).length,
+    participationByUser: participation,
+    participationTotal,
     pointsByMatchday,
     pointsByUserAndMatchday,
     pointsByPredictionKey,

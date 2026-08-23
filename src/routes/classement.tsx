@@ -442,7 +442,7 @@ function ClassementPage() {
         const scorableLigue1Matches = markLiveMatchesScorable(liveMatches);
         const scorableBonusMatches = markLiveMatchesScorable(bonusMatches);
 
-        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, ligue1PredictionsByUser: ligue1Predictions, ligue1MatchCount: ligue1Total, pointsByMatchday, pointsByPredictionKey } =
+        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, participationByUser: participationCounts, participationTotal, pointsByMatchday, pointsByPredictionKey } =
           computeLeagueStats(scorableLigue1Matches, scorableBonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
             seasonByMatchdayId: seasonByMatchdayIdObj,
             favoriteTeamBySeason,
@@ -664,8 +664,8 @@ function ClassementPage() {
           setPredictionsCountByUser(predictionsCount);
           setExactScoresByUser(exactScores);
           setRegularitySuccessByUser(regularitySuccess);
-          setLigue1PredictionsByUser(ligue1Predictions);
-          setLigue1MatchCount(ligue1Total);
+          setLigue1PredictionsByUser(participationCounts);
+          setLigue1MatchCount(participationTotal);
           setPlayedMatchdaysByUser(playedMatchdaysByUser);
           setFinishedMatchdayCount(finishedNumbers.length);
           setBestMatchday(topMatchday);
