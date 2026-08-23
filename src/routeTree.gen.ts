@@ -21,7 +21,6 @@ import { Route as PronosticsRouteImport } from './routes/pronostics'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as StatsRouteImport } from './routes/stats'
 import { Route as TropheesRouteImport } from './routes/trophees'
-import { Route as StatsBackup20260812085935RouteImport } from './routes/stats.backup-20260812-085935'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -83,12 +82,6 @@ const TropheesRoute = TropheesRouteImport.update({
   path: '/trophees',
   getParentRoute: () => rootRouteImport,
 } as any)
-const StatsBackup20260812085935Route =
-  StatsBackup20260812085935RouteImport.update({
-    id: '/backup-20260812-085935',
-    path: '/backup-20260812-085935',
-    getParentRoute: () => StatsRoute,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -101,9 +94,8 @@ export interface FileRoutesByFullPath {
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/stats': typeof StatsRouteWithChildren
+  '/stats': typeof StatsRoute
   '/trophees': typeof TropheesRoute
-  '/stats/backup-20260812-085935': typeof StatsBackup20260812085935Route
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -116,9 +108,8 @@ export interface FileRoutesByTo {
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/stats': typeof StatsRouteWithChildren
+  '/stats': typeof StatsRoute
   '/trophees': typeof TropheesRoute
-  '/stats/backup-20260812-085935': typeof StatsBackup20260812085935Route
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -132,9 +123,8 @@ export interface FileRoutesById {
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/stats': typeof StatsRouteWithChildren
+  '/stats': typeof StatsRoute
   '/trophees': typeof TropheesRoute
-  '/stats/backup-20260812-085935': typeof StatsBackup20260812085935Route
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -151,7 +141,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/stats'
     | '/trophees'
-    | '/stats/backup-20260812-085935'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -166,7 +155,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/stats'
     | '/trophees'
-    | '/stats/backup-20260812-085935'
   id:
     | '__root__'
     | '/'
@@ -181,7 +169,6 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/stats'
     | '/trophees'
-    | '/stats/backup-20260812-085935'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -195,7 +182,7 @@ export interface RootRouteChildren {
   ProfilRoute: typeof ProfilRoute
   PronosticsRoute: typeof PronosticsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
-  StatsRoute: typeof StatsRouteWithChildren
+  StatsRoute: typeof StatsRoute
   TropheesRoute: typeof TropheesRoute
 }
 
@@ -285,25 +272,8 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TropheesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/stats/backup-20260812-085935': {
-      id: '/stats/backup-20260812-085935'
-      path: '/backup-20260812-085935'
-      fullPath: '/stats/backup-20260812-085935'
-      preLoaderRoute: typeof StatsBackup20260812085935RouteImport
-      parentRoute: typeof StatsRoute
-    }
   }
 }
-
-interface StatsRouteChildren {
-  StatsBackup20260812085935Route: typeof StatsBackup20260812085935Route
-}
-
-const StatsRouteChildren: StatsRouteChildren = {
-  StatsBackup20260812085935Route: StatsBackup20260812085935Route,
-}
-
-const StatsRouteWithChildren = StatsRoute._addFileChildren(StatsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -316,7 +286,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfilRoute: ProfilRoute,
   PronosticsRoute: PronosticsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
-  StatsRoute: StatsRouteWithChildren,
+  StatsRoute: StatsRoute,
   TropheesRoute: TropheesRoute,
 }
 export const routeTree = rootRouteImport
