@@ -236,8 +236,14 @@ function IndexPage() {
 
         // Repli si l'API n'a rien renvoye (reseau, quota) : on repart du
         // calendrier Supabase plutot que de vider le bloc.
+        // La reference reste LE PREMIER MATCH DE LIGUE 1 de la journee : le
+        // filtre is_bonus ecarte ici les matchs des quatre autres
+        // championnats, comme le filtre competitionCode === "FL1" le fait sur
+        // le chemin API. Sans lui, un match bonus programme plus tot aurait
+        // fixe l'ouverture de la journee sur ce chemin-la.
         if (firstKickoffByDay.size === 0) {
           (reconciledMatches || []).forEach((m: any) => {
+            if (m?.is_bonus === true) return;
             const at = kickoffOf(m);
             const journee = Number(m?.matchday ?? m?.match_day ?? 0);
             if (at === null || !Number.isFinite(journee) || journee <= 0) return;
