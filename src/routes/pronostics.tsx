@@ -1206,6 +1206,20 @@ function PronosticsPage() {
     return Boolean(lockDate && Date.now() >= lockDate.getTime());
   };
 
+  // FAILLE CORRIGEE — selectBonusMatch ne verifiait que le match VISE :
+  //     if (!match || isMatchLocked(match)) return;
+  // Rien ne regardait le match DEJA choisi. Un joueur ayant pris
+  // Atletico-Villarreal le samedi pouvait donc, le dimanche soir, une fois ce
+  // match joue et son resultat connu, basculer sur Bologne-Lazio du lundi :
+  // il choisissait son bonus EN CONNAISSANT deja l'issue du premier. Sur un
+  // bonus qui vaut jusqu'a 3 points, c'est la partie faussee.
+  //
+  // Le choix se fige donc des que le match choisi a demarre. Un joueur qui
+  // n'a encore rien choisi garde evidemment la main sur les matchs a venir.
+  const bonusChoiceLocked = Boolean(
+    selectedBonusCandidate && isMatchLocked(selectedBonusCandidate.match),
+  );
+
   const lockLabel = (match: MatchRow): string => {
     if (!isMatchLocked(match)) return "";
     return "🔒 Bloqué";
@@ -1273,6 +1287,10 @@ function PronosticsPage() {
   };
 
   const selectBonusMatch = (matchId: string) => {
+    // Le choix deja fait est verrouille : on ne peut plus en changer une fois
+    // que le match retenu a demarre (voir bonusChoiceLocked).
+    if (bonusChoiceLocked && matchId !== bonusSelection) return;
+
     const match = matches.find((item) => item.id === matchId);
     if (!match || isMatchLocked(match)) return;
     userEditedRef.current = true;
@@ -2655,6 +2673,12 @@ function PronosticsPage() {
             const score = bonusScores[match.id] ?? { home: "", away: "" };
             const { dayName, dayDate, time } = formatKickoff(match.kickoff);
             const locked = isMatchLocked(match);
+            // Une carte n'est cliquable que si son match n'a pas demarre ET que
+            // le joueur n'a pas deja un choix fige (voir bonusChoiceLocked).
+            // Sans ce second test, le clic appelait selectBonusMatch qui
+            // refusait en silence : la carte gardait son curseur et son survol
+            // de bouton, mais ne faisait rien.
+            const selectable = !locked && (!bonusChoiceLocked || selected);
             const choiceCount = bonusChoiceCounts[match.id] ?? 0;
             const choicePercent =
               bonusChoiceTotal > 0
@@ -2666,18 +2690,21 @@ function PronosticsPage() {
                 key={match.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => !locked && selectBonusMatch(match.id)}
+                onClick={() => selectable && selectBonusMatch(match.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    if (!locked) selectBonusMatch(match.id);
+                    if (selectable) selectBonusMatch(match.id);
                   }
                 }}
-                className={`group relative cursor-pointer overflow-hidden rounded-2xl border p-4 backdrop-blur-md transition-all duration-300 ${
+                aria-disabled={!selectable}
+                className={`group relative overflow-hidden rounded-2xl border p-4 backdrop-blur-md transition-all duration-300 ${
                   selected
                     ? "border-amber-300/80 bg-amber-400/[0.10] shadow-[0_0_35px_rgba(245,158,11,0.20)]"
-                    : "border-white/15 bg-[#07101d]/55 hover:border-amber-300/45 hover:bg-[#07101d]/65"
-                } ${locked ? "cursor-not-allowed opacity-70" : ""}`}
+                    : selectable
+                      ? "cursor-pointer border-white/15 bg-[#07101d]/55 hover:border-amber-300/45 hover:bg-[#07101d]/65"
+                      : "border-white/10 bg-[#07101d]/40"
+                } ${selectable || selected ? "" : "cursor-not-allowed opacity-55"}`}
               >
 
                 {selected && (
@@ -2882,6 +2909,15 @@ function PronosticsPage() {
                 }`
               : "Sélectionne un seul match"}
           </p>
+
+          {/* Le joueur doit comprendre pourquoi les autres cartes ne repondent
+              plus, sans quoi il croit a un bug de l'application. */}
+          {bonusChoiceLocked && (
+            <p className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
+              <span aria-hidden="true">🔒</span>
+              Choix figé — ton match bonus a démarré
+            </p>
+          )}
 
           {selectedBonusCandidate && (
             <p
