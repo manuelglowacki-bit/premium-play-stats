@@ -1227,6 +1227,34 @@ function GazettePage() {
   ]);
 
 
+  // Bilan chiffré de la journée en cours, calculé une seule fois sur les
+  // points RÉELS du moteur (pointsFor) : l'article et le bloc "LE CHIFFRE"
+  // s'appuient dessus tous les deux, donc ils ne peuvent plus se contredire.
+  const journeeBilan = useMemo(() => {
+    const parMatch = journeeFinishedMatches.map(({ match }) => {
+      let gagnants = 0;
+      let parieurs = 0;
+      let points = 0;
+      profiles.forEach((profile) => {
+        // Un match que personne n'a joué n'est pas un match "raté" : sans ce
+        // compteur, il passerait pour le piège de la journée.
+        if (!predictionsByUser.get(profile.id)?.byMatch.get(String(match.id))) return;
+        parieurs += 1;
+        const gagnes = pointsFor(profile.id, String(match.id));
+        points += gagnes;
+        if (gagnes > 0) gagnants += 1;
+      });
+      return { match, gagnants, parieurs, points };
+    });
+
+    return {
+      parMatch,
+      parieurs: parMatch.reduce((sum, entry) => sum + entry.parieurs, 0),
+      gagnants: parMatch.reduce((sum, entry) => sum + entry.gagnants, 0),
+      points: parMatch.reduce((sum, entry) => sum + entry.points, 0),
+    };
+  }, [journeeFinishedMatches, profiles, predictionsByUser, pointsFor]);
+
   const analysis = useMemo(() => {
     if (!currentJournee) {
       return {
@@ -1291,19 +1319,7 @@ function GazettePage() {
 
     // ANGLE — le match qui a piégé tout le monde, ou celui que personne
     // n'a manqué. Compté sur les points RÉELS du moteur.
-    const parMatch = journeeFinishedMatches.map(({ match }) => {
-      let gagnants = 0;
-      let parieurs = 0;
-      profiles.forEach((profile) => {
-        // Un match que PERSONNE n'a pronostiqué a lui aussi zéro gagnant :
-        // sans ce compteur, il serait présenté comme "le piège de la journée"
-        // alors que nul n'a simplement tenté sa chance dessus.
-        if (!predictionsByUser.get(profile.id)?.byMatch.get(String(match.id))) return;
-        parieurs += 1;
-        if (pointsFor(profile.id, String(match.id)) > 0) gagnants += 1;
-      });
-      return { match, gagnants, parieurs };
-    });
+    const parMatch = journeeBilan.parMatch;
 
     const affiche = (match: any) =>
       `${shortTeam(getTeamHome(match))}–${shortTeam(getTeamAway(match))} (${getScoreHome(match)}–${getScoreAway(match)})`;
@@ -1473,25 +1489,114 @@ function GazettePage() {
       intro: variants[variant],
       paragraphs: [hierarchie, ...angles.slice(0, 2), exacts],
     };
-  }, [currentJournee, journeeFinishedMatches, currentJourneeAllMatches.length, liveMatches, evolution, leader, second, third, lastFinishedId, profiles, predictionsByUser, clock, pointsFor]);
+  }, [currentJournee, journeeFinishedMatches, currentJourneeAllMatches.length, liveMatches, evolution, leader, second, third, lastFinishedId, profiles, predictionsByUser, clock, pointsFor, journeeBilan]);
 
+  // LE CHIFFRE — un seul indicateur à la fois, mais un indicateur qui dit
+  // quelque chose. L'ancienne rotation servait quatre totaux bruts, dont
+  // "points actuellement distribués" : un cumul qui ne renseigne ni sur le
+  // suspense, ni sur la performance, ni sur ce qu'il reste à jouer. Chaque
+  // chiffre porte désormais sa propre légende, et un indicateur sans objet
+  // (aucun score exact, aucun match restant...) n'est tout simplement pas
+  // proposé.
   const dynamicStat = useMemo(() => {
-    const finished = finishedMatches.length;
-    const total = allCurrentMatches.length;
-    const totalPoints = rankedPlayers.reduce((sum, p) => sum + p.points, 0);
-    const exacts = rankedPlayers.reduce((sum, p) => sum + p.exactScores, 0);
-    const movers = evolution?.moves.filter((p) => p.pointsToday > 0).length ?? 0;
-    const index = Math.floor(clock / 12000) % 4;
+    const finished = journeeFinishedMatches.length;
+    const total = currentJourneeAllMatches.length;
+    const restants = Math.max(0, total - finished);
+    const moves = evolution?.moves ?? [];
+    const exactsJournee = moves.reduce((sum, player) => sum + player.exactToday, 0);
+    const meilleur = [...moves].sort((a, b) => b.pointsToday - a.pointsToday)[0] ?? null;
+    const dernier = rankedPlayers.length > 2 ? rankedPlayers[rankedPlayers.length - 1] : null;
+    const ecartTete = leader && second ? leader.points - second.points : null;
+    const amplitude = leader && dernier ? leader.points - dernier.points : null;
+    const reussite =
+      journeeBilan.parieurs > 0
+        ? Math.round((journeeBilan.gagnants / journeeBilan.parieurs) * 100)
+        : null;
 
-    const stats = [
-      { value: finished, label: `match${finished > 1 ? "s" : ""} terminé${finished > 1 ? "s" : ""} sur ${total || 0}` },
-      { value: exacts, label: `score${exacts > 1 ? "s" : ""} exact${exacts > 1 ? "s" : ""} enregistré${exacts > 1 ? "s" : ""}` },
-      { value: totalPoints, label: `point${totalPoints > 1 ? "s" : ""} actuellement distribu${totalPoints > 1 ? "és" : "é"}` },
-      { value: movers, label: `joueur${movers > 1 ? "s" : ""} ayant déjà marqué sur la journée` },
-    ];
+    type Chiffre = { value: string | number; label: string; note: string };
+    const candidats: Chiffre[] = [];
 
-    return stats[index];
-  }, [finishedMatches.length, allCurrentMatches.length, rankedPlayers, evolution, clock]);
+    // Le suspense en tête, la seule chose que tout le monde regarde.
+    // Sans point marqué, tout le monde est à égalité : annoncer un duel de
+    // tête n'aurait alors aucun sens.
+    if (leader && second && leader.points === 0) {
+      // rien à dire sur la tête du classement pour l'instant
+    } else if (leader && second && ecartTete === 0) {
+      candidats.push({
+        value: "=",
+        label: `${leader.name} et ${second.name} à égalité en tête`,
+        note: "Le prochain point marqué suffira à les départager.",
+      });
+    } else if (leader && second && ecartTete !== null && ecartTete > 0) {
+      candidats.push({
+        value: ecartTete,
+        label: `${ecartTete > 1 ? "points" : "point"} d'écart entre ${leader.name} et ${second.name}`,
+        note: "C'est tout ce qui sépare la première place de la deuxième.",
+      });
+    }
+
+    // Le taux de réussite dit si la journée est piégeuse ou évidente.
+    if (reussite !== null) {
+      candidats.push({
+        value: `${reussite}%`,
+        label: "des pronostics joués ont rapporté des points",
+        note: `${journeeBilan.gagnants} pronostics gagnants sur ${journeeBilan.parieurs} joués sur les matchs terminés.`,
+      });
+    }
+
+    // La meilleure performance individuelle du jour.
+    if (meilleur && meilleur.pointsToday > 0) {
+      candidats.push({
+        value: meilleur.pointsToday,
+        label: `${meilleur.pointsToday > 1 ? "points pris" : "point pris"} par ${meilleur.name} sur cette journée`,
+        note: "Meilleur total du jour, tous joueurs confondus.",
+      });
+    }
+
+    if (exactsJournee > 0) {
+      candidats.push({
+        value: exactsJournee,
+        label: `${exactsJournee > 1 ? "scores exacts trouvés" : "score exact trouvé"} sur la journée`,
+        note: "Le coup le plus difficile à réussir, et le mieux payé.",
+      });
+    }
+
+    if (restants > 0) {
+      candidats.push({
+        value: restants,
+        label: `${restants > 1 ? "rencontres restent" : "rencontre reste"} à jouer`,
+        note: "Tant qu'elles ne sont pas jouées, le classement peut encore basculer.",
+      });
+    }
+
+    // L'amplitude du classement : l'écart réel entre le haut et le bas.
+    if (amplitude !== null && amplitude > 0) {
+      candidats.push({
+        value: amplitude,
+        label: `${amplitude > 1 ? "points" : "point"} entre le premier et le dernier`,
+        note: "L'amplitude du classement, tout en haut contre tout en bas.",
+      });
+    }
+
+    if (!candidats.length) {
+      return {
+        value: total,
+        label: `${total > 1 ? "rencontres au programme" : "rencontre au programme"} de la journée`,
+        note: "Les chiffres s'animeront dès le premier coup de sifflet.",
+      };
+    }
+
+    return candidats[Math.floor(clock / 12000) % candidats.length];
+  }, [
+    journeeFinishedMatches.length,
+    currentJourneeAllMatches.length,
+    rankedPlayers,
+    evolution,
+    leader,
+    second,
+    journeeBilan,
+    clock,
+  ]);
 
   const weekendMatch = useMemo(() => {
     if (!currentJourneeAllMatches.length) return null;
@@ -1749,7 +1854,7 @@ function GazettePage() {
           {/* 5 — CHIFFRE DYNAMIQUE */}
           <section className="border-b border-slate-800 px-5 py-8 md:px-10">
             <div className="rounded-[24px] border border-sky-400/15 bg-gradient-to-r from-sky-400/[.06] via-slate-950/40 to-emerald-400/[.04] p-6 md:p-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-sky-300">5 · LE CHIFFRE</p><p className="mt-1 text-sm text-slate-500">La statistique change automatiquement pendant la journée.</p></div><div className="text-left sm:text-right"><p className="font-display text-6xl font-black leading-none text-white md:text-7xl">{dynamicStat.value}</p><p className="mt-2 max-w-[240px] text-xs font-bold uppercase tracking-[.08em] text-slate-400 sm:text-right">{dynamicStat.label}</p></div></div>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-sky-300">5 · LE CHIFFRE</p><p className="mt-1 text-sm text-slate-500">{dynamicStat.note}</p></div><div className="text-left sm:text-right"><p className="font-display text-6xl font-black leading-none text-white md:text-7xl">{dynamicStat.value}</p><p className="mt-2 max-w-[240px] text-xs font-bold uppercase tracking-[.08em] text-slate-400 sm:text-right">{dynamicStat.label}</p></div></div>
             </div>
           </section>
 
