@@ -1417,9 +1417,22 @@ function PronosticsPage() {
             .map((option) => option.match_id)
             .filter((id): id is string => Boolean(id));
 
-          const otherBonusIds = currentDayBonusIds.filter(
-            (id) => id !== bonusRow.match_id,
-          );
+          // DESTRUCTION DE DONNEES CORRIGEE : ce nettoyage supprimait les
+          // pronostics des autres candidats SANS regarder si leur match avait
+          // deja ete joue. Un joueur basculant de l'Atletico-Villarreal du
+          // dimanche (score saisi, match termine) vers le Bologne-Lazio du
+          // lundi perdait definitivement sa ligne, score et points compris.
+          //
+          // On n'efface plus que les candidats dont le match n'a PAS demarre :
+          // eux n'ont jamais pu rapporter le moindre point, leur suppression
+          // est sans consequence et garde le compteur de repartition juste.
+          // Une ligne portant sur un match deja joue est conservee : c'est un
+          // resultat acquis, il n'appartient plus a l'interface de l'effacer.
+          const otherBonusIds = currentDayBonusIds.filter((id) => {
+            if (id === bonusRow.match_id) return false;
+            const other = matches.find((item) => item.id === id);
+            return !other || !isMatchLocked(other);
+          });
 
           if (otherBonusIds.length > 0) {
             const { error: cleanupError } = await supabase
