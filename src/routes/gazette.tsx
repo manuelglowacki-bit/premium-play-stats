@@ -23,6 +23,7 @@ import { supabase } from "@/lib/supabase";
 import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
 import { matchAppeal, type StandingsLookup } from "@/lib/clubReputation";
+import { getForeignClubLogo } from "@/lib/clubLogos";
 import { getLigue1Standings, type CompetitionStandings } from "@/services/standingsService";
 import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
@@ -189,7 +190,10 @@ function getLocalTeamLogo(match: any, side: "home" | "away") {
     return direct;
   }
 
-  return getLocalLigue1Logo(team);
+  // Les championnats bonus (PL/PD/SA/BL1) ont eux aussi leurs logos dans
+  // /public/logos, mais seule la table Ligue 1 était consultée : un
+  // Atlético–Villarreal s'affichait avec deux pastilles grises.
+  return getLocalLigue1Logo(team) ?? getForeignClubLogo(team);
 }
 
 function LocalTeamLogo({
@@ -495,7 +499,9 @@ function GazetteTeamLogo({
 // Résolution du thème (fond + logo) d'un club pour les cartes éditoriales.
 function clubAsset(name: string | undefined | null) {
   const key = normalizeClubLogoName(name);
-  const logo = LOCAL_LIGUE1_LOGOS[key] ?? null;
+  // Même repli que getLocalTeamLogo : les cartes éditoriales peuvent porter
+  // sur un match bonus, donc sur un club étranger.
+  const logo = LOCAL_LIGUE1_LOGOS[key] ?? getForeignClubLogo(name);
 
   return {
     logo,
