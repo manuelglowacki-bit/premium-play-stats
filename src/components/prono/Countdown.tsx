@@ -3,42 +3,49 @@
 import { useState, useEffect } from "react";
 import { Calendar, Flame, ArrowRight, CalendarDays, Clock, Timer, Gauge } from "lucide-react";
 
+function split(distance: number) {
+  return {
+    days: Math.floor(distance / (1000 * 60 * 60 * 24)),
+    hours: Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+    minutes: Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)),
+    seconds: Math.floor((distance % (1000 * 60)) / 1000),
+  };
+}
+
+const ZERO = { days: 0, hours: 0, minutes: 0, seconds: 0 };
+
 export function useCountdown(targetDate: number) {
-  const [timeLeft, setTimeLeft] = useState({
-    days: 0,
-    hours: 0,
-    minutes: 0,
-    seconds: 0,
+  // Etat initial calcule tout de suite : l'ancienne version partait de zero
+  // et attendait le premier tick, soit une seconde de "00 00 00 00" a chaque
+  // affichage de la page.
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const distance = targetDate - Date.now();
+    return distance > 0 ? split(distance) : ZERO;
   });
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date().getTime();
-      const distance = targetDate - now;
+    const tick = () => {
+      const distance = targetDate - Date.now();
+      setTimeLeft(distance > 0 ? split(distance) : ZERO);
+    };
 
-      if (distance > 0) {
-        setTimeLeft({
-          days: Math.floor(distance / (1000 * 60 * 60 * 24)),
-          hours: Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
-          minutes: Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)),
-          seconds: Math.floor((distance % (1000 * 60)) / 1000),
-        });
-      } else {
-        clearInterval(interval);
-      }
-    }, 1000);
-
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [targetDate]);
 
   return timeLeft;
 }
 
+// Repli historique, conservé uniquement pour les appelants qui ne passent
+// pas encore de cible. ATTENTION : c'est une date FIGÉE — une fois passée,
+// le compte à rebours reste bloqué à 00 00 00 00. Tout appelant doit lui
+// préférer le vrai coup d'envoi à venir (voir la prop `target`).
 export const COUNTDOWN_TARGET = new Date("2026-08-21T20:45:00").getTime();
 
 /** Juste les 4 blocs de temps colorés (version compacte), réutilisables n'importe où */
-export function CountdownBlocks() {
-  const timeLeft = useCountdown(COUNTDOWN_TARGET);
+export function CountdownBlocks({ target }: { target?: number | null }) {
+  const timeLeft = useCountdown(target ?? COUNTDOWN_TARGET);
 
   return (
     <div className="grid grid-cols-4 gap-2">
@@ -67,8 +74,8 @@ export function CountdownBlocks() {
 }
 
 /** Version "iconique" avec icône + libellé complet dans chaque bloc (style stade / MES PRONOSTICS) */
-export function CountdownBlocksIconic() {
-  const timeLeft = useCountdown(COUNTDOWN_TARGET);
+export function CountdownBlocksIconic({ target }: { target?: number | null }) {
+  const timeLeft = useCountdown(target ?? COUNTDOWN_TARGET);
 
   const items = [
     { value: timeLeft.days, label: "JOURS", Icon: CalendarDays, color: "emerald" as const },

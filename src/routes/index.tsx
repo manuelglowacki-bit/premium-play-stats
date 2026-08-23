@@ -70,6 +70,12 @@ function IndexPage() {
     participationTotal: 0,
   });
   const [currentMatchday, setCurrentMatchday] = useState("J1");
+  // Prochain coup d'envoi REEL, et journee en cours. Le compte a rebours
+  // visait jusqu'ici une date figee dans Countdown.tsx (21 aout 2026) : une
+  // fois passee, il affichait 00 00 00 00 indefiniment, sous un libelle
+  // "Prochaine journee · J1 • 21 aout 2026" lui aussi ecrit en dur.
+  const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string } | null>(null);
+  const [liveMatchCount, setLiveMatchCount] = useState(0);
   const [potAmount, setPotAmount] = useState(0);
   // Gains affiches a cote du classement : meme regle 50/30/20 que la page
   // Classement (src/lib/prizePool.ts), appliquee a la cagnotte reelle.
@@ -188,6 +194,53 @@ function IndexPage() {
         // devient provisoirement scorable pour computeLeagueStats, sans
         // jamais modifier Supabase (voir markLiveMatchesScorable).
         const liveScoringMatches = markLiveMatchesScorable(reconciledMatches);
+
+        // --- Prochain coup d'envoi + matchs en cours ---
+        const now = Date.now();
+        const kickoffOf = (m: any) => {
+          const value = m?.kickoff ?? m?.kickoff_time;
+          const time = value ? new Date(value).getTime() : NaN;
+          return Number.isFinite(time) ? time : null;
+        };
+
+        const upcoming = (reconciledMatches || [])
+          .map((m: any) => ({ match: m, at: kickoffOf(m) }))
+          .filter((entry) => entry.at !== null && (entry.at as number) > now)
+          .sort((a, b) => (a.at as number) - (b.at as number))[0];
+
+        if (upcoming) {
+          const raw =
+            upcoming.match.matchday_code ?? upcoming.match.matchday ?? upcoming.match.match_day;
+          const dayLabel = String(raw ?? "").toUpperCase().startsWith("J")
+            ? String(raw).toUpperCase()
+            : raw
+              ? `J${raw}`
+              : "";
+          const dateLabel = new Date(upcoming.at as number).toLocaleDateString("fr-FR", {
+            day: "numeric",
+            month: "long",
+          });
+          setNextKickoff({
+            at: upcoming.at as number,
+            label: [dayLabel, dateLabel].filter(Boolean).join(" • "),
+          });
+        } else {
+          setNextKickoff(null);
+        }
+
+        // Match commence mais pas termine — meme test de statut que la
+        // selection de la derniere journee terminee, plus bas.
+        const isOver = (m: any) => {
+          const status = String(m?.status || "").toLowerCase();
+          return status === "finished" || status === "ft" || m?.finished === true;
+        };
+
+        setLiveMatchCount(
+          (reconciledMatches || []).filter((m: any) => {
+            const at = kickoffOf(m);
+            return at !== null && at <= now && !isOver(m);
+          }).length,
+        );
 
         const matchById = new Map(
           reconciledMatches.map((m: any) => [String(m.id), m]),
@@ -595,7 +648,9 @@ setLeaderboard(rankedRankings);
       <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
 
         {/* HERO SECTION avec Effet Verre */}
-        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-7 shadow-[0_0_50px_rgba(0,0,0,0.7)] sm:p-9 md:p-12">
+        {/* Rembourrage reduit (p-12 -> p-8 sur grand ecran) : c'est lui qui
+            faisait le plus pour la hauteur du bandeau. */}
+        <section className="relative overflow-hidden rounded-3xl border border-slate-800 bg-[#0d1322]/75 backdrop-blur-xl p-5 shadow-[0_0_50px_rgba(0,0,0,0.7)] sm:p-7 md:p-8">
           <div
             role="img"
             aria-label="Ligue 1"
@@ -613,36 +668,57 @@ setLeaderboard(rankedRankings);
           />
 
           <div className="relative z-10 grid gap-8 lg:grid-cols-[1fr_auto] items-center">
-            <div className="dash-fade-up max-w-full space-y-6 lg:max-w-[56%]">
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-1.5 font-mono text-[10px] font-bold text-emerald-400 tracking-wider">
-                <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+            {/* Bandeau resserre : le titre en deux lignes geantes, le
+                sous-titre publicitaire et le compte a rebours en pleine
+                largeur occupaient un ecran entier pour quatre informations.
+                Titre reduit d'un cran, sous-titre supprime (il ne disait rien
+                qu'un joueur deja inscrit ignore), compte a rebours ramene a
+                une seule ligne. */}
+            <div className="dash-fade-up max-w-full space-y-4 lg:max-w-[56%]">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 font-mono text-[10px] font-bold text-emerald-400 tracking-wider">
+                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 SAISON 2026—2027 • LIGUE 1 MCDONALD'S
               </div>
               <h1
-                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[2.15rem] leading-[1.05] tracking-tight text-transparent sm:text-5xl md:text-6xl md:leading-none"
+                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[1.75rem] leading-[1.05] tracking-tight text-transparent sm:text-4xl md:text-5xl md:leading-none"
                 style={{
                   filter:
                     "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
                 }}
               >
-                PRÉDIS LES RÉSULTATS <br />
-                DE LA LIGUE 1
+                PRÉDIS LES RÉSULTATS DE LA LIGUE 1
               </h1>
-              <p className="max-w-xl text-[15px] leading-relaxed text-slate-400 md:text-base">
-                Affronte tes amis, fais les bons pronos et deviens le champion incontesté de la saison.
-              </p>
 
-              <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 p-5">
-                <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-emerald-400 font-bold">
-                    Prochaine journée · J1 • 21 août 2026
+              {/* Trois etats reels, au lieu d'un compte a rebours fige a zero
+                  sur une date passee : matchs en cours, prochain coup d'envoi,
+                  ou journee terminee. */}
+              {liveMatchCount > 0 ? (
+                <div className="flex max-w-md items-center gap-3 rounded-2xl border border-red-500/25 bg-red-500/[.07] px-4 py-3">
+                  <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-400" />
+                  <span className="font-display text-sm font-bold text-white">
+                    {liveMatchCount} match{liveMatchCount > 1 ? "s" : ""} en direct
                   </span>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-400">
-                    <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" /> EN APPROCHE
+                  <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-red-300">
+                    Ça joue maintenant
                   </span>
                 </div>
-                <CountdownBlocks />
-              </div>
+              ) : nextKickoff ? (
+                <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 px-4 py-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+                      Prochain coup d'envoi · {nextKickoff.label}
+                    </span>
+                  </div>
+                  <CountdownBlocks target={nextKickoff.at} />
+                </div>
+              ) : (
+                <div className="flex max-w-md items-center gap-3 rounded-2xl border border-slate-800 bg-[#060b16]/70 px-4 py-3">
+                  <span className="size-1.5 shrink-0 rounded-full bg-slate-600" />
+                  <span className="font-mono text-[11px] text-slate-400">
+                    Aucun match programmé pour l'instant.
+                  </span>
+                </div>
+              )}
 
               {/* flex-col sur mobile : boutons pleine largeur, empilés
                   proprement (grande cible tactile), plutôt qu'un flex-wrap
@@ -651,13 +727,13 @@ setLeaderboard(rankedRankings);
               <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:gap-4">
                 <Link
                   to="/pronostics"
-                  className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-7 py-4 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)] transition-all hover:bg-emerald-500"
+                  className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)] transition-all hover:bg-emerald-500"
                 >
                   <Medal size={18} /> Faire mes pronos <ArrowRight size={16} />
                 </Link>
                 <Link
                   to="/classement"
-                  className="tap flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 px-7 py-4 font-display text-sm font-bold text-white transition-all hover:bg-slate-800"
+                  className="tap flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 px-6 py-3 font-display text-sm font-bold text-white transition-all hover:bg-slate-800"
                 >
                   <Trophy size={18} className="text-amber-400" /> Voir le classement
                 </Link>
