@@ -1039,19 +1039,15 @@ function ClassementPage() {
 
                           <div className="text-center">
                             <div className={`font-display text-3xl font-black leading-none ${pointTone}`}>{p.points}</div>
-                            <div className="mt-1 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-500">pts</div>
                           </div>
 
                           <div className={`text-center font-display text-base font-black ${gapTone}`}>
                             {p.rank === 1 ? "—" : `-${pointsGap}`}
-                            <div className="mt-1 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-400">écart</div>
                           </div>
-<div className="flex flex-col items-center text-center">
-                            <div className="flex items-center gap-1 text-sky-200">
-                              <Target className="h-3.5 w-3.5" />
-                              <span className="font-display text-lg font-black">{p.exactScores}</span>
-                            </div>
-                            <div className="mt-1 font-mono text-[7px] uppercase tracking-widest text-slate-600">exacts</div>
+
+                          <div className="flex items-center justify-center gap-1.5 text-sky-200">
+                            <Target className="h-4 w-4" />
+                            <span className="font-display text-lg font-black">{p.exactScores}</span>
                           </div>
 
                           <div>
@@ -1068,11 +1064,11 @@ function ClassementPage() {
                                 : 0;
                               return (
                                 <>
-                                  <div className="mb-1.5 flex items-baseline justify-between gap-2 font-mono text-[8px] uppercase tracking-wider text-slate-400">
-                                    <span className="font-bold text-slate-300">
-                                      {regularityPct}% <span className="text-slate-600">({regularitySuccess}/{regularityTotal})</span>
+                                  <div className="mb-1.5 flex items-baseline gap-1.5 font-mono text-[10px] uppercase tracking-wider">
+                                    <span className="font-bold text-slate-200">{regularityPct}%</span>
+                                    <span className="text-[8px] text-slate-500">
+                                      {regularitySuccess}/{regularityTotal}
                                     </span>
-                                    <span>régularité</span>
                                   </div>
                                   <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.06]">
                                     <div
