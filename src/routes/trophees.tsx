@@ -35,6 +35,11 @@ import {
 import { AppShell } from "@/components/prono/AppShell";
 import { supabase } from "@/lib/supabase";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
+import {
+  VESTIAIRE_UNREAD_KEY,
+  getVestiaireUnreadCount,
+  markVestiaireRead,
+} from "@/lib/vestiaireUnread";
 
 export const Route = createFileRoute("/trophees")({
   head: () => ({
@@ -255,7 +260,9 @@ const VESTIAIRE_EMOJIS = [
   "👍", "👎", "🙏", "🤝", "💯", "🚀", "🍻", "🫶",
 ];
 
-const UNREAD_STORAGE_KEY = "prono-ligue1-vestiaire-last-read";
+// Repère de dernière lecture : désormais partagé avec la barre de
+// navigation (src/lib/vestiaireUnread.ts), qui affiche le badge.
+const UNREAD_STORAGE_KEY = VESTIAIRE_UNREAD_KEY;
 
 function canUseBrowserNotifications() {
   return typeof window !== "undefined" && "Notification" in window;
@@ -290,35 +297,6 @@ function notifyVestiaireMessage(profile: Profile | null, content: string) {
   } catch (error) {
     console.error("Vestiaire — notification navigateur :", error);
   }
-}
-
-async function getVestiaireUnreadCount(userId: string | null) {
-  if (!userId || typeof window === "undefined") return 0;
-
-  const lastRead = window.localStorage.getItem(UNREAD_STORAGE_KEY);
-  if (!lastRead) return 0;
-
-  const { count, error } = await supabase
-    .from("chat_messages")
-    .select("id", { count: "exact", head: true })
-    .gt("created_at", lastRead)
-    .neq("user_id", userId);
-
-  if (error) {
-    console.error("Vestiaire — compteur non lus :", error);
-    return 0;
-  }
-
-  return count ?? 0;
-}
-
-function markVestiaireRead() {
-  const now = new Date().toISOString();
-  window.localStorage.setItem(UNREAD_STORAGE_KEY, now);
-  window.dispatchEvent(new StorageEvent("storage", {
-    key: UNREAD_STORAGE_KEY,
-    newValue: now,
-  }));
 }
 
 function VestiairePage() {

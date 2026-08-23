@@ -13,6 +13,11 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import {
+  VESTIAIRE_UNREAD_KEY,
+  getVestiaireUnreadCount,
+  markVestiaireRead,
+} from "@/lib/vestiaireUnread";
 import { useAuth } from "@/context/AuthContext";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
 
@@ -105,9 +110,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
 
     if (currentPath === "/trophees") {
+      // Ouvrir le Vestiaire vaut lecture : on déplace le repère, sinon les
+      // messages déjà lus seraient recomptés au prochain chargement.
+      markVestiaireRead();
       setVestiaireUnread(0);
       return;
     }
+
+    let cancelled = false;
+
+    // CORRECTIF : le badge ne comptait QUE les messages arrivés pendant que
+    // l'application était ouverte — l'état repartait de 0 à chaque
+    // chargement de page. Un joueur qui ouvrait l'app après que ses
+    // coéquipiers avaient écrit ne voyait donc jamais rien. On repart
+    // désormais du repère de dernière lecture conservé dans le navigateur
+    // (src/lib/vestiaireUnread.ts), avant de continuer à compter en direct.
+    void getVestiaireUnreadCount(user.id).then((count) => {
+      if (!cancelled) setVestiaireUnread(count);
+    });
+
+    // Le Vestiaire émet un événement `storage` synthétique quand il marque
+    // les messages comme lus : le badge retombe à zéro immédiatement.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === VESTIAIRE_UNREAD_KEY) setVestiaireUnread(0);
+    };
+    window.addEventListener("storage", onStorage);
 
     const channel = supabase
       .channel(`app-vestiaire-notifications-${user.id}`)
@@ -135,6 +162,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       });
 
     return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
       void supabase.removeChannel(channel);
     };
   }, [currentPath, user?.id]);
