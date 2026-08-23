@@ -1570,8 +1570,11 @@ function PronosticsPage() {
   const handleReset = async () => {
     if (dayLocked || !selectedMatchdayId) return;
 
+    // La confirmation annonce desormais ce qui va REELLEMENT etre supprime :
+    // les matchs deja joues ne sont plus concernes, le message ne doit donc
+    // plus promettre "tous vos pronostics".
     const confirmed = window.confirm(
-      `Voulez-vous vraiment supprimer tous vos pronostics de la J${selectedMatchday?.number ?? ""} ?`
+      `Supprimer vos pronostics encore modifiables de la J${selectedMatchday?.number ?? ""} ?\n\nLes matchs deja commences ne sont pas concernes : leurs pronostics et leurs points sont conserves.`
     );
     if (!confirmed) return;
 
@@ -1601,10 +1604,35 @@ function PronosticsPage() {
       if (matchesError) throw matchesError;
       if (bonusError) throw bonusError;
 
+      // PERTE DE DONNEES CORRIGEE. Ce bouton supprimait TOUS les pronostics de
+      // la journee, matchs deja joues compris. Le garde-fou `dayLocked` ne
+      // protegeait rien : il exige que TOUS les matchs concernes soient
+      // verrouilles, or un seul candidat bonus programme plus tard suffit a le
+      // maintenir a faux. Sur une J1 entierement jouee dont le bonus du lundi
+      // n'avait pas commence, le bouton restait donc actif et effacait neuf
+      // resultats acquis — sans possibilite de les ressaisir, les matchs etant
+      // verrouilles.
+      //
+      // On ne supprime plus que les pronostics dont le match n'a PAS demarre :
+      // eux seuls sont encore modifiables, donc eux seuls peuvent legitimement
+      // etre effaces. Un resultat acquis n'appartient plus a l'interface.
+      const startedIds = new Set(
+        matches.filter((m) => isMatchLocked(m)).map((m) => String(m.id)),
+      );
+
       const matchIds = [
         ...(dayMatches ?? []).map((match) => match.id),
         ...(dayBonus ?? []).map((bonus) => bonus.match_id),
-      ].filter(Boolean);
+      ]
+        .filter(Boolean)
+        .filter((id) => !startedIds.has(String(id)));
+
+      if (matchIds.length === 0) {
+        alert(
+          "Aucun pronostic ne peut etre supprime : tous les matchs de cette journee ont deja commence.",
+        );
+        return;
+      }
 
       if (matchIds.length > 0) {
         const { error: deleteError } = await supabase
