@@ -1224,6 +1224,28 @@ function PronosticsPage() {
   ];
   const dayLocked = dayRelevantMatches.length > 0 && dayRelevantMatches.every((m) => isMatchLocked(m));
 
+  // ÉCHÉANCE RÉELLE DU COMPTE À REBOURS "Fin des pronos".
+  // Il visait COUNTDOWN_TARGET, une date ecrite en dur dans Countdown.tsx
+  // (21 aout 2026) : passee, il affichait 00 00 00 00 pour le restant de la
+  // saison. On vise desormais la prochaine fermeture reelle, calculee par
+  // getMatchLockDate — la seule source de verite du verrouillage, qui gere
+  // deja le mode manuel (matchdays.deadline) et le mode automatique
+  // (coup d'envoi moins une minute).
+  //
+  // C'est le MINIMUM des echeances encore a venir : en mode automatique, les
+  // matchs d'une journee se ferment un par un, et ce qui interesse le joueur
+  // est le prochain moment ou il ne pourra plus jouer un match.
+  const nextLockAt: number | null = (() => {
+    const now = Date.now();
+    const upcoming = dayRelevantMatches
+      .map((m) => getMatchLockDate(m))
+      .filter((d): d is Date => d instanceof Date && !Number.isNaN(d.getTime()))
+      .map((d) => d.getTime())
+      .filter((t) => t > now);
+
+    return upcoming.length > 0 ? Math.min(...upcoming) : null;
+  })();
+
   const pick = (id: string, value: Pick) => {
     const match = matches.find((item) => item.id === id);
     if (!match || isMatchLocked(match)) return;
@@ -1690,20 +1712,30 @@ function PronosticsPage() {
           </div>
 
           {/* ================= COMPTE À REBOURS — un seul bloc ================= */}
-          <div className="relative z-10 mt-8">
-            <div className="mb-3 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-              <Clock className="size-3.5 text-emerald-400" />
-              Fin des pronos
+          {nextLockAt !== null && !dayLocked && (
+            <div className="relative z-10 mt-6">
+              <div className="mb-3 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                <Clock className="size-3.5 text-emerald-400" />
+                Fin des pronos
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <CountdownBlocksIconic target={nextLockAt} />
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <CountdownBlocksIconic />
-            </div>
-          </div>
+          )}
 
+          {/* Le message etait fixe : "Complète tous tes pronostics avant le
+              coup d'envoi" s'affichait aussi quand tout etait deja rempli, ou
+              quand la journee etait fermee. Il dit maintenant ou en est le
+              joueur. */}
           <div className="relative z-10 mt-6 flex items-center gap-2 rounded-2xl border border-slate-800 bg-white/[0.02] px-4 py-2.5">
             <Sparkles className="size-3.5 shrink-0 text-emerald-400" />
             <p className="text-xs text-slate-400">
-              Complète tous tes pronostics avant le coup d'envoi. Bonne chance !
+              {dayLocked
+                ? "Les pronostics de cette journée sont clos. Rendez-vous au classement."
+                : allDone
+                  ? "Tous tes pronostics sont enregistrés. Tu peux encore les modifier jusqu'à la fermeture."
+                  : `Il te reste ${total - filled} prono${total - filled > 1 ? "s" : ""} à remplir.`}
             </p>
           </div>
         </section>
