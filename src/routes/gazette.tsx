@@ -22,6 +22,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
+import { matchAppeal } from "@/lib/clubReputation";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import {
@@ -1598,20 +1599,41 @@ function GazettePage() {
     clock,
   ]);
 
+  // L'AFFICHE DE LA JOURNÉE.
+  // BUG CORRIGÉ : le prestige reposait sur
+  // /psg|paris|marseille|om|lyon|ol|monaco|lille|lens/, avec deux defauts.
+  // "paris" capturait le PARIS FC aussi bien que le PSG — d'où un
+  // ESTAC–Paris FC promu affiche du week-end. Et le score binaire 0/20
+  // donnait le même poids à un match comptant un seul gros club qu'à une
+  // vraie affiche entre deux cadors. On passe par getOfficialClubId(), qui
+  // distingue déjà `psg` de `parisfc`, et par une cote de notoriété graduée
+  // où le côté le plus faible compte double (voir src/lib/clubReputation.ts).
   const weekendMatch = useMemo(() => {
     if (!currentJourneeAllMatches.length) return null;
-    const scoredPopularity = [...currentJourneeAllMatches].map((item) => {
+
+    const notes = currentJourneeAllMatches.map((item) => {
       let predictions = 0;
       profiles.forEach((profile) => {
         if (predictionsByUser.get(profile.id)?.byMatch.has(String(item.match.id))) predictions += 1;
       });
-      const kickoff = getKickoffTimestamp(item.match);
-      const teams = `${clean(getTeamHome(item.match))} ${clean(getTeamAway(item.match))}`;
-      const prestige = /psg|paris|marseille|om|lyon|ol|monaco|lille|lens/.test(teams) ? 20 : 0;
-      return { ...item, predictions, kickoff, prestige };
+      return {
+        ...item,
+        predictions,
+        kickoff: getKickoffTimestamp(item.match),
+        appeal: matchAppeal(getTeamHome(item.match), getTeamAway(item.match)),
+        joue: getMatchState(item.match) === "finished",
+      };
     });
-    return scoredPopularity.sort((a, b) => b.prestige - a.prestige || b.predictions - a.predictions || a.kickoff - b.kickoff)[0] ?? null;
-  }, [currentJourneeAllMatches, profiles, predictionsByUser]);
+
+    const classer = (a: typeof notes[number], b: typeof notes[number]) =>
+      b.appeal - a.appeal || b.predictions - a.predictions || a.kickoff - b.kickoff;
+
+    // "Le rendez-vous à suivre" : une rencontre déjà jouée n'est plus un
+    // rendez-vous. On privilégie donc ce qui reste à voir, et on ne retombe
+    // sur les matchs terminés que si la journée est bouclée.
+    const aVenir = notes.filter((item) => !item.joue).sort(classer);
+    return aVenir[0] ?? [...notes].sort(classer)[0] ?? null;
+  }, [currentJourneeAllMatches, profiles, predictionsByUser, clock]);
 
   const bigPerformance = useMemo(() => {
     if (!journeeFinishedMatches.length) return null;
@@ -1862,7 +1884,7 @@ function GazettePage() {
           <section className="grid gap-0 md:grid-cols-2">
             <div className="border-b border-slate-800 p-5 md:border-b-0 md:border-r md:p-10">
               <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-orange-300">6 · GROS MATCH DU WEEK-END</p>
-              <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">Le rendez-vous à suivre</h2>
+              <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">{weekendMatch && weekendMatch.joue ? "L'affiche de la journée" : "Le rendez-vous à suivre"}</h2>
               {weekendMatch ? <div className="mt-5 rounded-[24px] border border-orange-400/20 bg-orange-400/[.05] p-6 text-center"><div className="flex items-center justify-center gap-4 md:gap-7"><div className="flex min-w-0 flex-1 items-center justify-end gap-3"><p className="truncate font-display text-xl font-black text-white">{shortTeam(getTeamHome(weekendMatch.match))}</p><GazetteTeamLogo teams={teams} match={weekendMatch.match} side="home" size="size-12 md:size-14" /></div><span className="shrink-0 font-display text-2xl font-black text-orange-300">{hasScore(weekendMatch.match)?`${getScoreHome(weekendMatch.match)}–${getScoreAway(weekendMatch.match)}`:"VS"}</span><div className="flex min-w-0 flex-1 items-center gap-3"><GazetteTeamLogo teams={teams} match={weekendMatch.match} side="away" size="size-12 md:size-14" /><p className="truncate text-left font-display text-xl font-black text-white">{shortTeam(getTeamAway(weekendMatch.match))}</p></div></div><p className="mt-4 font-mono text-[9px] uppercase tracking-[.15em] text-slate-500">{matchStatusLabel(weekendMatch.match)} · {formatKickoff(weekendMatch.match.kickoff ?? weekendMatch.match.kickoff_time)}</p></div> : <EditorialEmptyState compact icon={Flame} title="Affiche à venir" description="Le gros match apparaîtra dès que le calendrier sera disponible."/>}
             </div>
             <div className="p-5 md:p-10">
