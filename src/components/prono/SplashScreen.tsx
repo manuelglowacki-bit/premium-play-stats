@@ -1,7 +1,53 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import { Trophy, Target, Crown } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-const DURATION_MS = 4000;
+// Duree de l'intro. Elle etait figee a 4000 ms (+ 750 ms de sortie), soit
+// pres de 5 secondes AVANT CHAQUE arrivee sur le site, meme quand tout etait
+// deja charge. Joli la premiere fois, penible la dixieme.
+//
+// - premiere venue de la journee : intro complete, mais deux fois plus courte
+// - venue suivante : version express
+// - animations desactivees par le systeme : on ne retient personne
+const FIRST_VISIT_MS = 2200;
+const RETURNING_MS = 1100;
+const REDUCED_MOTION_MS = 500;
+const EXIT_MS = 450;
+const SEEN_KEY = "prono:splash-seen-at";
+const SEEN_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+// Le navigateur peut refuser l'acces au stockage (navigation privee, reglages
+// stricts) : dans ce cas on retombe simplement sur l'intro complete.
+function seenRecently(): boolean {
+  try {
+    const raw = window.localStorage.getItem(SEEN_KEY);
+    if (!raw) return false;
+    return Date.now() - Number(raw) < SEEN_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+function rememberSeen() {
+  try {
+    window.localStorage.setItem(SEEN_KEY, String(Date.now()));
+  } catch {
+    /* stockage indisponible : sans consequence */
+  }
+}
+
+function splashDuration(): number {
+  if (prefersReducedMotion()) return REDUCED_MOTION_MS;
+  return seenRecently() ? RETURNING_MS : FIRST_VISIT_MS;
+}
 
 // Particules lumineuses positionnées manuellement pour un rendu premium
 // et stable sur toutes les tailles d'écran (pas de génération aléatoire
@@ -22,36 +68,84 @@ const PARTICLES = [
 export function SplashScreen({ onDone }: { onDone: () => void }) {
   const [progress, setProgress] = useState(0);
   const [exiting, setExiting] = useState(false);
+  // Saison affichee. Elle etait ecrite en dur ("Saison 2026") : tant qu'elle
+  // n'est pas connue, on n'affiche rien plutot qu'une valeur fausse.
+  const [season, setSeason] = useState<string | null>(null);
+
+  // onDone est recree a chaque rendu du parent : on le garde dans une ref
+  // pour que l'animation ne reparte jamais de zero.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const finishedRef = useRef(false);
+
+  const finish = useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    rememberSeen();
+    setProgress(100);
+    setExiting(true);
+    window.setTimeout(() => onDoneRef.current(), EXIT_MS);
+  }, []);
 
   useEffect(() => {
+    const duration = splashDuration();
     const start = performance.now();
     let raf: number;
 
     const tick = () => {
       const elapsed = performance.now() - start;
-      const next = Math.min((elapsed / DURATION_MS) * 100, 100);
-      setProgress(next);
+      const ratio = Math.min(elapsed / duration, 1);
+      // Demarrage franc puis ralentissement : la barre parait plus vive
+      // qu'une progression lineaire, a duree identique.
+      setProgress(Math.round((1 - Math.pow(1 - ratio, 3)) * 100));
 
-      if (elapsed < DURATION_MS) {
+      if (ratio < 1) {
         raf = requestAnimationFrame(tick);
       } else {
-        setExiting(true);
-        window.setTimeout(onDone, 750);
+        finish();
       }
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [onDone]);
+  }, [finish]);
+
+  // Passer l'intro : clic, touche ou bouton. Personne ne doit etre retenu
+  // devant une animation qu'il a deja vue cent fois.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || event.key === "Enter" || event.key === " ") finish();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [finish]);
+
+  // Saison reelle, lue dans app_settings comme partout ailleurs.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.from("app_settings").select("season").eq("id", 1).maybeSingle();
+        if (!cancelled && data?.season) setSeason(String(data.season));
+      } catch {
+        /* intro purement visuelle : une saison inconnue n'empeche rien */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div
-      className={`fixed inset-0 z-[9999] flex flex-col overflow-hidden bg-[#020813] text-white transition-all duration-1000 ease-[cubic-bezier(0.87,0,0.13,1)] ${
+      onClick={finish}
+      className={`fixed inset-0 z-[9999] flex cursor-pointer flex-col overflow-hidden bg-[#020813] text-white transition-all duration-500 ease-[cubic-bezier(0.87,0,0.13,1)] ${
         exiting
-          ? "pointer-events-none opacity-0 -translate-y-full blur-xl"
+          ? "pointer-events-none opacity-0 -translate-y-6 blur-lg"
           : "opacity-100 translate-y-0"
       }`}
       aria-live="polite"
+      aria-busy={!exiting}
     >
       <style>{`
         @keyframes splash-fade-up {
@@ -158,6 +252,20 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
         />
       ))}
 
+      {/* Passer l'intro. Le clic sur le fond fait la meme chose, mais un
+          bouton visible evite d'avoir a le deviner. */}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          finish();
+        }}
+        className="absolute right-4 z-20 rounded-full border border-white/15 bg-black/30 px-3 py-1.5 font-mono text-[9px] font-bold uppercase tracking-[.2em] text-white/70 backdrop-blur-sm transition hover:border-white/30 hover:text-white"
+        style={{ top: "max(env(safe-area-inset-top), 1rem)" }}
+      >
+        Passer
+      </button>
+
       {/* ================= CONTENU ================= */}
       <div className="relative z-10 mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-between px-6 pb-6 pt-[max(env(safe-area-inset-top),2rem)]">
         {/* ---- HAUT : LOGO + TITRE + SAISON ---- */}
@@ -203,8 +311,8 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
             style={{ animationDelay: "320ms" }}
           >
             <span className="h-px w-8 bg-gradient-to-r from-transparent to-amber-400/70 md:w-12" />
-            <span className="font-mono text-[10px] font-semibold uppercase tracking-[.42em] text-amber-200/80 md:text-xs">
-              Saison 2026
+            <span className="min-w-[7ch] text-center font-mono text-[10px] font-semibold uppercase tracking-[.42em] text-amber-200/80 md:text-xs">
+              {season ? `Saison ${season}` : "Ligue 1"}
             </span>
             <span className="h-px w-8 bg-gradient-to-l from-transparent to-amber-400/70 md:w-12" />
           </div>
@@ -280,7 +388,7 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
           <div className="splash-fade-up w-full" style={{ animationDelay: "640ms" }}>
             <div className="flex items-end justify-between">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-[.24em] text-emerald-400 md:text-[10px]">
-                Préparation de la saison 2026...
+                {season ? `Préparation de la saison ${season}` : "Préparation de votre saison"}
               </span>
               <span className="font-display text-xl font-black leading-none text-emerald-400 md:text-2xl">
                 {Math.round(progress)}
@@ -289,10 +397,17 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
             </div>
 
             {/* Barre de progression fine et élégante */}
-            <div className="relative mt-2.5 h-1 overflow-hidden rounded-full bg-white/[0.07]">
+            <div
+              role="progressbar"
+              aria-label="Chargement de l'application"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progress)}
+              className="relative mt-2.5 h-1.5 overflow-hidden rounded-full bg-white/[0.07]"
+            >
               <div
                 className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-emerald-600 via-emerald-400 to-emerald-300 shadow-[0_0_12px_rgba(52,211,153,.8)]"
-                style={{ width: `${progress}%`, transition: "width .1s linear" }}
+                style={{ width: `${progress}%`, transition: "width .12s linear" }}
               />
             </div>
           </div>
