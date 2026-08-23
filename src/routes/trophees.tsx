@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent } from "react";
 import {
   Bell,
@@ -122,6 +122,49 @@ function formatTime(value: string) {
     minute: "2-digit",
   }).format(new Date(value));
 }
+
+// Deux messages du meme jour ? Sert a inserer un separateur de date dans le
+// fil, comme le font les messageries : sans lui, une conversation d'hier et
+// une d'aujourd'hui se suivent sans la moindre rupture visuelle.
+function isSameDay(a: string, b: string) {
+  const first = new Date(a);
+  const second = new Date(b);
+  return (
+    first.getFullYear() === second.getFullYear() &&
+    first.getMonth() === second.getMonth() &&
+    first.getDate() === second.getDate()
+  );
+}
+
+function formatDayLabel(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  if (isSameDay(value, now.toISOString())) return "Aujourd'hui";
+  if (isSameDay(value, yesterday.toISOString())) return "Hier";
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(date);
+}
+
+function minutesBetween(a: string, b: string) {
+  return Math.abs(new Date(b).getTime() - new Date(a).getTime()) / 60000;
+}
+
+// Classement d'un message par salon. Extrait de `visibleMessages`, ou les
+// expressions etaient ecrites en dur : la barre laterale peut desormais
+// afficher le nombre de messages de chaque salon en reutilisant EXACTEMENT
+// le meme filtre que le fil, sans risque de divergence.
+const SECTION_PATTERNS = {
+  matches: /\b(match|prono|pronostic|pronostics|score|ligue|football|équipe|résultat|résultats|but|buts)\b/i,
+  trophies: /\b(trophée|trophées|badge|badges|podium|champion|victoire|classement|exploit)\b/i,
+  offtopic: /\b(hors sujet|hs|vacances|musique|film|cinéma|jeu|jeux|blague|anniversaire|apéro|week-end)\b/i,
+} as const;
 
 function buildReactionState(rows: ReactionRow[], currentUserId: string | null) {
   const counts = new Map<string, Record<string, number>>();
@@ -1269,24 +1312,9 @@ function VestiairePage() {
     if (activeSection === "pinned") {
       const pinnedSet = new Set(pinnedIds);
       result = result.filter((message) => pinnedSet.has(message.id));
-    } else if (activeSection === "matches") {
-      result = result.filter((message) =>
-        /\b(match|prono|pronostic|pronostics|score|ligue|football|équipe|résultat|résultats|but|buts)\b/i.test(
-          messagePreview(message.content),
-        ),
-      );
-    } else if (activeSection === "trophies") {
-      result = result.filter((message) =>
-        /\b(trophée|trophées|badge|badges|podium|champion|victoire|classement|exploit)\b/i.test(
-          messagePreview(message.content),
-        ),
-      );
-    } else if (activeSection === "offtopic") {
-      result = result.filter((message) =>
-        /\b(hors sujet|hs|vacances|musique|film|cinéma|jeu|jeux|blague|anniversaire|apéro|week-end)\b/i.test(
-          messagePreview(message.content),
-        ),
-      );
+    } else if (activeSection in SECTION_PATTERNS) {
+      const pattern = SECTION_PATTERNS[activeSection as keyof typeof SECTION_PATTERNS];
+      result = result.filter((message) => pattern.test(messagePreview(message.content)));
     }
 
     const query = searchQuery.trim().toLowerCase();
@@ -1298,6 +1326,30 @@ function VestiairePage() {
       return name.includes(query) || content.includes(query);
     });
   }, [messageList, searchQuery, activeSection, pinnedIds]);
+
+  // Nombre de messages par salon, avec le meme filtre que le fil : la barre
+  // laterale indique enfin ou il se passe quelque chose, au lieu d'aligner
+  // cinq entrees identiques.
+  const sectionCounts = useMemo(() => {
+    const previews = messageList.map((message) => messagePreview(message.content));
+    return {
+      general: messageList.length,
+      pinned: pinnedIds.length,
+      matches: previews.filter((preview) => SECTION_PATTERNS.matches.test(preview)).length,
+      trophies: previews.filter((preview) => SECTION_PATTERNS.trophies.test(preview)).length,
+      offtopic: previews.filter((preview) => SECTION_PATTERNS.offtopic.test(preview)).length,
+    } as Record<string, number>;
+  }, [messageList, pinnedIds]);
+
+  // Le reste du groupe, en sourdine sous les joueurs connectes. Avec un seul
+  // joueur en ligne, le panneau affichait une carte isolee dans le vide : il
+  // montre desormais l'effectif complet, ce qui donne sa mesure au groupe.
+  const offlinePlayers = useMemo(() => {
+    const onlineIds = new Set(onlinePlayers.map((player) => player.user_id));
+    return Object.values(profiles)
+      .filter((profile) => profile?.id && !onlineIds.has(profile.id))
+      .sort((a, b) => displayName(a).localeCompare(displayName(b), "fr"));
+  }, [profiles, onlinePlayers]);
 
   function selectSection(section: typeof activeSection) {
     setActiveSection(section);
@@ -1719,12 +1771,13 @@ function VestiairePage() {
                 <div className="mt-4 space-y-1.5">
                   {[
                     { icon: MessageCircle, label: "Discussion générale", section: "general" as const },
-                    { icon: Pin, label: "Épinglés", section: "pinned" as const, badge: pinnedIds.length || undefined },
+                    { icon: Pin, label: "Épinglés", section: "pinned" as const },
                     { icon: Hash, label: "Matchs & Pronos", section: "matches" as const },
                     { icon: Trophy, label: "Trophées", section: "trophies" as const },
                     { icon: Bell, label: "Hors sujet", section: "offtopic" as const },
-                  ].map(({ icon: Icon, label, section, badge }) => {
+                  ].map(({ icon: Icon, label, section }) => {
                     const active = activeSection === section;
+                    const badge = sectionCounts[section] || undefined;
 
                     return (
                       <button
@@ -1744,7 +1797,13 @@ function VestiairePage() {
                         </span>
                         <span className="flex-1 text-xs font-semibold">{label}</span>
                         {badge ? (
-                          <span className="rounded-full bg-emerald-400/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300">
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 font-mono text-[9px] font-bold ${
+                              active
+                                ? "bg-emerald-400/15 text-emerald-300"
+                                : "bg-white/[.05] text-slate-500 group-hover:text-slate-300"
+                            }`}
+                          >
                             {badge}
                           </span>
                         ) : null}
@@ -1934,7 +1993,7 @@ function VestiairePage() {
                   )}
 
                   <div className="space-y-0">
-                    {visibleMessages.map((message) => {
+                    {visibleMessages.map((message, messageIndex) => {
                       const profile = message.profile;
                       const name = displayName(profile);
                       const mine = message.user_id === currentUserId;
@@ -1942,16 +2001,56 @@ function VestiairePage() {
                       const isEditing = editingMessage === message.id;
                       const isPinned = pinnedIds.includes(message.id);
 
+                      // --- Mise en page conversationnelle ---
+                      // Un separateur de date ouvre chaque nouvelle journee, et
+                      // les messages consecutifs d'un meme joueur sont regroupes
+                      // sous un seul en-tete. Avant, chaque message repetait
+                      // avatar + pseudo + badge + heure : le fil se lisait comme
+                      // une liste administrative plutot que comme une discussion.
+                      const previous = messageIndex > 0 ? visibleMessages[messageIndex - 1] : null;
+                      const dayLabel =
+                        !previous || !isSameDay(previous.created_at, message.created_at)
+                          ? formatDayLabel(message.created_at)
+                          : null;
+                      // On ne regroupe jamais une reponse ni un message epingle :
+                      // tous deux ont besoin de leur en-tete pour rester lisibles.
+                      const grouped = Boolean(
+                        previous &&
+                          !dayLabel &&
+                          !parsed.replyTo &&
+                          !isPinned &&
+                          previous.user_id === message.user_id &&
+                          minutesBetween(previous.created_at, message.created_at) < 5,
+                      );
+
                       return (
+                        <Fragment key={message.id}>
+                          {dayLabel && (
+                            <div className="flex items-center gap-3 px-1 py-4 sm:px-2">
+                              <span className="h-px flex-1 bg-white/[.07]" />
+                              <span className="rounded-full border border-white/[.08] bg-white/[.03] px-3 py-1 font-mono text-[9px] font-black uppercase tracking-[.15em] text-slate-500">
+                                {dayLabel}
+                              </span>
+                              <span className="h-px flex-1 bg-white/[.07]" />
+                            </div>
+                          )}
                         <article
-                          key={message.id}
                           ref={(element) => { messageRefs.current[message.id] = element; }}
-                          className={`vestiaire-message group relative px-1 py-4 sm:px-2 ${
-                            mine ? "bg-emerald-400/[.018]" : ""
-                          }`}
+                          className={`vestiaire-message group relative rounded-xl px-1 transition-colors sm:px-2 ${
+                            grouped ? "py-1" : "py-4"
+                          } ${mine ? "bg-emerald-400/[.018]" : ""} hover:bg-white/[.025]`}
                         >
                           <div className="flex items-start gap-3">
-                            <div className="relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-gradient-to-br from-emerald-400/25 via-purple-500/15 to-slate-900">
+                            {grouped ? (
+                              // Gouttiere de la largeur de l'avatar : l'heure n'y
+                              // apparait qu'au survol, pour garder le fil aere.
+                              <div className="w-10 shrink-0 pt-0.5 text-right">
+                                <span className="font-mono text-[9px] text-slate-600 opacity-0 transition group-hover:opacity-100">
+                                  {formatTime(message.created_at)}
+                                </span>
+                              </div>
+                            ) : (
+                            <div className="relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-gradient-to-br from-emerald-400/25 via-purple-500/15 to-slate-900 transition group-hover:border-emerald-400/30">
                               {profile?.avatar_url ? (
                                 <img
                                   src={profile.avatar_url}
@@ -1965,9 +2064,12 @@ function VestiairePage() {
                               )}
                               <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[#06101a] bg-emerald-400" />
                             </div>
+                            )}
 
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
+                              <div className={grouped ? "" : "flex items-center gap-2"}>
+                                {!grouped && (
+                                  <>
                                 <span className="text-xs font-black text-emerald-300">
                                   {name}
                                 </span>
@@ -1986,13 +2088,17 @@ function VestiairePage() {
                                   <Pin size={11} className="text-amber-300" />
                                 )}
 
-                                <span className="text-[9px] text-slate-600">
+                                <span className="font-mono text-[9px] text-slate-600">
                                   {formatTime(message.created_at)}
                                 </span>
+                                  </>
+                                )}
 
                                 {/* Menu "..." — toujours visible et tactile (remplace l'ancienne
-                                    rangée d'icônes en group-hover, inaccessible sur mobile). */}
-                                <div className="relative ml-auto">
+                                    rangée d'icônes en group-hover, inaccessible sur mobile).
+                                    Sur un message regroupé il n'y a plus d'en-tête où le poser :
+                                    il passe alors en position absolue, coin haut droit. */}
+                                <div className={grouped ? "absolute right-2 top-1 z-20" : "relative ml-auto"}>
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -2188,13 +2294,14 @@ function VestiairePage() {
                                     key={emoji}
                                     type="button"
                                     onClick={() => void toggleReaction(message, emoji)}
-                                    className={`rounded-full border px-2 py-1 text-[10px] transition ${
+                                    className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition hover:scale-105 active:scale-95 ${
                                       message.reactedByMe.has(emoji)
-                                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
-                                        : "border-white/[.07] bg-white/[.03] text-slate-300"
+                                        ? "border-emerald-400/40 bg-emerald-400/15 text-emerald-200 shadow-[0_0_12px_-4px_rgba(52,211,153,.6)]"
+                                        : "border-white/[.09] bg-white/[.04] text-slate-300 hover:border-white/20 hover:bg-white/[.07]"
                                     }`}
                                   >
-                                    {emoji} {count}
+                                    <span className="leading-none">{emoji}</span>
+                                    <span className="font-mono text-[10px] font-bold leading-none">{count}</span>
                                   </button>
                                 ))}
 
@@ -2230,6 +2337,7 @@ function VestiairePage() {
                             </div>
                           </div>
                         </article>
+                        </Fragment>
                       );
                     })}
                   </div>
@@ -2614,6 +2722,40 @@ function VestiairePage() {
                       </button>
                     );
                   })}
+
+                  {offlinePlayers.length > 0 && (
+                    <div className="pt-3">
+                      <div className="flex items-center gap-2 px-2">
+                        <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                          Hors ligne
+                        </span>
+                        <span className="h-px flex-1 bg-white/[.06]" />
+                        <span className="font-mono text-[9px] text-slate-600">{offlinePlayers.length}</span>
+                      </div>
+
+                      <div className="mt-2 space-y-0.5">
+                        {offlinePlayers.slice(0, 6).map((playerProfile) => (
+                          <div
+                            key={playerProfile.id}
+                            className="flex items-center gap-2.5 rounded-xl px-2 py-1.5 opacity-45 transition hover:opacity-80"
+                          >
+                            <div className="relative grid size-7 shrink-0 place-items-center overflow-hidden rounded-full border border-white/[.08] bg-white/[.03] grayscale">
+                              {playerProfile.avatar_url ? (
+                                <img src={playerProfile.avatar_url} alt="" className="size-full object-cover" />
+                              ) : (
+                                <span className="text-[8px] font-black text-slate-400">
+                                  {initials(displayName(playerProfile))}
+                                </span>
+                              )}
+                            </div>
+                            <span className="truncate text-[11px] text-slate-400">
+                              {displayName(playerProfile)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {onlinePlayers.length > 8 && (
                     <button
