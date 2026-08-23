@@ -685,7 +685,8 @@ setLeaderboard(rankedRankings);
                   titre change a chaque etat ("ça se joue maintenant")
                   repetait ce que le bandeau juste en dessous annonce deja.
                   L'etat en direct reste donc sous le titre, la ou il a sa
-                  place. */}
+                  place. Le titre nomme la competition, l'accroche juste en
+                  dessous donne l'enjeu. */}
               <h1
                 /* Le degrade descendait jusqu'a un bleu clair des la moitie
                    des lettres, ce qui delavait le bas du titre sur un fond
@@ -696,8 +697,15 @@ setLeaderboard(rankedRankings);
                     "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
                 }}
               >
-                LA COURSE AU TITRE
+                LE CHAMPIONNAT DES PRONOS
               </h1>
+              {/* Accroche d'une ligne : elle donne l'enjeu que le titre se
+                  contente de nommer. Volontairement courte — c'est le
+                  sous-titre publicitaire de trois lignes qui avait fait
+                  gonfler le bandeau. */}
+              <p className="font-mono text-[11px] uppercase tracking-[.2em] text-slate-400 sm:text-xs">
+                Une saison, un vainqueur
+              </p>
 
               {/* Trois etats reels, au lieu d'un compte a rebours fige a zero
                   sur une date passee : matchs en cours, prochain coup d'envoi,
