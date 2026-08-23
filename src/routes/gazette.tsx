@@ -1761,11 +1761,10 @@ function GazettePage() {
               <div className="flex flex-wrap gap-2 font-mono text-[9px] font-bold uppercase tracking-[.12em]">
                 <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-emerald-300">{currentJournee?.title ?? "J—"}</span>
                 <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-400">
-                  {finishedCount}/{totalMatches} terminés · {todaysMatches.filter((x) => !x.isBonus).length} L1 · {todaysMatches.filter((x) => x.isBonus).length} bonus
+                  Aujourd'hui {finishedCount}/{totalMatches} terminés · {todaysMatches.filter((x) => !x.isBonus).length} L1 · {todaysMatches.filter((x) => x.isBonus).length} bonus
                 </span>
                 {liveCount > 0 && <span className="rounded-full border border-red-400/30 bg-red-400/10 px-3 py-2 text-red-300">{liveCount} LIVE</span>}
-                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-500">MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "—"}</span>
-                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-500">JOUR {new Date(clock).toLocaleDateString("fr-FR", { weekday: "long" })}</span>
+                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-500">MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) ?? "—"}</span>
               </div>
             </div>
           </header>
