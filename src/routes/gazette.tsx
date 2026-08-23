@@ -22,7 +22,9 @@ import {
 import { supabase } from "@/lib/supabase";
 import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
-import { matchAppeal } from "@/lib/clubReputation";
+import { matchAppeal, type StandingsLookup } from "@/lib/clubReputation";
+import { getLigue1Standings, type CompetitionStandings } from "@/services/standingsService";
+import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import {
@@ -1599,6 +1601,44 @@ function GazettePage() {
     clock,
   ]);
 
+  // Classement Ligue 1 RÉEL, chargé via le proxy football-data.org déjà en
+  // place pour les championnats bonus (api/standings.ts, token côté serveur).
+  // Sert à juger l'affiche d'une journée sur la position des deux équipes.
+  const [ligue1Standings, setLigue1Standings] = useState<CompetitionStandings | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Année football-data.org : une saison européenne bascule en juillet
+    // (2026-2027 -> "2026"). standingsService retombe seul sur la saison
+    // précédente tant que celle en cours compte trop peu de journées jouées.
+    const now = new Date();
+    const seasonYear = String(now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1);
+
+    getLigue1Standings(seasonYear)
+      .then((standings) => {
+        if (!cancelled) setLigue1Standings(standings);
+      })
+      .catch(() => {
+        // Classement indisponible : la Gazette dégrade sur la seule
+        // réputation, sans jamais bloquer l'affichage.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const standingsLookup = useMemo<StandingsLookup | null>(() => {
+    if (!ligue1Standings || ligue1Standings.source === "unavailable" || ligue1Standings.totalTeams < 2) {
+      return null;
+    }
+    return {
+      totalTeams: ligue1Standings.totalTeams,
+      positionOf: (teamName: unknown) =>
+        ligue1Standings.entriesByTeam.get(normalizeTeamName(teamName))?.position ?? null,
+    };
+  }, [ligue1Standings]);
+
   // L'AFFICHE DE LA JOURNÉE.
   // BUG CORRIGÉ : le prestige reposait sur
   // /psg|paris|marseille|om|lyon|ol|monaco|lille|lens/, avec deux defauts.
@@ -1620,7 +1660,7 @@ function GazettePage() {
         ...item,
         predictions,
         kickoff: getKickoffTimestamp(item.match),
-        appeal: matchAppeal(getTeamHome(item.match), getTeamAway(item.match)),
+        appeal: matchAppeal(getTeamHome(item.match), getTeamAway(item.match), standingsLookup),
         joue: getMatchState(item.match) === "finished",
       };
     });
@@ -1633,7 +1673,7 @@ function GazettePage() {
     // sur les matchs terminés que si la journée est bouclée.
     const aVenir = notes.filter((item) => !item.joue).sort(classer);
     return aVenir[0] ?? [...notes].sort(classer)[0] ?? null;
-  }, [currentJourneeAllMatches, profiles, predictionsByUser, clock]);
+  }, [currentJourneeAllMatches, profiles, predictionsByUser, clock, standingsLookup]);
 
   const bigPerformance = useMemo(() => {
     if (!journeeFinishedMatches.length) return null;

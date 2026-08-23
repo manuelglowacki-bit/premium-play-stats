@@ -100,13 +100,50 @@ export function clubReputation(teamName: unknown): number {
   return found ? found.score : DEFAUT;
 }
 
+/** Accès au classement réel d'un championnat, tel que servi par
+ * src/services/standingsService.ts. */
+export type StandingsLookup = {
+  /** Position au classement (1 = premier), ou null si l'équipe est absente. */
+  positionOf: (teamName: unknown) => number | null;
+  totalTeams: number;
+};
+
+/**
+ * Force d'un club : la cote éditoriale, corrigée par le classement réel
+ * quand il est disponible.
+ *
+ * Les deux comptent pour moitié, et c'est délibéré. Le classement seul
+ * rendrait un PSG en difficulté insignifiant et ferait d'un promu en forme
+ * l'affiche du week-end ; la réputation seule ignore complètement la saison
+ * en cours. La moyenne des deux suit la dynamique sans renier le statut.
+ *
+ * Sans classement exploitable (API indisponible, ou tout début de saison
+ * pour lequel standingsService retombe déjà sur la saison précédente), on
+ * dégrade proprement sur la seule réputation.
+ */
+export function clubStrength(teamName: unknown, standings?: StandingsLookup | null): number {
+  const reputation = clubReputation(teamName);
+  if (!standings || standings.totalTeams < 2) return reputation;
+
+  const position = standings.positionOf(teamName);
+  if (!position || position < 1) return reputation;
+
+  // 1er -> 100, dernier -> 30, linéairement entre les deux.
+  const rang = 100 - ((position - 1) * 70) / (standings.totalTeams - 1);
+  return Math.round((reputation + rang) / 2);
+}
+
 /**
  * Poids d'une affiche. Le côté le plus faible compte double : un PSG–OM
  * (100 + 92, faible côté 92) doit passer devant un PSG–Le Mans
  * (100 + 25, faible côté 25), sans quoi il suffirait d'un seul gros nom.
  */
-export function matchAppeal(homeTeam: unknown, awayTeam: unknown): number {
-  const home = clubReputation(homeTeam);
-  const away = clubReputation(awayTeam);
+export function matchAppeal(
+  homeTeam: unknown,
+  awayTeam: unknown,
+  standings?: StandingsLookup | null,
+): number {
+  const home = clubStrength(homeTeam, standings);
+  const away = clubStrength(awayTeam, standings);
   return home + away + Math.min(home, away);
 }

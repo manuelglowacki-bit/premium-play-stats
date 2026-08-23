@@ -7,13 +7,17 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 // d'un match candidat soit jugé sur la position réelle des deux équipes au
 // moment de la génération, pas sur une réputation figée.
 
-type CompetitionCode = "PL" | "PD" | "SA" | "BL1";
+// FL1 en plus des 4 championnats bonus : la Gazette s'en sert pour designer
+// l'affiche d'une journee sur le classement REEL des deux equipes, au lieu
+// d'une reputation figee.
+type CompetitionCode = "PL" | "PD" | "SA" | "BL1" | "FL1";
 
 const COMPETITIONS: Record<CompetitionCode, string> = {
   PL: "Premier League",
   PD: "Liga",
   SA: "Serie A",
   BL1: "Bundesliga",
+  FL1: "Ligue 1",
 };
 
 type FootballDataStandingsRow = {
@@ -44,7 +48,7 @@ function send(res: VercelResponse, status: number, body: unknown) {
 
 function normalizeCompetition(value: unknown): CompetitionCode | null {
   const v = String(value ?? "").trim().toUpperCase();
-  return v === "PL" || v === "PD" || v === "SA" || v === "BL1" ? v : null;
+  return v === "PL" || v === "PD" || v === "SA" || v === "BL1" || v === "FL1" ? v : null;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -67,7 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const code = normalizeCompetition(req.query.competition);
   if (!code) {
-    return send(res, 400, { ok: false, message: "Paramètre 'competition' invalide (attendu : PL, PD, SA ou BL1)." });
+    return send(res, 400, { ok: false, message: "Paramètre 'competition' invalide (attendu : PL, PD, SA, BL1 ou FL1)." });
   }
 
   const season =
@@ -95,9 +99,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const groups = Array.isArray(data?.standings) ? data.standings : [];
-    // "TOTAL" = classement général (pas domicile/extérieur séparé). Les 4
-    // championnats bonus sont des poules uniques (pas de groupes), donc il
-    // n'y a normalement qu'une seule entrée pertinente ici.
+    // "TOTAL" = classement général (pas domicile/extérieur séparé). Les
+    // championnats servis ici sont des poules uniques (pas de groupes), donc
+    // il n'y a normalement qu'une seule entrée pertinente.
     const totalGroup = groups.find((g) => g.type === "TOTAL") ?? groups[0] ?? null;
     const rows = Array.isArray(totalGroup?.table) ? totalGroup!.table! : [];
 

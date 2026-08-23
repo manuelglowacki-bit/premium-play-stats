@@ -18,6 +18,10 @@ export type StandingsTeamEntry = {
   form: string | null;
 };
 
+/** Championnats dont le classement est servi par api/standings.ts : les 4
+ * championnats bonus, plus la Ligue 1 pour la Gazette. */
+export type StandingsCompetitionCode = BonusCompetitionCode | "FL1";
+
 export type CompetitionStandings = {
   totalTeams: number;
   entriesByTeam: Map<string, StandingsTeamEntry>;
@@ -46,7 +50,7 @@ type ApiStandingsRow = {
 };
 
 async function fetchStandingsTable(
-  code: BonusCompetitionCode,
+  code: StandingsCompetitionCode,
   season: string,
 ): Promise<ApiStandingsRow[] | null> {
   try {
@@ -100,7 +104,7 @@ function isCurrentSeasonUsable(table: ApiStandingsRow[]): boolean {
  *     (repli sur le niveau statique connu) plutôt que de planter.
  */
 export async function getBonusStandings(
-  code: BonusCompetitionCode,
+  code: StandingsCompetitionCode,
   currentSeasonYear: string,
 ): Promise<CompetitionStandings> {
   const currentTable = await fetchStandingsTable(code, currentSeasonYear);
@@ -128,4 +132,14 @@ export async function getAllBonusStandings(
   const codes: BonusCompetitionCode[] = ["PL", "PD", "SA", "BL1"];
   const results = await Promise.all(codes.map((code) => getBonusStandings(code, currentSeasonYear)));
   return { PL: results[0], PD: results[1], SA: results[2], BL1: results[3] };
+}
+
+/**
+ * Classement Ligue 1 en direct, même repli que les championnats bonus
+ * (saison en cours → saison précédente → indisponible). Consommé par la
+ * Gazette pour désigner l'affiche d'une journée sur la position réelle des
+ * deux équipes.
+ */
+export async function getLigue1Standings(currentSeasonYear: string): Promise<CompetitionStandings> {
+  return getBonusStandings("FL1", currentSeasonYear);
 }
