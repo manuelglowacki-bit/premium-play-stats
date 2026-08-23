@@ -402,6 +402,8 @@ function ProfilPage() {
           predictionsCountByUser: rankingCountByUser,
           exactScoresByUser: rankingExactByUser,
           regularitySuccessByUser: rankingRegularityByUser,
+          participationByUser: rankingParticipationByUser,
+          participationTotalByUser: rankingParticipationTotalByUser,
           pointsByUserAndMatchday,
           pointsByPredictionKey,
         } = computeLeagueStats(
@@ -488,6 +490,9 @@ function ProfilPage() {
           exactScores: Number(rankingExactByUser[uid] || 0),
           predictionsCount: Number(rankingCountByUser[uid] || 0),
           regularitySuccess: Number(rankingRegularityByUser[uid] || 0),
+          // Même départage que le Classement (voir leaderboardRanking.ts).
+          participation: Number(rankingParticipationByUser[uid] || 0),
+          participationTotal: Number(rankingParticipationTotalByUser[uid] || 0),
           pseudo: pseudoById.get(uid) || "Joueur",
         }));
 

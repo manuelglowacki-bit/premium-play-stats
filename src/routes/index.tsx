@@ -264,6 +264,8 @@ function IndexPage() {
           predictionsCountByUser: rankingCountByUser,
           exactScoresByUser: rankingExactByUser,
           regularitySuccessByUser: rankingRegularityByUser,
+          participationByUser: rankingParticipationByUser,
+          participationTotalByUser: rankingParticipationTotalByUser,
           pointsByUserAndMatchday,
           pointsByPredictionKey,
         } = computeLeagueStats(
@@ -299,6 +301,12 @@ function IndexPage() {
             exactScores: rankingExactByUser[uid] || 0,
             predictionsCount: rankingCountByUser[uid] || 0,
             regularitySuccess: rankingRegularityByUser[uid] || 0,
+            // Départage sur la RÉGULARITÉ affichée (participation), comme le
+            // Classement — sans ces champs, rankPlayers retomberait sur
+            // l'ancien taux de réussite et l'ordre differerait d'une page a
+            // l'autre pour deux joueurs a egalite de points.
+            participation: rankingParticipationByUser[uid] || 0,
+            participationTotal: rankingParticipationTotalByUser[uid] || 0,
             pseudo,
           };
         });

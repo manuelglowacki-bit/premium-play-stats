@@ -651,6 +651,10 @@ function StatsPage() {
           exactScores: leagueStats.exactScoresByUser[profile.id] ?? 0,
           predictionsCount: leagueStats.predictionsCountByUser[profile.id] ?? 0,
           regularitySuccess: leagueStats.regularitySuccessByUser[profile.id] ?? 0,
+          // Même départage que le Classement : à égalité de points et de
+          // scores exacts, celui qui n'a manqué aucune rencontre passe devant.
+          participation: leagueStats.participationByUser[profile.id] ?? 0,
+          participationTotal: leagueStats.participationTotalByUser[profile.id] ?? 0,
         }));
 
         const ranked = rankPlayers(rankableRows).slice(0, 5);
