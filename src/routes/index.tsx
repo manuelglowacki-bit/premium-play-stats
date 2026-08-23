@@ -202,52 +202,68 @@ function IndexPage() {
           return Number.isFinite(time) ? time : null;
         };
 
-        // Le compte a rebours vise l'ouverture de la prochaine JOURNEE, pas
-        // le prochain match. Une journee se pronostique en bloc : des que son
-        // premier match est lance, elle n'est plus a preparer, et le compteur
-        // doit basculer sur la suivante. Viser le prochain match ferait au
-        // contraire redemarrer un decompte entre chaque rencontre d'une
-        // journee deja entamee.
-        const firstKickoffByDay = new Map<string, { at: number; match: any }>();
-        (reconciledMatches || []).forEach((m: any) => {
-          const at = kickoffOf(m);
-          if (at === null) return;
-          const dayKey = String(
-            m?.matchday_id ?? m?.matchday_code ?? m?.matchday ?? m?.match_day ?? "",
-          );
-          if (!dayKey) return;
+        // ------------------------------------------------------------------
+        // OUVERTURE DE LA PROCHAINE JOURNEE
+        //
+        // Les dates viennent de l'API (football-data.org, via
+        // /api/ligue1/matchs) et non de Supabase : ce sont les horaires
+        // officiels, tenus a jour en cas de report ou de reprogrammation, la
+        // ou la base ne contient que ce qui a ete importe le jour de l'import.
+        //
+        // Le compte a rebours vise l'ouverture de la JOURNEE, pas le prochain
+        // match : une journee se pronostique en bloc, donc des que son premier
+        // match est lance, elle n'est plus a preparer et le compteur bascule
+        // sur la suivante. Viser le prochain match ferait au contraire
+        // redemarrer un decompte entre chaque rencontre d'une journee entamee.
+        // ------------------------------------------------------------------
+        const firstKickoffByDay = new Map<number, number>();
 
-          const known = firstKickoffByDay.get(dayKey);
-          if (!known || at < known.at) firstKickoffByDay.set(dayKey, { at, match: m });
+        (liveApiMatches || []).forEach((m: any) => {
+          // Ligue 1 uniquement : les matchs bonus appartiennent aux quatre
+          // autres championnats et portent leurs propres numeros de journee,
+          // ce qui ferait viser une date etrangere au calendrier.
+          if (String(m?.competitionCode ?? "") !== "FL1") return;
+
+          const journee = Number(m?.journee ?? 0);
+          if (!Number.isFinite(journee) || journee <= 0) return;
+
+          const at = m?.kickoff ? new Date(String(m.kickoff)).getTime() : NaN;
+          if (!Number.isFinite(at)) return;
+
+          const known = firstKickoffByDay.get(journee);
+          if (known === undefined || at < known) firstKickoffByDay.set(journee, at);
         });
 
+        // Repli si l'API n'a rien renvoye (reseau, quota) : on repart du
+        // calendrier Supabase plutot que de vider le bloc.
+        if (firstKickoffByDay.size === 0) {
+          (reconciledMatches || []).forEach((m: any) => {
+            const at = kickoffOf(m);
+            const journee = Number(m?.matchday ?? m?.match_day ?? 0);
+            if (at === null || !Number.isFinite(journee) || journee <= 0) return;
+            const known = firstKickoffByDay.get(journee);
+            if (known === undefined || at < known) firstKickoffByDay.set(journee, at);
+          });
+        }
+
         // Premiere journee dont le coup d'envoi n'est pas encore passe.
-        const nextDay = [...firstKickoffByDay.values()]
-          .filter((entry) => entry.at > now)
-          .sort((a, b) => a.at - b.at)[0];
+        const nextDay = [...firstKickoffByDay.entries()]
+          .filter(([, at]) => at > now)
+          .sort((a, b) => a[1] - b[1])[0];
 
         if (nextDay) {
-          const raw =
-            nextDay.match.matchday_code ?? nextDay.match.matchday ?? nextDay.match.match_day;
-          const dayLabel = String(raw ?? "").toUpperCase().startsWith("J")
-            ? String(raw).toUpperCase()
-            : raw
-              ? `J${raw}`
-              : "";
-          const dateLabel = new Date(nextDay.at).toLocaleDateString("fr-FR", {
+          const [journee, at] = nextDay;
+          const dateLabel = new Date(at).toLocaleDateString("fr-FR", {
             day: "numeric",
             month: "long",
           });
-          // `label` ne porte QUE la date : le libelle affiche deja la journee
-          // juste avant, les deux se seraient repetes.
-          setNextKickoff({
-            at: nextDay.at,
-            label: `${dateLabel} à ${new Date(nextDay.at).toLocaleTimeString("fr-FR", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}`,
-            day: dayLabel,
+          const timeLabel = new Date(at).toLocaleTimeString("fr-FR", {
+            hour: "2-digit",
+            minute: "2-digit",
           });
+          // `label` ne porte QUE la date : le libelle affiche deja la journee
+          // juste avant, les deux se repeteraient.
+          setNextKickoff({ at, label: `${dateLabel} à ${timeLabel}`, day: `J${journee}` });
         } else {
           setNextKickoff(null);
         }
