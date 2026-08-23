@@ -14,7 +14,6 @@ import {
   Save,
   Sparkles,
   Trophy,
-  Calendar,
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
@@ -2316,19 +2315,18 @@ function PronosticsPage() {
               <div className="relative z-20 grid grid-cols-1 lg:grid-cols-[35%_65%] gap-6 items-center">
                 {/* ZONE GAUCHE (35%) : Infos club de cœur */}
                 <div className="flex flex-col justify-between space-y-4 lg:border-r lg:border-white/10 lg:pr-6 drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)]">
-                  <div className="flex items-center gap-4">
-                    <div className="relative size-14 shrink-0 flex items-center justify-center">
-                      <div
-                        aria-hidden
-                        className="absolute inset-0 rounded-full opacity-70 blur-md"
-                        style={{ background: theme.gradient }}
-                      />
-                      <ClubCrest
-                        club={favoriteTeam}
-                        size="size-full drop-shadow-lg relative z-10"
-                      />
-                    </div>
-                    <div>
+                  {/* Le blason apparaissait TROIS fois dans le meme bloc : ici,
+                      dans la confrontation a droite, et en geant dans le fond
+                      d'ecran. Celui-ci etait le seul a ne rien apprendre — le
+                      titre juste a cote nomme deja le club. Une barre aux
+                      couleurs de l'equipe le remplace. */}
+                  <div className="flex items-center gap-3">
+                    <span
+                      aria-hidden
+                      className="h-11 w-1.5 shrink-0 rounded-full"
+                      style={{ background: theme.gradient }}
+                    />
+                    <div className="min-w-0">
                       <span
                         className="font-mono text-[10px] uppercase tracking-widest font-bold block"
                         style={{ color: theme.primary }}
@@ -2343,33 +2341,39 @@ function PronosticsPage() {
 
                   <div className="h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-1" />
 
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-mono text-xs text-slate-200 font-bold uppercase tracking-wide">
-                        Journée {selectedMatchday?.number ?? "—"}
-                        <span className="mx-1.5 text-slate-600">·</span>
-                        {coeurMatchesForDay.length} match{coeurMatchesForDay.length > 1 ? "s" : ""}
-                      </span>
-                    </div>
+                  {/* "1 match" n'apprenait rien : le club de coeur joue une
+                      fois par journee, la valeur ne changera jamais. Remplace
+                      par domicile/exterieur, qui dit dans quel ordre lire la
+                      confrontation et compte vraiment pour pronostiquer.
 
-                    <button
-                      className="tap flex items-center gap-2 rounded-xl border px-4 py-2.5 font-display text-xs font-bold transition-all shadow-lg group"
-                      style={{
-                        borderColor: withAlpha(theme.primary, 0.4),
-                        backgroundColor: theme.button.background,
-                        color: theme.button.text,
-                        boxShadow: theme.button.shadow,
-                      }}
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.backgroundColor = theme.button.hoverBackground)
-                      }
-                      onMouseLeave={(e) =>
-                        (e.currentTarget.style.backgroundColor = theme.button.background)
-                      }
-                    >
-                      <Calendar size={14} className="group-hover:scale-110 transition-transform" />
-                      Calendrier
-                    </button>
+                      Le bouton "Calendrier" qui vivait ici a ete retire : il
+                      n'avait AUCUN onClick. Style, survol, ombre portee — mais
+                      cliquer dessus ne declenchait rien. C'etait l'element le
+                      plus voyant du bloc, devant les cases de score qui sont
+                      l'action reelle. */}
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold uppercase tracking-wide text-slate-200">
+                      Journée {selectedMatchday?.number ?? "—"}
+                    </span>
+                    {(() => {
+                      const coeurMatch = coeurMatchesForDay[0];
+                      if (!coeurMatch || !favoriteTeamId) return null;
+                      const atHome = String(coeurMatch.home_team_id) === String(favoriteTeamId);
+                      return (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span
+                            className="rounded-full border px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider"
+                            style={{
+                              borderColor: withAlpha(theme.primary, 0.4),
+                              color: theme.primary,
+                            }}
+                          >
+                            {atHome ? "À domicile" : "À l'extérieur"}
+                          </span>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
