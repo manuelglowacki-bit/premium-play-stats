@@ -10,7 +10,6 @@ import {
 import { AppShell } from "@/components/prono/AppShell";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
-import { matchday as currentMatchday } from "@/lib/prono-data";
 import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLevel";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
@@ -147,6 +146,7 @@ function ClassementPage() {
   const [participationTotalByUser, setParticipationTotalByUser] = useState<Record<string, number>>({});
   const [playedMatchdaysByUser, setPlayedMatchdaysByUser] = useState<Record<string, number>>({});
   const [finishedMatchdayCount, setFinishedMatchdayCount] = useState(0);
+  const [latestMatchdayNumber, setLatestMatchdayNumber] = useState<number | null>(null);
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
   const [previousRankByUser, setPreviousRankByUser] = useState<Record<string, number>>({});
   // Liste des journées Ligue 1 de la saison (id + numéro) — sert uniquement au
@@ -265,6 +265,7 @@ function ClassementPage() {
             setRegularitySuccessByUser({});
             setPlayedMatchdaysByUser({});
             setFinishedMatchdayCount(0);
+            setLatestMatchdayNumber(null);
             setBestMatchday(null);
             setPreviousRankByUser({});
           }
@@ -669,6 +670,7 @@ function ClassementPage() {
           setParticipationTotalByUser(participationTotals);
           setPlayedMatchdaysByUser(playedMatchdaysByUser);
           setFinishedMatchdayCount(finishedNumbers.length);
+          setLatestMatchdayNumber(latestFinishedNumber);
           setBestMatchday(topMatchday);
           setCareerStatsByUser(Object.fromEntries(careerByUser));
           setPreviousRankByUser(previousRanks);
@@ -722,6 +724,7 @@ function ClassementPage() {
           setRegularitySuccessByUser({});
           setPlayedMatchdaysByUser({});
           setFinishedMatchdayCount(0);
+          setLatestMatchdayNumber(null);
           setBestMatchday(null);
           setCareerStatsByUser({});
           setPreviousRankByUser({});
@@ -828,7 +831,9 @@ function ClassementPage() {
             Classement
           </h1>
           <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[10px] font-bold uppercase tracking-[0.16em] sm:text-xs">
-            <span className="text-emerald-300">{currentMatchday.label}</span>
+            <span className="text-emerald-300">
+              {latestMatchdayNumber ? `Journée ${latestMatchdayNumber}` : "Avant la 1re journée"}
+            </span>
             <span className="text-slate-700">•</span>
             <span className="text-slate-300">Saison {season}</span>
           </div>
@@ -942,6 +947,14 @@ function ClassementPage() {
                     const leaderPoints = list[0]?.points ?? 0;
                     const pointsGap = Math.max(0, leaderPoints - p.points);
 
+                    // Zone rouge : les 3 derniers, teinte de plus en plus
+                    // marquee vers la derniere place. Desactivee sur les
+                    // toutes petites ligues pour ne pas colorer le podium.
+                    const dangerLevel =
+                      totalPlayers > 6 && p.rank > totalPlayers - 3
+                        ? 3 - (totalPlayers - p.rank)
+                        : 0;
+
                     const topTone =
                       p.rank === 1
                         ? "border-amber-200/95 from-amber-400/[0.44] via-[#173451]/78 to-[#081523]/88 shadow-[0_0_58px_rgba(245,158,11,.38),inset_0_0_38px_rgba(245,158,11,.16)]"
@@ -949,15 +962,21 @@ function ClassementPage() {
                           ? "border-white/95 from-white/[0.38] via-[#30445b]/78 to-[#0a1624]/88 shadow-[0_0_54px_rgba(226,232,240,.34),inset_0_0_34px_rgba(226,232,240,.13)]"
                           : p.rank === 3
                             ? "border-orange-200/95 from-orange-400/[0.42] via-[#3a2b2b]/78 to-[#0c1723]/88 shadow-[0_0_56px_rgba(249,115,22,.36),inset_0_0_36px_rgba(249,115,22,.14)]"
-                            : p.rank === totalPlayers && totalPlayers > 3
-                              ? "border-rose-300/25 from-[#1b1220]/92 via-[#12101f]/94 to-[#0a0c17]/96"
-                              : "border-white/[0.09] from-[#102238]/92 via-[#0c1b2c]/94 to-[#081421]/96";
+                            : dangerLevel === 3
+                              ? "border-rose-300/45 from-rose-500/[0.17] via-[#1a1020]/94 to-[#0a0c17]/96 shadow-[0_0_30px_rgba(244,63,94,.12)]"
+                              : dangerLevel === 2
+                                ? "border-rose-300/28 from-rose-500/[0.10] via-[#151223]/94 to-[#090d18]/96"
+                                : dangerLevel === 1
+                                  ? "border-rose-300/16 from-rose-500/[0.05] via-[#121527]/94 to-[#081119]/96"
+                                  : "border-white/[0.09] from-[#102238]/92 via-[#0c1b2c]/94 to-[#081421]/96";
 
                     const rankTone =
                       p.rank === 1 ? "text-amber-100" :
                       p.rank === 2 ? "text-slate-100" :
                       p.rank === 3 ? "text-orange-100" :
-                      p.rank === totalPlayers && totalPlayers > 3 ? "text-rose-200/80" :
+                      dangerLevel === 3 ? "text-rose-100" :
+                      dangerLevel === 2 ? "text-rose-200/85" :
+                      dangerLevel === 1 ? "text-rose-200/65" :
                       "text-slate-100";
 
                     const pointTone =
@@ -1119,6 +1138,11 @@ function ClassementPage() {
                 return list.map((p) => {
                   const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
                   const isMe = p.id === user?.id;
+                  // Zone rouge : identique a la vue bureau.
+                  const dangerLevel =
+                    totalPlayers > 6 && p.rank > totalPlayers - 3
+                      ? 3 - (totalPlayers - p.rank)
+                      : 0;
                   const previousRank = previousRankByUser[p.id];
                   const rankDelta = previousRank != null ? previousRank - p.rank : 0;
                   const hasPreviousRanking = Object.keys(previousRankByUser).length > 0;
@@ -1139,9 +1163,13 @@ function ClassementPage() {
                         ? "border-slate-100/80 from-white/[0.20] via-[#17283a]/90 to-[#091521]/95 shadow-[0_0_32px_rgba(226,232,240,.15)]"
                         : p.rank === 3
                           ? "border-orange-300/85 from-orange-400/[0.23] via-[#1e2634]/90 to-[#0a1621]/95 shadow-[0_0_32px_rgba(249,115,22,.17)]"
-                          : p.rank === totalPlayers && totalPlayers > 3
-                            ? "border-rose-300/25 from-[#1b1220]/92 to-[#0a0c17]/96"
-                            : "border-white/[0.09] from-[#102238]/92 to-[#081522]/96";
+                          : dangerLevel === 3
+                            ? "border-rose-300/45 from-rose-500/[0.17] to-[#0a0c17]/96 shadow-[0_0_26px_rgba(244,63,94,.12)]"
+                            : dangerLevel === 2
+                              ? "border-rose-300/28 from-rose-500/[0.10] to-[#090d18]/96"
+                              : dangerLevel === 1
+                                ? "border-rose-300/16 from-rose-500/[0.05] to-[#081119]/96"
+                                : "border-white/[0.09] from-[#102238]/92 to-[#081522]/96";
 
                   const rankTone =
                     p.rank === 1
@@ -1150,9 +1178,13 @@ function ClassementPage() {
                         ? "text-slate-100"
                         : p.rank === 3
                           ? "text-orange-100"
-                          : p.rank === totalPlayers && totalPlayers > 3
-                            ? "text-rose-200/80"
-                            : "text-slate-100";
+                          : dangerLevel === 3
+                            ? "text-rose-100"
+                            : dangerLevel === 2
+                              ? "text-rose-200/85"
+                              : dangerLevel === 1
+                                ? "text-rose-200/65"
+                                : "text-slate-100";
 
                   const pointTone =
                     p.rank === 1
@@ -1195,9 +1227,13 @@ function ClassementPage() {
                           ) : (
                             <div
                               className={`flex h-10 w-10 items-center justify-center rounded-xl border bg-black/20 font-mono text-[10px] font-black ${
-                                p.rank === totalPlayers && totalPlayers > 3
-                                  ? "border-rose-300/25"
-                                  : "border-white/10"
+                                dangerLevel === 3
+                                  ? "border-rose-300/45"
+                                  : dangerLevel === 2
+                                    ? "border-rose-300/28"
+                                    : dangerLevel === 1
+                                      ? "border-rose-300/16"
+                                      : "border-white/10"
                               } ${rankTone}`}
                             >
                               {String(p.rank).padStart(2, "0")}
