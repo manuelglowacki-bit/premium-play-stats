@@ -4,7 +4,6 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
-  Crown,
   Minus,
   Target,
   Trophy,
@@ -935,10 +934,6 @@ function ClassementPage() {
                     });
                   const list = rankPlayers(ranked as any) as RankedPlayer[];
                   const totalDays = finishedMatchdayCount;
-                  const bestGoodPicks = list.reduce(
-                    (max, player) => Math.max(max, player.regularitySuccess ?? 0),
-                    0,
-                  );
                   return list.map((p) => {
                     const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
                     const isMe = p.id === user?.id;
@@ -997,10 +992,8 @@ function ClassementPage() {
 
                     // Bons pronos = pronostics ayant rapporte au moins 1 point.
                     // Valeur deja produite par computeLeagueStats.
-                    const isBestGoodPicks = bestGoodPicks > 0 && p.regularitySuccess === bestGoodPicks;
-                    const goodPicksTone = isBestGoodPicks
-                      ? "border-amber-300/60 bg-amber-300/[0.12] text-amber-200 shadow-[0_0_18px_rgba(245,158,11,.18)]"
-                      : p.regularitySuccess > 0
+                    const goodPicksTone =
+                      p.regularitySuccess > 0
                         ? "border-emerald-300/30 bg-emerald-300/[0.07] text-emerald-200"
                         : "border-white/[0.08] bg-white/[0.025] text-slate-500";
 
@@ -1106,7 +1099,7 @@ function ClassementPage() {
 
                           <div className="flex items-center justify-center">
                             <div className={`flex min-w-[72px] h-8 items-center justify-center gap-1.5 rounded-full border px-2 transition-transform duration-300 group-hover:scale-105 ${goodPicksTone}`}>
-                              {isBestGoodPicks ? <Crown className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                              <Check className="h-3.5 w-3.5" />
                               <span className="font-display text-sm font-black">{p.regularitySuccess}</span>
                               <span className="font-mono text-[9px] text-slate-500">/{p.predictionsMade}</span>
                             </div>
@@ -1143,10 +1136,6 @@ function ClassementPage() {
 
                 const list = rankPlayers(ranked as any) as RankedPlayer[];
                 const totalDays = finishedMatchdayCount;
-                const bestGoodPicks = list.reduce(
-                  (max, player) => Math.max(max, player.regularitySuccess ?? 0),
-                  0,
-                );
 
                 return list.map((p) => {
                   const team = p.favorite_team_id ? teamsById[p.favorite_team_id] : undefined;
@@ -1208,10 +1197,8 @@ function ClassementPage() {
                           ? "text-orange-300"
                           : "text-white";
 
-                  const isBestGoodPicks = bestGoodPicks > 0 && p.regularitySuccess === bestGoodPicks;
-                  const goodPicksTone = isBestGoodPicks
-                    ? "border-amber-300/60 bg-amber-300/[0.12] text-amber-200"
-                    : p.regularitySuccess > 0
+                  const goodPicksTone =
+                    p.regularitySuccess > 0
                       ? "border-emerald-300/30 bg-emerald-300/[0.07] text-emerald-200"
                       : "border-white/[0.08] bg-white/[0.025] text-slate-400";
 
@@ -1365,7 +1352,7 @@ function ClassementPage() {
                           <div
                             className={`flex h-7 min-w-8 items-center justify-center gap-1 rounded-full border px-2 ${goodPicksTone}`}
                           >
-                            {isBestGoodPicks ? <Crown className="h-2.5 w-2.5" /> : <Check className="h-2.5 w-2.5" />}
+                            <Check className="h-2.5 w-2.5" />
                             <span className="font-display text-[11px] font-black">{p.regularitySuccess}</span>
                           </div>
                           <div className="mt-0.5 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-500">
