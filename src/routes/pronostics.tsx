@@ -1,5 +1,5 @@
 ﻿import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -2105,26 +2105,40 @@ function PronosticsPage() {
 
               {!dataLoading &&
                 !loadError &&
-                mainMatches.map((match) => {
+                mainMatches.map((match, matchIndex) => {
                   const home = teamOf(teamsById, match.home_team_id);
                   const away = teamOf(teamsById, match.away_team_id);
                   const current = picks[match.id];
                   const { dayName, dayDate, time } = formatKickoff(match.kickoff);
 
+                  // La colonne de gauche repetait "SAM 29 AOÛT" sur quatre
+                  // lignes d'affilee. Le jour passe en intertitre, la ligne ne
+                  // garde que l'heure — la seule chose qui change d'un match a
+                  // l'autre au sein d'une meme journee.
+                  const previous = matchIndex > 0 ? mainMatches[matchIndex - 1] : null;
+                  const previousDay = previous ? formatKickoff(previous.kickoff) : null;
+                  const newDay =
+                    !previousDay ||
+                    previousDay.dayName !== dayName ||
+                    previousDay.dayDate !== dayDate;
+
                   return (
-                    <div key={match.id} className="relative group z-10">
+                    <Fragment key={match.id}>
+                    {newDay && (
+                      <div className="relative z-10 flex items-center gap-3 pt-2">
+                        <span className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-400/90">
+                          {dayName} {dayDate}
+                        </span>
+                        <span className="h-px flex-1 bg-white/[.07]" />
+                      </div>
+                    )}
+                    <div className="relative group z-10">
                       <div className="relative overflow-hidden rounded-[20px] bg-white/[0.02] backdrop-blur-xl border border-white/5 p-4 transition-all duration-500 hover:-translate-y-1 hover:bg-[#081221]/80 hover:border-emerald-400/50 hover:shadow-[0_15px_40px_rgba(52,211,153,0.15)]">
                         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
                         <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
-                          <div className="flex flex-col items-center justify-center w-[72px] shrink-0 border-r border-emerald-500/25 pr-4">
-                            <span className="font-mono text-[11px] text-slate-400 font-bold uppercase tracking-widest">
-                              {dayName}
-                            </span>
-                            <span className="font-mono text-[11px] text-slate-300 font-bold uppercase tracking-wider whitespace-nowrap">
-                              {dayDate}
-                            </span>
-                            <span className="font-mono text-sm text-emerald-400 font-black mt-1">
+                          <div className="flex w-[56px] shrink-0 flex-col items-center justify-center border-r border-emerald-500/25 pr-4">
+                            <span className="font-mono text-sm font-black text-emerald-400">
                               {time}
                             </span>
                           </div>
@@ -2217,6 +2231,7 @@ function PronosticsPage() {
                         </div>
                       </div>
                     </div>
+                    </Fragment>
                   );
                 })}
             </div>
