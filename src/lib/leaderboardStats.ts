@@ -75,6 +75,19 @@ export type LeagueStats = {
   predictionsCountByUser: Record<string, number>;
   exactScoresByUser: Record<string, number>;
   regularitySuccessByUser: Record<string, number>;
+  /** PARTICIPATION — combien de matchs Ligue 1 le joueur a effectivement
+   * pronostiqués, sur tous ceux déjà joués depuis le début de la saison.
+   * C'est le sens attendu de "régularité" : est-ce qu'il dépose ses
+   * pronostics à chaque journée, ou en saute-t-il ?
+   * À ne pas confondre avec regularitySuccessByUser, qui compte les
+   * pronostics AYANT RAPPORTÉ des points, et qui sert au départage du
+   * classement (voir rankPlayers). */
+  ligue1PredictionsByUser: Record<string, number>;
+  /** Dénominateur commun de la participation : nombre de matchs Ligue 1
+   * réellement jouables (score connu, match commencé). Les matchs bonus en
+   * sont exclus des deux côtés — un seul compte par journée et il reste
+   * facultatif, l'inclure fausserait le taux. */
+  ligue1MatchCount: number;
   /** Points cumulés par journée (matchday_id), tous joueurs confondus —
    * sert à la stat "Meilleure journée" du Classement. */
   pointsByMatchday: Record<string, number>;
@@ -166,6 +179,7 @@ export function computeLeagueStats(
   const predictionsCount: Record<string, number> = {};
   const exactScores: Record<string, number> = {};
   const regularitySuccess: Record<string, number> = {};
+  const ligue1Predictions: Record<string, number> = {};
   const pointsByMatchday: Record<string, number> = {};
   const pointsByUserAndMatchday: Record<string, Record<string, number>> = {};
   const pointsByPredictionKey: Record<string, number> = {};
@@ -182,6 +196,7 @@ export function computeLeagueStats(
     predictionsCount[profile.id] = 0;
     exactScores[profile.id] = 0;
     regularitySuccess[profile.id] = 0;
+    ligue1Predictions[profile.id] = 0;
   });
 
   const profileById = new Map(profiles.map((p) => [p.id, p]));
@@ -272,6 +287,9 @@ export function computeLeagueStats(
     });
 
     predictionsCount[userId] = (predictionsCount[userId] ?? 0) + 1;
+    // Participation : ce pronostic Ligue 1 a bien été déposé, qu'il rapporte
+    // des points ou non. C'est toute la différence avec regularitySuccess.
+    ligue1Predictions[userId] = (ligue1Predictions[userId] ?? 0) + 1;
     pointsByPredictionKey[`${userId}:${matchId}`] = pts;
     const matchDayId = String(match.matchday_id);
 
@@ -292,6 +310,12 @@ export function computeLeagueStats(
     predictionsCountByUser: predictionsCount,
     exactScoresByUser: exactScores,
     regularitySuccessByUser: regularitySuccess,
+    ligue1PredictionsByUser: ligue1Predictions,
+    // Dénominateur : les matchs Ligue 1 réellement scorables, c'est-à-dire
+    // exactement ceux sur lesquels un pronostic pouvait rapporter.
+    ligue1MatchCount: ligue1Matches.filter(
+      (m) => m.home_score != null && m.away_score != null && m.finished === true,
+    ).length,
     pointsByMatchday,
     pointsByUserAndMatchday,
     pointsByPredictionKey,

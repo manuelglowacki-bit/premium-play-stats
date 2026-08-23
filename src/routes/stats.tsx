@@ -112,6 +112,9 @@ type StatsState = {
   exactScores: number;
   totalPredictions: number;
   successfulPredictions: number;
+  /** Participation : pronostics Ligue 1 déposés / matchs Ligue 1 déjà joués. */
+  predictionsMade: number;
+  matchesPlayable: number;
   bestDay: number;
   bestDayLabel: string;
   dayStats: DayStat[];
@@ -141,6 +144,8 @@ const EMPTY_STATS: StatsState = {
   exactScores: 0,
   totalPredictions: 0,
   successfulPredictions: 0,
+  predictionsMade: 0,
+  matchesPlayable: 0,
   bestDay: 0,
   bestDayLabel: "—",
   dayStats: [],
@@ -515,6 +520,10 @@ function StatsPage() {
       const exactScores = leagueStats.exactScoresByUser[user.id] ?? 0;
       const totalPredictions = leagueStats.predictionsCountByUser[user.id] ?? 0;
       const successfulPredictions = leagueStats.regularitySuccessByUser[user.id] ?? 0;
+      // Participation : ce que "Régularité" doit mesurer — combien de matchs
+      // Ligue 1 déjà joués ce joueur a effectivement pronostiqués.
+      const predictionsMade = leagueStats.ligue1PredictionsByUser[user.id] ?? 0;
+      const matchesPlayable = leagueStats.ligue1MatchCount;
 
       // ------------------------------------------------------------------
       // RÉPARTITION PAR JOURNÉE (graphique, meilleure journée, bonus/standard/
@@ -618,6 +627,8 @@ function StatsPage() {
         exactScores,
         totalPredictions,
         successfulPredictions,
+        predictionsMade,
+        matchesPlayable,
         bestDay: bestDayEntry?.points || 0,
         bestDayLabel: bestDayEntry?.day || "—",
         dayStats,
@@ -755,9 +766,13 @@ function StatsPage() {
     totalPointsForDistribution,
   ]);
 
-  const successRatePct = stats.totalPredictions
+  // RÉGULARITÉ = PARTICIPATION, pas réussite : combien de matchs Ligue 1
+  // déjà joués ce joueur a pronostiqués depuis le début de la saison.
+  // L'ancien calcul (pronostics ayant rapporté des points / pronostics joués)
+  // mesurait sa précision, ce que la carte "Précision" affiche déjà à côté.
+  const successRatePct = stats.matchesPlayable
     ? Math.round(
-        (stats.successfulPredictions / stats.totalPredictions) * 100,
+        (stats.predictionsMade / stats.matchesPlayable) * 100,
       )
     : 0;
 
@@ -1083,7 +1098,7 @@ function StatsPage() {
                   </div>
                 </div>
                 <div className="mt-2 text-center text-[10px] font-semibold text-white">
-                  {stats.successfulPredictions} réussis / {stats.totalPredictions} joués
+                  {stats.predictionsMade} pronostiqués / {stats.matchesPlayable} matchs
                 </div>
               </div>
 

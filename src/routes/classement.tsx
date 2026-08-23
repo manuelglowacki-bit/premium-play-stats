@@ -49,6 +49,9 @@ type RankedPlayer = PlayerProfile & {
   predictionsCount: number;
   /** Nombre de pronostics ayant rapporté au moins 1 point — sert au calcul du pourcentage de régularité. */
   regularitySuccess: number;
+  /** Participation : pronostics Ligue 1 déposés / matchs Ligue 1 déjà joués. */
+  predictionsMade?: number;
+  matchesPlayable?: number;
   /** Nombre de journées Ligue 1 sur lesquelles le joueur a effectivement pronostiqué. */
   playedMatchdays: number;
   careerLevel: number;
@@ -136,6 +139,11 @@ function ClassementPage() {
   // depuis Supabase (voir load() ci-dessous), jamais de valeur fictive.
   const [exactScoresByUser, setExactScoresByUser] = useState<Record<string, number>>({});
   const [regularitySuccessByUser, setRegularitySuccessByUser] = useState<Record<string, number>>({});
+  // PARTICIPATION — pronostics Ligue 1 deposes / matchs Ligue 1 deja joues.
+  // C'est ce que la colonne "Régularité" affiche desormais : est-ce que le
+  // joueur depose ses pronostics a chaque journee, ou en saute-t-il ?
+  const [ligue1PredictionsByUser, setLigue1PredictionsByUser] = useState<Record<string, number>>({});
+  const [ligue1MatchCount, setLigue1MatchCount] = useState(0);
   const [playedMatchdaysByUser, setPlayedMatchdaysByUser] = useState<Record<string, number>>({});
   const [finishedMatchdayCount, setFinishedMatchdayCount] = useState(0);
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
@@ -434,7 +442,7 @@ function ClassementPage() {
         const scorableLigue1Matches = markLiveMatchesScorable(liveMatches);
         const scorableBonusMatches = markLiveMatchesScorable(bonusMatches);
 
-        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, pointsByMatchday, pointsByPredictionKey } =
+        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, ligue1PredictionsByUser: ligue1Predictions, ligue1MatchCount: ligue1Total, pointsByMatchday, pointsByPredictionKey } =
           computeLeagueStats(scorableLigue1Matches, scorableBonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
             seasonByMatchdayId: seasonByMatchdayIdObj,
             favoriteTeamBySeason,
@@ -656,6 +664,8 @@ function ClassementPage() {
           setPredictionsCountByUser(predictionsCount);
           setExactScoresByUser(exactScores);
           setRegularitySuccessByUser(regularitySuccess);
+          setLigue1PredictionsByUser(ligue1Predictions);
+          setLigue1MatchCount(ligue1Total);
           setPlayedMatchdaysByUser(playedMatchdaysByUser);
           setFinishedMatchdayCount(finishedNumbers.length);
           setBestMatchday(topMatchday);
@@ -916,6 +926,8 @@ function ClassementPage() {
                         exactScores: exactScoresByUser[p.id] ?? 0,
                         predictionsCount: predictionsCountByUser[p.id] ?? 0,
                         regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
+                        predictionsMade: ligue1PredictionsByUser[p.id] ?? 0,
+                        matchesPlayable: ligue1MatchCount,
                         playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
                         careerLevel: result.level,
                         careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
@@ -1049,8 +1061,13 @@ function ClassementPage() {
 
                           <div>
                             {(() => {
-                              const regularityTotal = p.predictionsCount ?? 0;
-                              const regularitySuccess = p.regularitySuccess ?? 0;
+                              // RÉGULARITÉ = PARTICIPATION : pronostics déposés
+                              // sur les matchs Ligue 1 déjà joués depuis le
+                              // début de la saison. Auparavant on affichait un
+                              // taux de RÉUSSITE (pronostics ayant rapporté des
+                              // points), ce qui n'est pas le sens du mot.
+                              const regularityTotal = p.matchesPlayable ?? 0;
+                              const regularitySuccess = p.predictionsMade ?? 0;
                               const regularityPct = regularityTotal > 0
                                 ? Math.round((regularitySuccess / regularityTotal) * 100)
                                 : 0;
@@ -1107,6 +1124,8 @@ function ClassementPage() {
                     exactScores: exactScoresByUser[p.id] ?? 0,
                     predictionsCount: predictionsCountByUser[p.id] ?? 0,
                     regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
+                    predictionsMade: ligue1PredictionsByUser[p.id] ?? 0,
+                    matchesPlayable: ligue1MatchCount,
                     playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
                     careerLevel: result.level,
                     careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
@@ -1294,8 +1313,10 @@ function ClassementPage() {
                         </div>
 
                         {(() => {
-                          const regularityTotal = p.predictionsCount ?? 0;
-                          const regularitySuccess = p.regularitySuccess ?? 0;
+                          // Même définition que la vue bureau ci-dessus :
+                          // participation, pas réussite.
+                          const regularityTotal = p.matchesPlayable ?? 0;
+                          const regularitySuccess = p.predictionsMade ?? 0;
                           const regularityPct = regularityTotal > 0
                             ? Math.round((regularitySuccess / regularityTotal) * 100)
                             : 0;
