@@ -1,5 +1,5 @@
 ﻿import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useAuth } from "@/context/AuthContext";
@@ -13,7 +13,6 @@ import {
   Heart,
   Check,
   ChevronRight,
-  Crown,
   Sparkles,
   Star
 } from "lucide-react";
@@ -21,6 +20,7 @@ import { CountdownBlocks } from "@/components/prono/Countdown";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES } from "@/lib/careerLevel";
 import { rankPlayers } from "@/lib/leaderboardRanking";
+import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { fetchAllRows } from "@/lib/supabaseFetchAll";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
@@ -64,9 +64,16 @@ function IndexPage() {
     avgPoints: 0,
     bestDay: "-",
     bestDayPoints: 0,
+    // Régularité = participation : rencontres pronostiquées sur celles que ce
+    // joueur pouvait pronostiquer (voir leaderboardStats.ts).
+    participation: 0,
+    participationTotal: 0,
   });
   const [currentMatchday, setCurrentMatchday] = useState("J1");
   const [potAmount, setPotAmount] = useState(0);
+  // Gains affiches a cote du classement : meme regle 50/30/20 que la page
+  // Classement (src/lib/prizePool.ts), appliquee a la cagnotte reelle.
+  const homePrizeByRank = useMemo(() => computePrizeByRank(potAmount), [potAmount]);
   const [careerLevel, setCareerLevel] = useState(1);
   const homeRequestSeq = useRef(0);
 
@@ -416,6 +423,8 @@ setLeaderboard(rankedRankings);
             avgPoints: daysPlayedCount ? Number((points / daysPlayedCount).toFixed(1)) : 0,
             bestDay,
             bestDayPoints,
+            participation: rankingParticipationByUser[user.id] ?? 0,
+            participationTotal: rankingParticipationTotalByUser[user.id] ?? 0,
           });
         }
 
@@ -883,58 +892,91 @@ setLeaderboard(rankedRankings);
               </Link>
             </div>
 
-            {/* pt-12 (au lieu de pt-10) : laisse la place à la couronne du 1er,
-                qui dépasse désormais au-dessus de sa carte. */}
-            <div className="relative z-10 grid grid-cols-3 items-end gap-2.5 pb-2 pt-12 text-center sm:gap-3">
-              {([0, 1, 2] as number[]).map((index) => {
-                const player = leaderboard[index];
+            {/* Podium en cartes remplacé par les 5 premiers, dans le même
+                ordre de lecture que la page Classement : place, joueur,
+                points, gain. Trois cartes empilées disaient moins que cinq
+                lignes, et n'affichaient pas les gains. */}
+            <div className="relative z-10 space-y-1.5">
+              <div className="grid grid-cols-[28px_minmax(0,1fr)_52px_64px] items-center gap-2 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500">
+                <span>#</span>
+                <span>Joueur</span>
+                <span className="text-right">Pts</span>
+                <span className="text-right">Gain</span>
+              </div>
+
+              {leaderboard.slice(0, 5).map((player, index) => {
                 const place = index + 1;
-                const isFirst = place === 1;
-                const height = isFirst ? "h-52 -translate-y-6" : place === 2 ? "h-40" : "h-32";
-                const positionOrder =
-                  place === 2 ? "order-1" :
-                  place === 1 ? "order-2" :
-                  "order-3";
+                const prize = homePrizeByRank[place] ?? 0;
+                const isMe = myStats.rank === place;
+
                 return (
                   <div
                     key={player?.user_id || `place-${place}`}
-                    className={`dash-fade-up group relative ${positionOrder} rounded-2xl border ${isFirst ? "border-amber-500/60 shadow-[0_0_35px_rgba(245,158,11,0.25)]" : "border-slate-700/80"} p-3 flex flex-col items-center justify-end pb-5 sm:p-4 sm:pb-6 ${height} transition-all hover:scale-105`}
-                    style={{ animationDelay: `${200 + index * 90}ms` }}
+                    className={`dash-fade-up grid grid-cols-[28px_minmax(0,1fr)_52px_64px] items-center gap-2 rounded-xl border px-2 py-2 transition-colors ${
+                      isMe
+                        ? "border-emerald-400/30 bg-emerald-400/[.07]"
+                        : place === 1
+                          ? "border-amber-500/30 bg-amber-500/[.06]"
+                          : "border-slate-800/70 bg-slate-900/40 hover:bg-slate-900/70"
+                    }`}
+                    style={{ animationDelay: `${180 + index * 60}ms` }}
                   >
-                    {isFirst && (
-                      <Crown
-                        size={22}
-                        className="absolute -top-7 left-1/2 -translate-x-1/2 text-amber-400 drop-shadow-[0_0_10px_rgba(245,158,11,0.7)]"
-                        strokeWidth={2}
-                        fill="currentColor"
-                      />
-                    )}
-                    <div className="absolute inset-0 rounded-2xl overflow-hidden">
-                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat" style={{ backgroundImage: `url('/images/podium/podium-${place}.png')` }} />
-                      <div className="absolute inset-0 bg-black/50" />
-                    </div>
-                    <span className={`absolute -top-3 size-6 rounded-full ${isFirst ? "bg-amber-400 text-slate-950" : place === 2 ? "bg-slate-700 text-white" : "bg-amber-900/60 text-amber-200"} font-mono font-bold text-[10px] grid place-items-center shadow z-10`}>
-                      #{place}
+                    <span
+                      className={`grid size-6 place-items-center rounded-lg font-mono text-[10px] font-black ${
+                        place === 1
+                          ? "bg-amber-400 text-slate-950"
+                          : place === 2
+                            ? "bg-slate-400 text-slate-950"
+                            : place === 3
+                              ? "bg-amber-900/70 text-amber-200"
+                              : "bg-slate-800 text-slate-400"
+                      }`}
+                    >
+                      {place}
                     </span>
-                    <span className={`relative z-10 font-mono text-[11px] font-semibold uppercase tracking-wider mb-1 ${isFirst ? "text-amber-400 font-bold" : "text-slate-300"}`}>
-                      {isFirst ? "1er" : `${place}ème`}
-                    </span>
-                    {player?.avatar_url ? (
-                      <img
-                        src={player.avatar_url}
-                        alt=""
-                        className={`relative z-10 mb-1 rounded-full object-cover border ${isFirst ? "size-11 border-amber-400/70 shadow-[0_0_12px_rgba(245,158,11,0.5)] sm:size-12" : "size-8 border-white/20 sm:size-9"}`}
-                      />
-                    ) : null}
-                    <b className="relative z-10 font-display text-sm text-white tracking-tight truncate w-full sm:text-base md:text-lg">
-                      {player?.name || "En attente"}
-                    </b>
-                    <div className={`relative z-10 mt-2 inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-0.5 rounded-full ${isFirst ? "bg-amber-500/10 border border-amber-500/30 text-amber-300" : "bg-slate-800/90 border border-slate-700 text-slate-300"} font-mono text-xs font-bold sm:text-sm`}>
-                      {Number(player?.total_points || 0)} pts
+
+                    <div className="flex min-w-0 items-center gap-2">
+                      {player?.avatar_url ? (
+                        <img
+                          src={player.avatar_url}
+                          alt=""
+                          className="size-7 shrink-0 rounded-full border border-white/10 object-cover"
+                        />
+                      ) : (
+                        <span className="grid size-7 shrink-0 place-items-center rounded-full border border-white/10 bg-slate-800 font-mono text-[9px] font-black text-slate-300">
+                          {String(player?.name || "?").slice(0, 2).toUpperCase()}
+                        </span>
+                      )}
+                      <span className="truncate font-display text-sm font-bold text-white">
+                        {player?.name || "En attente"}
+                      </span>
+                      {isMe && (
+                        <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[8px] font-black uppercase text-emerald-300">
+                          Toi
+                        </span>
+                      )}
                     </div>
+
+                    <span className="text-right font-display text-base font-black text-white">
+                      {Number(player?.total_points || 0)}
+                    </span>
+
+                    <span
+                      className={`text-right font-mono text-xs font-bold ${
+                        prize > 0 ? "text-amber-300" : "text-slate-700"
+                      }`}
+                    >
+                      {prize > 0 ? `${prize} €` : "—"}
+                    </span>
                   </div>
                 );
               })}
+
+              {!leaderboard.length && (
+                <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 px-3 py-6 text-center font-mono text-[11px] text-slate-500">
+                  Le classement apparaîtra dès les premiers résultats.
+                </div>
+              )}
             </div>
 
             <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between font-mono">
@@ -990,7 +1032,12 @@ setLeaderboard(rankedRankings);
                 >
                   {myStats.exactScores}
                 </strong>
-                <span className="relative text-[11px] text-slate-300 block mt-1">{myStats.totalPronos ? Math.round((myStats.exactScores / myStats.totalPronos) * 100) : 0}% des pronos</span>
+                {/* "0% des pronos" ne dit rien quand le compteur est a zero. */}
+                <span className="relative text-[11px] text-slate-300 block mt-1">
+                  {myStats.exactScores > 0
+                    ? `${Math.round((myStats.exactScores / Math.max(myStats.totalPronos, 1)) * 100)}% des pronos`
+                    : "Pas encore trouvé"}
+                </span>
               </div>
 
               <div
@@ -998,14 +1045,24 @@ setLeaderboard(rankedRankings);
                 style={{ backgroundImage: "url('/images/stats/stat-points-moyens.png')" }}
               >
                 <div className="absolute inset-0 bg-black/45" />
-                <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Points moyens</span>
+                {/* "Points moyens" affichait le meme chiffre que "Meilleure
+                    journee" tant qu'une seule journee etait jouee. Remplace par
+                    la REGULARITE, qui manquait a l'Accueil alors qu'elle sert
+                    desormais a departager le classement. */}
+                <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Régularité</span>
                 <strong
                   className="relative block font-display text-[28px] text-white sm:text-3xl"
                   style={{ filter: "drop-shadow(0 0 14px rgba(252,211,77,.35))" }}
                 >
-                  {myStats.avgPoints}
+                  {myStats.participationTotal
+                    ? `${Math.round((myStats.participation / myStats.participationTotal) * 100)}%`
+                    : "—"}
                 </strong>
-                <span className="relative text-[11px] text-slate-300 block mt-1">Par journée</span>
+                <span className="relative text-[11px] text-slate-300 block mt-1">
+                  {myStats.participationTotal
+                    ? `${myStats.participation} sur ${myStats.participationTotal} matchs`
+                    : "Aucun match joué"}
+                </span>
               </div>
 
               <div

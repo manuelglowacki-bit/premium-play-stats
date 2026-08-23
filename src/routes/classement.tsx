@@ -14,6 +14,7 @@ import { matchday as currentMatchday } from "@/lib/prono-data";
 import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLevel";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
+import { computePrizeByRank } from "@/lib/prizePool";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/classement")({
@@ -802,16 +803,10 @@ function ClassementPage() {
   // Gains de fin de saison : 10 € par joueur.
   // Base 50/30/20, avec arrondi à la dizaine supérieure.
   // Le 3e reçoit le solde afin que le total reste exactement égal à la cagnotte.
+  // Règle de répartition extraite dans src/lib/prizePool.ts : l'Accueil
+  // affiche les mêmes montants sans recopier le calcul.
   const prizePool = totalPlayers * 10;
-  const roundUpToTen = (value: number) => Math.ceil(value / 10) * 10;
-  const prizeFirst = prizePool > 0 ? roundUpToTen(prizePool * 0.5) : 0;
-  const prizeSecond = prizePool > 0 ? roundUpToTen(prizePool * 0.3) : 0;
-  const prizeThird = Math.max(0, prizePool - prizeFirst - prizeSecond);
-  const prizeByRank: Record<number, number> = {
-    1: prizeFirst,
-    2: prizeSecond,
-    3: prizeThird,
-  };
+  const prizeByRank = computePrizeByRank(prizePool);
 
   return (
     <AppShell>
