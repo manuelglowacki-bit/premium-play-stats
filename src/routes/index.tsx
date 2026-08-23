@@ -75,7 +75,6 @@ function IndexPage() {
   // fois passee, il affichait 00 00 00 00 indefiniment, sous un libelle
   // "Prochaine journee · J1 • 21 aout 2026" lui aussi ecrit en dur.
   const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string; day: string } | null>(null);
-  const [liveMatchCount, setLiveMatchCount] = useState(0);
   const [potAmount, setPotAmount] = useState(0);
   // Gains affiches a cote du classement : meme regle 50/30/20 que la page
   // Classement (src/lib/prizePool.ts), appliquee a la cagnotte reelle.
@@ -229,19 +228,7 @@ function IndexPage() {
           setNextKickoff(null);
         }
 
-        // Match commence mais pas termine — meme test de statut que la
-        // selection de la derniere journee terminee, plus bas.
-        const isOver = (m: any) => {
-          const status = String(m?.status || "").toLowerCase();
-          return status === "finished" || status === "ft" || m?.finished === true;
-        };
 
-        setLiveMatchCount(
-          (reconciledMatches || []).filter((m: any) => {
-            const at = kickoffOf(m);
-            return at !== null && at <= now && !isOver(m);
-          }).length,
-        );
 
         const matchById = new Map(
           reconciledMatches.map((m: any) => [String(m.id), m]),
@@ -707,22 +694,11 @@ setLeaderboard(rankedRankings);
                 Une saison, un vainqueur
               </p>
 
-              {/* Trois etats reels, au lieu d'un compte a rebours fige a zero
-                  sur une date passee : matchs en cours, prochain coup d'envoi,
-                  ou journee terminee. */}
-              {liveMatchCount > 0 ? (
-                <div className="flex max-w-md items-center gap-3 rounded-2xl border border-red-500/25 bg-red-500/[.07] px-4 py-3">
-                  <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-400" />
-                  {/* Le titre dit deja que ca se joue : inutile de le repeter
-                      ici. On garde le decompte, qui lui apporte une info. */}
-                  <span className="font-display text-sm font-bold text-white">
-                    {liveMatchCount} match{liveMatchCount > 1 ? "s" : ""} en direct
-                  </span>
-                  <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-red-300">
-                    Les points bougent
-                  </span>
-                </div>
-              ) : nextKickoff ? (
+              {/* Compte a rebours vers le prochain coup d'envoi REEL, au lieu
+                  d'une date figee dans Countdown.tsx qui laissait 00 00 00 00
+                  a l'ecran. Le bandeau "N matchs en direct" a ete retire :
+                  l'information vit deja sur les pages Pronos et Classement. */}
+              {nextKickoff ? (
                 <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 px-4 py-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-400">
