@@ -74,7 +74,7 @@ function IndexPage() {
   // visait jusqu'ici une date figee dans Countdown.tsx (21 aout 2026) : une
   // fois passee, il affichait 00 00 00 00 indefiniment, sous un libelle
   // "Prochaine journee · J1 • 21 aout 2026" lui aussi ecrit en dur.
-  const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string } | null>(null);
+  const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string; day: string } | null>(null);
   const [liveMatchCount, setLiveMatchCount] = useState(0);
   const [potAmount, setPotAmount] = useState(0);
   // Gains affiches a cote du classement : meme regle 50/30/20 que la page
@@ -223,6 +223,7 @@ function IndexPage() {
           setNextKickoff({
             at: upcoming.at as number,
             label: [dayLabel, dateLabel].filter(Boolean).join(" • "),
+            day: dayLabel,
           });
         } else {
           setNextKickoff(null);
@@ -654,17 +655,18 @@ setLeaderboard(rankedRankings);
           <div
             role="img"
             aria-label="Ligue 1"
-            className="pointer-events-none absolute inset-0 block"
-            style={{
-              backgroundImage: "url('/logo-ligue1.png')",
-              backgroundSize: "cover",
-              backgroundPosition: "center 35%",
-              backgroundRepeat: "no-repeat",
-            }}
+            /* L'image fait 1774x887, soit un ratio 2:1. Depuis que le bandeau
+               a ete resserre, il est bien plus large que haut : en "cover",
+               le cadrage rognait le bas et coupait le mot LIGUE 1. En
+               "contain" cale a droite, le logo tient entier a cote du texte.
+               Sur mobile, ou le bandeau redevient haut et etroit, "cover"
+               reste preferable — un contain y reduirait l'image a une bande. */
+            className="pointer-events-none absolute inset-0 block bg-center bg-no-repeat bg-cover md:bg-contain md:bg-right"
+            style={{ backgroundImage: "url('/logo-ligue1.png')" }}
           />
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1322] from-0% via-[#0d1322]/70 via-40% to-[#0d1322]/10 to-90%"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1322] from-0% via-[#0d1322]/75 via-45% to-transparent to-80%"
           />
 
           <div className="relative z-10 grid gap-8 lg:grid-cols-[1fr_auto] items-center">
@@ -679,14 +681,22 @@ setLeaderboard(rankedRankings);
                 <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 SAISON 2026—2027 • LIGUE 1 MCDONALD'S
               </div>
+              {/* "Prédis les résultats de la Ligue 1" s'adressait a un
+                  visiteur a convaincre. Ici le joueur est deja inscrit et
+                  connecte : le titre lui dit plutot ou en est la competition,
+                  et reste assez court pour ne jamais se couper en deux. */}
               <h1
-                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[1.75rem] leading-[1.05] tracking-tight text-transparent sm:text-4xl md:text-5xl md:leading-none"
+                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[1.75rem] leading-[1.05] tracking-tight text-transparent [text-wrap:balance] sm:text-4xl md:text-5xl md:leading-none"
                 style={{
                   filter:
                     "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
                 }}
               >
-                PRÉDIS LES RÉSULTATS DE LA LIGUE 1
+                {liveMatchCount > 0
+                  ? "ÇA SE JOUE MAINTENANT"
+                  : nextKickoff?.day
+                    ? `PRÊT POUR LA ${nextKickoff.day} ?`
+                    : "À TOI DE JOUER"}
               </h1>
 
               {/* Trois etats reels, au lieu d'un compte a rebours fige a zero
@@ -695,11 +705,13 @@ setLeaderboard(rankedRankings);
               {liveMatchCount > 0 ? (
                 <div className="flex max-w-md items-center gap-3 rounded-2xl border border-red-500/25 bg-red-500/[.07] px-4 py-3">
                   <span className="size-2 shrink-0 animate-pulse rounded-full bg-red-400" />
+                  {/* Le titre dit deja que ca se joue : inutile de le repeter
+                      ici. On garde le decompte, qui lui apporte une info. */}
                   <span className="font-display text-sm font-bold text-white">
                     {liveMatchCount} match{liveMatchCount > 1 ? "s" : ""} en direct
                   </span>
                   <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-red-300">
-                    Ça joue maintenant
+                    Les points bougent
                   </span>
                 </div>
               ) : nextKickoff ? (
