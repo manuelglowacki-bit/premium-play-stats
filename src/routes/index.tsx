@@ -655,18 +655,15 @@ setLeaderboard(rankedRankings);
           <div
             role="img"
             aria-label="Ligue 1"
-            /* L'image fait 1774x887, soit un ratio 2:1. Depuis que le bandeau
-               a ete resserre, il est bien plus large que haut : en "cover",
-               le cadrage rognait le bas et coupait le mot LIGUE 1. En
-               "contain" cale a droite, le logo tient entier a cote du texte.
-               Sur mobile, ou le bandeau redevient haut et etroit, "cover"
-               reste preferable — un contain y reduirait l'image a une bande. */
-            className="pointer-events-none absolute inset-0 block bg-center bg-no-repeat bg-cover md:bg-contain md:bg-right"
+            /* L'image couvre TOUT le bloc, centree. Le "contain" cale a droite
+               essaye precedemment laissait une couture nette au milieu du
+               bandeau, l'image ne commencant qu'a mi-largeur. */
+            className="pointer-events-none absolute inset-0 block bg-cover bg-center bg-no-repeat"
             style={{ backgroundImage: "url('/logo-ligue1.png')" }}
           />
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1322] from-0% via-[#0d1322]/75 via-45% to-transparent to-80%"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0d1322] from-0% via-[#0d1322]/80 via-40% to-[#0d1322]/25 to-95%"
           />
 
           <div className="relative z-10 grid gap-8 lg:grid-cols-[1fr_auto] items-center">
@@ -681,22 +678,25 @@ setLeaderboard(rankedRankings);
                 <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 SAISON 2026—2027 • LIGUE 1 MCDONALD'S
               </div>
-              {/* "Prédis les résultats de la Ligue 1" s'adressait a un
-                  visiteur a convaincre. Ici le joueur est deja inscrit et
-                  connecte : le titre lui dit plutot ou en est la competition,
-                  et reste assez court pour ne jamais se couper en deux. */}
+              {/* Titre STABLE, qui nomme la competition entre amis.
+                  Deux essais precedents ne tenaient pas : "Prédis les
+                  résultats de la Ligue 1" s'adressait a un visiteur a
+                  convaincre alors que le lecteur est deja inscrit, et un
+                  titre change a chaque etat ("ça se joue maintenant")
+                  repetait ce que le bandeau juste en dessous annonce deja.
+                  L'etat en direct reste donc sous le titre, la ou il a sa
+                  place. */}
               <h1
-                className="bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[1.75rem] leading-[1.05] tracking-tight text-transparent [text-wrap:balance] sm:text-4xl md:text-5xl md:leading-none"
+                /* Le degrade descendait jusqu'a un bleu clair des la moitie
+                   des lettres, ce qui delavait le bas du titre sur un fond
+                   deja sombre. Le blanc tient maintenant les deux tiers. */
+                className="bg-gradient-to-b from-white from-30% via-white via-70% to-[color-mix(in_oklab,var(--sky)_26%,white)] bg-clip-text font-display text-[1.75rem] leading-[1.05] tracking-tight text-transparent [text-wrap:balance] sm:text-4xl md:text-5xl md:leading-none"
                 style={{
                   filter:
                     "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
                 }}
               >
-                {liveMatchCount > 0
-                  ? "ÇA SE JOUE MAINTENANT"
-                  : nextKickoff?.day
-                    ? `PRÊT POUR LA ${nextKickoff.day} ?`
-                    : "À TOI DE JOUER"}
+                LA COURSE AU TITRE
               </h1>
 
               {/* Trois etats reels, au lieu d'un compte a rebours fige a zero
