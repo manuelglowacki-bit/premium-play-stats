@@ -1235,6 +1235,11 @@ function PronosticsPage() {
   // C'est le MINIMUM des echeances encore a venir : en mode automatique, les
   // matchs d'une journee se ferment un par un, et ce qui interesse le joueur
   // est le prochain moment ou il ne pourra plus jouer un match.
+  // Rien a enregistrer : journee ouverte, tout est rempli, et l'autosave n'a
+  // ni tache en cours ni echec a rattraper.
+  const nothingToSave =
+    !dayLocked && allDone && autosaveStatus !== "saving" && autosaveStatus !== "error";
+
   const nextLockAt: number | null = (() => {
     const now = Date.now();
     const upcoming = dayRelevantMatches
@@ -1884,10 +1889,16 @@ function PronosticsPage() {
                   {dayLocked ? "Journée verrouillée" : `Tu as ${filled}/${total} pronostics`}
                 </p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  {/* "Sauvegarde automatique activée — rien à valider" doublait
+                      le libelle du bouton et la legende de l'anneau. La mention
+                      n'apparait plus que tant qu'il reste quelque chose a
+                      enregistrer, la ou elle rassure vraiment. */}
                   <p className="text-xs text-slate-400">
                     {dayLocked
                       ? "Les pronostics ne sont plus modifiables."
-                      : "Sauvegarde automatique activée — rien à valider."}
+                      : nothingToSave
+                        ? "Tu peux encore les modifier jusqu'à la fermeture."
+                        : "Sauvegarde automatique activée — rien à valider."}
                   </p>
                   {/* Indicateur discret de sauvegarde — voir runAutosave/
                       autosaveStatus. Pas de popup, juste ce petit texte qui
@@ -1925,7 +1936,19 @@ function PronosticsPage() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:shrink-0">
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:shrink-0 sm:items-center">
+              {/* Le bouton vert plein ne s'affiche QUE s'il y a quelque chose a
+                  faire. Quand tout etait deja enregistre, il portait le libelle
+                  "Tous les pronostics sont enregistrés" : un ETAT sur un bouton
+                  d'action, en vert plein, qui invitait a cliquer sans que le
+                  joueur sache ce qu'il declencherait. L'etat passe en simple
+                  mention a cote, et le bouton disparait. */}
+              {nothingToSave ? (
+                <span className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-5 py-3 font-display text-sm font-bold text-emerald-300">
+                  <Check className="size-4" />
+                  Tout est enregistré
+                </span>
+              ) : (
               <button
                 type="button"
                 onClick={handleSave}
@@ -1952,16 +1975,18 @@ function PronosticsPage() {
                 ) : (
                   <Save className="size-4" />
                 )}
+                {/* Le "✓" en tete de libelle faisait DOUBLON avec l'icone
+                    <Check /> juste au-dessus : le bouton affichait deux
+                    coches a la suite. */}
                 {dayLocked
                   ? "Verrouillée"
                   : autosaveStatus === "saving"
                     ? "Enregistrement…"
                     : autosaveStatus === "error"
                       ? "Réessayer"
-                      : allDone
-                        ? "✓ Tous les pronostics sont enregistrés"
-                        : "Enregistrer maintenant"}
+                      : "Enregistrer maintenant"}
               </button>
+              )}
 
               {/* Supprime réellement les pronostics de la journée sélectionnée
                   dans Supabase, sans toucher aux autres journées. */}
