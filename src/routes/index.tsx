@@ -787,17 +787,23 @@ setLeaderboard(rankedRankings);
         {/* LIGNE : PROFIL avec Effet Verre */}
         <div className="dash-fade-up w-full" style={{ animationDelay: "80ms" }}>
           <div
-            className="relative overflow-hidden rounded-3xl border bg-[#0d1322]/75 backdrop-blur-xl p-6 md:p-8 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)] transition-colors duration-500"
+            className="relative overflow-hidden rounded-3xl border bg-[#0d1322]/75 backdrop-blur-xl p-5 md:p-6 flex flex-col justify-between shadow-[0_0_30px_rgba(0,0,0,0.5)] transition-colors duration-500"
             style={{ borderColor: clubTheme.primary + "40" }}
           >
             <div
               aria-hidden
               className="pointer-events-none absolute inset-0 z-0"
+              /* "100% 100%" ETIRAIT le visuel du club pour remplir le cadre,
+                 sans respecter son ratio : sur un bloc large et court, le
+                 blason se retrouvait ecrase en hauteur. "cover" cadre sans
+                 deformer ; la position a droite garde le blason visible, la
+                 ou l'artwork le place. */
               style={{
                 backgroundImage: `url('${clubWallpaperUrl}')`,
-                backgroundSize: "100% 100%",
+                backgroundSize: "cover",
+                backgroundPosition: "right center",
                 backgroundRepeat: "no-repeat",
-                filter: "saturate(1.3) brightness(1.08)",
+                filter: "saturate(1.2) brightness(1.02)",
               }}
             />
             {clubTheme.id !== "default" && !clubWallpaperFailedProbe && (
@@ -817,6 +823,13 @@ setLeaderboard(rankedRankings);
             />
             <div className="absolute top-0 right-0 w-64 h-full bg-gradient-to-l from-amber-500/5 to-transparent pointer-events-none" />
 
+            {/* Voile bas sur TOUTE la largeur : la barre d'actions ("Gérer mon
+                profil") tombait pile sur le slogan grave dans le visuel du
+                club — "Toujours plus haut, fiers d'être Lensois" pour Lens.
+                Deux typographies se croisaient sans se voir. Le degrade
+                gauche existant ne couvrait que 62 % de la largeur. */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-0 h-28 bg-gradient-to-t from-[#0d1322] via-[#0d1322]/70 to-transparent" />
+
             {/* Assombrissement supplémentaire, mobile uniquement : les dégradés
                 ci-dessus sont pensés pour le layout desktop (texte à gauche /
                 blason à droite sur toute la largeur restante) — sur une seule
@@ -833,7 +846,7 @@ setLeaderboard(rankedRankings);
                       à 144px il écrasait la colonne pseudo/niveau/classement
                       contre le blason du club sur les écrans étroits (360-412px).
                       Desktop inchangé (md:size-40). */}
-                  <div className="size-24 rounded-full bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-500 p-1 shadow-[0_0_20px_rgba(245,158,11,0.3)] sm:size-28 md:size-40">
+                  <div className="size-24 rounded-full bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-500 p-1 shadow-[0_0_20px_rgba(245,158,11,0.3)] sm:size-28 md:size-32">
                     <div className="size-full rounded-full bg-[#060b16] flex items-center justify-center overflow-hidden border border-slate-800">
                       {profile?.avatar_url ? (
                         <img
@@ -864,31 +877,29 @@ setLeaderboard(rankedRankings);
                   </button>
                 </div>
 
+                {/* HIERARCHIE INVERSEE. Le pavé ambré "Niveau 1 · DÉBUTANT"
+                    passait AVANT le pseudo, avec bordure doree, halo et fond
+                    opaque : l'element le plus voyant du bloc annoncait
+                    l'information la moins interessante, et le sujet reel —
+                    le joueur — venait apres, en texte nu. Le pseudo prend la
+                    tete, le niveau rejoint le rang et les points sur la meme
+                    ligne de pastilles. */}
                 <div className="min-w-0">
-                  <div className="group relative mb-2.5 inline-flex items-center gap-3 overflow-hidden rounded-2xl border border-amber-400/35 bg-[#060b16]/85 px-3.5 py-2.5 shadow-[0_0_24px_rgba(245,158,11,0.12)] backdrop-blur-md transition-all duration-300 hover:border-amber-300/55 hover:shadow-[0_0_30px_rgba(245,158,11,0.18)]">
-  <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-amber-400/[0.10] via-transparent to-amber-200/[0.05]" />
-  <div className="relative grid size-10 shrink-0 place-items-center rounded-xl border border-amber-300/40 bg-gradient-to-br from-amber-300/20 via-amber-500/10 to-transparent shadow-[inset_0_0_16px_rgba(245,158,11,0.12)]">
-    <span className="font-display text-lg font-black leading-none text-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.35)]">
-      {careerLevel}
-    </span>
-  </div>
-  <div className="relative min-w-0 pr-1">
-    <span className="block font-mono text-[9px] font-bold uppercase tracking-[0.22em] text-amber-400/80">
-      Niveau
-    </span>
-    <span className="block truncate font-display text-sm font-extrabold uppercase tracking-wide text-white sm:text-base">
-      {currentCareerTitle}
-    </span>
-  </div>
-</div>
-                  <h3 className="font-display text-xl text-white tracking-tight truncate sm:text-2xl md:text-3xl">{profile?.pseudo || user?.email?.split("@")[0] || "Joueur"}</h3>
+                  <h3 className="font-display text-2xl text-white tracking-tight truncate sm:text-3xl md:text-4xl">
+                    {profile?.pseudo || user?.email?.split("@")[0] || "Joueur"}
+                  </h3>
 
-                  <div className="flex flex-wrap items-center gap-2 mt-3 sm:gap-3 sm:mt-4">
-                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-xs font-bold sm:text-sm">
+                  <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-2.5">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 font-mono text-xs font-bold text-emerald-400 sm:text-sm">
                       <Trophy size={14} /> #{myStats.rank || "—"} du classement
                     </span>
-                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 font-mono text-xs font-bold sm:text-sm">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-yellow-500/20 bg-yellow-500/10 px-3 py-1 font-mono text-xs font-bold text-yellow-400 sm:text-sm">
                       {myStats.points} pts
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 font-mono text-xs font-bold text-amber-300 sm:text-sm">
+                      Niv. {careerLevel}
+                      <span className="text-amber-400/60">·</span>
+                      <span className="truncate uppercase">{currentCareerTitle}</span>
                     </span>
                   </div>
                 </div>
@@ -900,21 +911,29 @@ setLeaderboard(rankedRankings);
                 <span className="font-mono text-[10px] uppercase text-red-400 font-bold tracking-widest flex items-center gap-1.5">
                   <Heart size={12} className="fill-red-400" /> Équipe de cœur
                 </span>
-                <span
-                  className="font-display text-xl md:text-2xl font-bold truncate block mt-1"
-                  style={
-                    clubTheme.id !== "default"
-                      ? {
-                          backgroundImage: clubTheme.gradient,
-                          WebkitBackgroundClip: "text",
-                          backgroundClip: "text",
-                          color: "transparent",
-                        }
-                      : { color: "#fff" }
-                  }
-                >
-                  {activeClub?.name || "À choisir"}
-                </span>
+                {/* Le nom etait rempli d'un degrade aux couleurs du club. Sur
+                    le fond du club lui-meme — rouge vif pour Lens — un degrade
+                    rouge et or devenait illisible. Blanc plein, avec une barre
+                    aux couleurs du club en rappel : le contraste ne depend
+                    plus de l'equipe choisie. */}
+                <div className="mt-1 flex items-center gap-2.5">
+                  <span
+                    aria-hidden
+                    className="h-6 w-1 shrink-0 rounded-full"
+                    style={{ backgroundColor: clubTheme.primary }}
+                  />
+                  <span className="block truncate font-display text-xl font-bold text-white md:text-2xl">
+                    {activeClub?.name || "À choisir"}
+                  </span>
+                </div>
+
+                {/* Le cadenas vivait en bas a gauche du bloc, a l'oppose du
+                    nom du club qu'il concerne. Il le suit desormais. */}
+                {isFavoriteTeamLocked && !isChangingTeam && (
+                  <span className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-red-400/20 bg-red-500/10 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-red-300">
+                    <span aria-hidden="true">🔒</span> Choix verrouillé
+                  </span>
+                )}
               </div>
             </div>
 
@@ -930,11 +949,7 @@ setLeaderboard(rankedRankings);
                     >
                       <Heart size={14} style={{ color: clubTheme.primary }} /> Changer mon équipe
                     </button>
-                  ) : (
-                    <span className="inline-flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-xs font-bold text-red-300">
-                      <span aria-hidden="true">🔒</span> Choix verrouillé
-                    </span>
-                  )
+                  ) : null
                 ) : (
                   <div className="flex flex-wrap items-center gap-2">
                     <select
