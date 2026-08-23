@@ -143,7 +143,7 @@ function ClassementPage() {
   // C'est ce que la colonne "Régularité" affiche desormais : est-ce que le
   // joueur depose ses pronostics a chaque journee, ou en saute-t-il ?
   const [ligue1PredictionsByUser, setLigue1PredictionsByUser] = useState<Record<string, number>>({});
-  const [ligue1MatchCount, setLigue1MatchCount] = useState(0);
+  const [participationTotalByUser, setParticipationTotalByUser] = useState<Record<string, number>>({});
   const [playedMatchdaysByUser, setPlayedMatchdaysByUser] = useState<Record<string, number>>({});
   const [finishedMatchdayCount, setFinishedMatchdayCount] = useState(0);
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
@@ -442,7 +442,7 @@ function ClassementPage() {
         const scorableLigue1Matches = markLiveMatchesScorable(liveMatches);
         const scorableBonusMatches = markLiveMatchesScorable(bonusMatches);
 
-        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, participationByUser: participationCounts, participationTotal, pointsByMatchday, pointsByPredictionKey } =
+        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, participationByUser: participationCounts, participationTotalByUser: participationTotals, pointsByMatchday, pointsByPredictionKey } =
           computeLeagueStats(scorableLigue1Matches, scorableBonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
             seasonByMatchdayId: seasonByMatchdayIdObj,
             favoriteTeamBySeason,
@@ -665,7 +665,7 @@ function ClassementPage() {
           setExactScoresByUser(exactScores);
           setRegularitySuccessByUser(regularitySuccess);
           setLigue1PredictionsByUser(participationCounts);
-          setLigue1MatchCount(participationTotal);
+          setParticipationTotalByUser(participationTotals);
           setPlayedMatchdaysByUser(playedMatchdaysByUser);
           setFinishedMatchdayCount(finishedNumbers.length);
           setBestMatchday(topMatchday);
@@ -927,7 +927,7 @@ function ClassementPage() {
                         predictionsCount: predictionsCountByUser[p.id] ?? 0,
                         regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
                         predictionsMade: ligue1PredictionsByUser[p.id] ?? 0,
-                        matchesPlayable: ligue1MatchCount,
+                        matchesPlayable: participationTotalByUser[p.id] ?? 0,
                         playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
                         careerLevel: result.level,
                         careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],
@@ -1125,7 +1125,7 @@ function ClassementPage() {
                     predictionsCount: predictionsCountByUser[p.id] ?? 0,
                     regularitySuccess: regularitySuccessByUser[p.id] ?? 0,
                     predictionsMade: ligue1PredictionsByUser[p.id] ?? 0,
-                    matchesPlayable: ligue1MatchCount,
+                    matchesPlayable: participationTotalByUser[p.id] ?? 0,
                     playedMatchdays: playedMatchdaysByUser[p.id] ?? 0,
                     careerLevel: result.level,
                     careerTitle: careerTitles[Math.max(0, Math.min(result.level - 1, careerTitles.length - 1))],

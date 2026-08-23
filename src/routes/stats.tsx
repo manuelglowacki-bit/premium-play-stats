@@ -523,7 +523,7 @@ function StatsPage() {
       // Participation : ce que "Régularité" doit mesurer — combien de matchs
       // Ligue 1 déjà joués ce joueur a effectivement pronostiqués.
       const predictionsMade = leagueStats.participationByUser[user.id] ?? 0;
-      const matchesPlayable = leagueStats.participationTotal;
+      const matchesPlayable = leagueStats.participationTotalByUser[user.id] ?? 0;
 
       // ------------------------------------------------------------------
       // RÉPARTITION PAR JOURNÉE (graphique, meilleure journée, bonus/standard/

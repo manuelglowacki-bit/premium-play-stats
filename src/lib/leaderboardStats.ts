@@ -83,12 +83,15 @@ export type LeagueStats = {
    * pronostics AYANT RAPPORTÉ des points, et qui sert au départage du
    * classement (voir rankPlayers). */
   participationByUser: Record<string, number>;
-  /** Dénominateur commun : les matchs Ligue 1 jouables, PLUS un bonus par
-   * journée en ayant proposé un. Une journée complète vaut donc 9 matchs de
-   * Ligue 1 + 1 bonus = 10 rencontres pronostiquables. Le bonus compte une
-   * seule fois par journée, quel que soit le nombre d'options proposées :
-   * le joueur n'en choisit qu'une. */
-  participationTotal: number;
+  /** Dénominateur, PROPRE À CHAQUE JOUEUR : les matchs Ligue 1 déjà joués,
+   * plus le match bonus de chaque journée — mais uniquement à partir du
+   * moment où il a réellement été joué POUR CE JOUEUR.
+   *
+   * Les joueurs ne choisissent pas tous la même option bonus : dimanche,
+   * celui dont le bonus est déjà passé est à 8/8 quand celui dont le bonus
+   * joue lundi est à 7/7. Un dénominateur commun mettrait le second en
+   * echec pour une rencontre qu'il n'a pas encore pu voir. */
+  participationTotalByUser: Record<string, number>;
   /** Points cumulés par journée (matchday_id), tous joueurs confondus —
    * sert à la stat "Meilleure journée" du Classement. */
   pointsByMatchday: Record<string, number>;
@@ -311,24 +314,58 @@ export function computeLeagueStats(
   });
 
   // ------------------------------------------------------------------
-  // DÉNOMINATEUR DE LA PARTICIPATION
-  // Les matchs de Ligue 1 réellement jouables, plus UN bonus par journée en
-  // ayant proposé un qui soit jouable. Une journée complète vaut donc 9 + 1
-  // = 10 rencontres. Compter chaque option bonus séparément gonflerait le
-  // dénominateur de 4 par journée alors qu'un joueur n'en pronostique qu'une.
+  // DÉNOMINATEUR DE LA PARTICIPATION — match par match, joueur par joueur.
+  //
+  // Base commune : les matchs de Ligue 1 déjà joués.
+  // S'y ajoute le bonus de chaque journée, mais seulement quand il a
+  // réellement été joué POUR CE JOUEUR — c'est-à-dire l'option qu'il a
+  // lui-même choisie. Deux joueurs d'une même journée peuvent donc être à
+  // 8/8 et 7/7 le même dimanche, si le bonus de l'un a joué et pas l'autre.
+  //
+  // Cas du joueur qui n'a choisi AUCUN bonus : on attend que TOUTES les
+  // options de la journée soient jouées avant de la lui compter. Tant qu'une
+  // option reste à venir, on ne peut pas affirmer qu'il a laissé passer sa
+  // chance — mieux vaut ne pas le pénaliser trop tôt.
   // ------------------------------------------------------------------
   const isPlayable = (m: LeagueMatch) =>
     m.home_score != null && m.away_score != null && m.finished === true;
 
-  const bonusDaysPlayable = new Set<string>();
-  bonusMatches.forEach((match) => {
-    if (!isPlayable(match)) return;
-    const dayId = bonusMatchdayByMatchId.get(String(match.id));
-    if (dayId) bonusDaysPlayable.add(dayId);
+  const ligue1Playable = ligue1Matches.filter(isPlayable).length;
+
+  const playableBonusMatchIds = new Set(
+    bonusMatches.filter(isPlayable).map((m) => String(m.id)),
+  );
+
+  const bonusOptionsByDay = new Map<string, string[]>();
+  bonusOptions.forEach((option) => {
+    const dayId = String(option.matchday_id);
+    const list = bonusOptionsByDay.get(dayId) ?? [];
+    list.push(String(option.match_id));
+    bonusOptionsByDay.set(dayId, list);
   });
 
-  const participationTotal =
-    ligue1Matches.filter(isPlayable).length + bonusDaysPlayable.size;
+  const participationTotalByUser: Record<string, number> = {};
+  profiles.forEach((profile) => {
+    let total = ligue1Playable;
+
+    bonusOptionsByDay.forEach((optionIds, dayId) => {
+      const chosen = latestBonusPredictionByUserDay.get(`${profile.id}:${dayId}`);
+
+      if (chosen) {
+        // Le bonus de ce joueur compte des qu'il a ete joue.
+        if (playableBonusMatchIds.has(chosen.matchId)) total += 1;
+        return;
+      }
+
+      // Aucun bonus choisi : on ne compte la journee que lorsque plus aucune
+      // option ne peut encore etre jouee.
+      if (optionIds.length > 0 && optionIds.every((id) => playableBonusMatchIds.has(id))) {
+        total += 1;
+      }
+    });
+
+    participationTotalByUser[profile.id] = total;
+  });
 
   return {
     pointsByUser: points,
@@ -336,7 +373,7 @@ export function computeLeagueStats(
     exactScoresByUser: exactScores,
     regularitySuccessByUser: regularitySuccess,
     participationByUser: participation,
-    participationTotal,
+    participationTotalByUser,
     pointsByMatchday,
     pointsByUserAndMatchday,
     pointsByPredictionKey,
