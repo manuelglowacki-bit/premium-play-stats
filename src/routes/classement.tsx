@@ -640,20 +640,18 @@ function ClassementPage() {
           careerTitle: "Débutant",
         }));
 
-        // Base d'évolution LIVE : classement avant le début de la journée en cours.
+        // Base d'évolution LIVE : classement avant le début de la journée en
+        // cours. Tant qu'AUCUNE journée n'est entièrement terminée, il n'y a
+        // pas de classement précédent : on n'en invente pas.
+        //
+        // L'ancien repli classait tout le monde à 0 point ; l'ordre obtenu ne
+        // dépendait alors que des départages, et la comparaison produisait des
+        // mouvements inventés (un joueur pouvait afficher -4 sans que le
+        // classement ait bougé). Sans base réelle, la colonne Évolution
+        // affiche « — » pour tout le monde, ce qui est la vérité.
         const baselineRanking = latestFinishedNumber != null
           ? rankPlayers(previousRankedInput as any)
-          : rankPlayers(
-              profiles.map((p) => ({
-                ...p,
-                points: 0,
-                exactScores: 0,
-                predictionsCount: 0,
-                regularitySuccess: 0,
-                careerLevel: 1,
-                careerTitle: "Débutant",
-              })) as any,
-            );
+          : [];
 
         const previousRanks: Record<string, number> = {};
         baselineRanking.forEach((player: any) => {
