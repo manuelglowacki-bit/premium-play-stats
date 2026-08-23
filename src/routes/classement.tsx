@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  Check,
   Minus,
   Target,
   Trophy,
@@ -908,7 +907,7 @@ function ClassementPage() {
                 <span className="text-center">Écart</span>
                 <span className="text-center">Score exact</span>
                 <span>Régularité</span>
-                <span className="text-center">Bons pronos</span>
+                <span className="text-center">Évolution</span>
               </div>
 
               <div className="space-y-2.5">
@@ -990,12 +989,10 @@ function ClassementPage() {
                       p.rank === 3 ? "text-orange-200/90" :
                       "text-slate-500";
 
-                    // Bons pronos = pronostics ayant rapporte au moins 1 point.
-                    // Valeur deja produite par computeLeagueStats.
-                    const goodPicksTone =
-                      p.regularitySuccess > 0
-                        ? "border-emerald-300/30 bg-emerald-300/[0.07] text-emerald-200"
-                        : "border-white/[0.08] bg-white/[0.025] text-slate-500";
+                    const evolutionTone =
+                      trend === "up" ? "border-emerald-300/35 bg-emerald-300/[0.09] text-emerald-200" :
+                      trend === "down" ? "border-rose-300/35 bg-rose-300/[0.09] text-rose-200" :
+                      "border-white/[0.08] bg-white/[0.025] text-slate-500";
 
                     return (
                       <article
@@ -1098,10 +1095,9 @@ function ClassementPage() {
                           </div>
 
                           <div className="flex items-center justify-center">
-                            <div className={`flex min-w-[72px] h-8 items-center justify-center gap-1.5 rounded-full border px-2 transition-transform duration-300 group-hover:scale-105 ${goodPicksTone}`}>
-                              <Check className="h-3.5 w-3.5" />
-                              <span className="font-display text-sm font-black">{p.regularitySuccess}</span>
-                              <span className="font-mono text-[9px] text-slate-500">/{p.predictionsMade}</span>
+                            <div className={`flex min-w-[72px] h-8 items-center justify-center gap-1.5 rounded-full border px-2 transition-transform duration-300 group-hover:scale-105 ${evolutionTone}`}>
+                              {trend === "up" ? <ArrowUp className="h-3.5 w-3.5" /> : trend === "down" ? <ArrowDown className="h-3.5 w-3.5" /> : <Minus className="h-3 w-3" />}
+                              {trend !== "same" && <span className="font-mono text-[10px] font-black">{trendLabel}</span>}
                             </div>
                           </div>
                         </div>
@@ -1197,10 +1193,12 @@ function ClassementPage() {
                           ? "text-orange-300"
                           : "text-white";
 
-                  const goodPicksTone =
-                    p.regularitySuccess > 0
-                      ? "border-emerald-300/30 bg-emerald-300/[0.07] text-emerald-200"
-                      : "border-white/[0.08] bg-white/[0.025] text-slate-400";
+                  const evolutionTone =
+                    trend === "up"
+                      ? "border-emerald-300/35 bg-emerald-300/[0.09] text-emerald-200"
+                      : trend === "down"
+                        ? "border-rose-300/35 bg-rose-300/[0.09] text-rose-200"
+                        : "border-white/[0.08] bg-white/[0.025] text-slate-400";
 
                   return (
                     <article
@@ -1348,15 +1346,18 @@ function ClassementPage() {
                           );
                         })()}
 
-                        <div className="flex min-w-0 flex-col items-center justify-center">
+                        <div className="flex min-w-0 justify-center">
                           <div
-                            className={`flex h-7 min-w-8 items-center justify-center gap-1 rounded-full border px-2 ${goodPicksTone}`}
+                            className={`flex h-7 min-w-8 items-center justify-center gap-0.5 rounded-full border px-1.5 ${evolutionTone}`}
                           >
-                            <Check className="h-2.5 w-2.5" />
-                            <span className="font-display text-[11px] font-black">{p.regularitySuccess}</span>
-                          </div>
-                          <div className="mt-0.5 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-500">
-                            bons
+                            {trend === "up" ? (
+                              <ArrowUp className="h-2.5 w-2.5" />
+                            ) : trend === "down" ? (
+                              <ArrowDown className="h-2.5 w-2.5" />
+                            ) : (
+                              <Minus className="h-2.5 w-2.5" />
+                            )}
+                            <span className="font-mono text-[7px] font-black">{trendLabel}</span>
                           </div>
                         </div>
                       </div>
