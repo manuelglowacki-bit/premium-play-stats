@@ -824,18 +824,16 @@ function ClassementPage() {
             <span>Prono Ligue 1 LM</span>
             <span className="h-px w-8 bg-gradient-to-l from-transparent to-slate-600" />
           </div>
-          <h1 className="font-display text-[clamp(2.2rem,6vw,4.2rem)] font-black uppercase leading-[0.9] tracking-[-0.045em] text-white drop-shadow-[0_8px_30px_rgba(0,0,0,.45)]">
+          <h1 className="font-display text-[clamp(2rem,5.2vw,3.6rem)] font-black uppercase leading-[0.9] tracking-[-0.045em] text-white drop-shadow-[0_8px_30px_rgba(0,0,0,.45)]">
             Classement
           </h1>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[10px] font-bold uppercase tracking-[0.16em] sm:text-xs">
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-[10px] font-bold uppercase tracking-[0.16em] sm:text-xs">
             <span className="text-emerald-300">{currentMatchday.label}</span>
             <span className="text-slate-700">•</span>
             <span className="text-slate-300">Saison {season}</span>
-            <span className="text-slate-700">•</span>
-            <span className="text-slate-500">Classement général</span>
           </div>
           <p className="mx-auto mt-2 max-w-xl text-xs leading-relaxed text-slate-500 sm:text-sm">
-            Les meilleurs pronostiqueurs de la compétition, classés aux points.
+            Chaque résultat compte : le classement se met à jour au fil de la saison.
           </p>
         </header>
 
@@ -860,42 +858,40 @@ function ClassementPage() {
           <section className="relative z-10 mx-auto mt-6 max-w-[1180px] sm:mt-8">
             {/* Gains : placés au-dessus du classement pour libérer de la largeur dans les cartes joueurs. */}
             <div className="mb-5 overflow-hidden rounded-2xl border border-amber-300/20 bg-gradient-to-r from-[#101c2b]/95 via-[#17283a]/90 to-[#0b1725]/95 shadow-[0_0_34px_rgba(245,158,11,.08)]">
-              <div className="border-b border-white/[0.06] px-4 py-2.5 text-center">
-                <span className="font-mono text-[9px] font-black uppercase tracking-[0.28em] text-amber-300">Gains de la compétition</span>
-              </div>
-              <div className="grid grid-cols-3 divide-x divide-white/[0.08]">
-                {[1, 2, 3].map((rank) => {
-                  const medalTone =
-                    rank === 1
-                      ? "text-amber-200 border-amber-300/35 bg-amber-300/[0.08]"
-                      : rank === 2
-                        ? "text-slate-100 border-white/20 bg-white/[0.06]"
-                        : "text-orange-200 border-orange-300/35 bg-orange-300/[0.08]";
-                  return (
-                    <div key={rank} className="flex items-center justify-center gap-2 px-2 py-3 sm:gap-3 sm:py-3.5">
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border font-display text-sm font-black ${medalTone}`}>
-                        {rank}
-                      </div>
-                      <div className="min-w-0 text-left">
-                        <div className="font-display text-lg font-black leading-none sm:text-xl">{prizeByRank[rank]} €</div>
-                        <div className="mt-1 font-mono text-[6px] font-bold uppercase tracking-[0.16em] text-slate-500 sm:text-[7px]">
+              <div className="flex flex-col gap-2.5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:py-2.5">
+                <div className="flex items-baseline justify-center gap-2 sm:justify-start">
+                  <span className="font-mono text-[9px] font-black uppercase tracking-[0.28em] text-amber-300">Cagnotte</span>
+                  <span className="font-display text-lg font-black leading-none text-amber-100 sm:text-xl">{prizePool} €</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center">
+                  {[1, 2, 3].map((rank) => {
+                    const medalTone =
+                      rank === 1
+                        ? "text-amber-200 border-amber-300/35 bg-amber-300/[0.08]"
+                        : rank === 2
+                          ? "text-slate-100 border-white/20 bg-white/[0.06]"
+                          : "text-orange-200 border-orange-300/35 bg-orange-300/[0.08]";
+                    return (
+                      <div
+                        key={rank}
+                        className={`flex items-center justify-center gap-2 rounded-xl border px-2.5 py-1.5 ${medalTone}`}
+                      >
+                        <span className="font-mono text-[9px] font-black uppercase tracking-[0.14em] opacity-80">
                           {rank === 1 ? "1er" : rank === 2 ? "2e" : "3e"}
-                        </div>
+                        </span>
+                        <span className="font-display text-sm font-black leading-none sm:text-base">{prizeByRank[rank]} €</span>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
             <div className="mb-3 flex items-center gap-3 px-1">
               <span className="h-px flex-1 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="whitespace-nowrap font-mono text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
-                CLASSEMENT ACTUEL · {totalPlayers} JOUEURS
+              <span className="whitespace-nowrap font-mono text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                {totalPlayers} joueurs classés
               </span>
-                <span className="hidden h-3 w-px bg-white/10 sm:block" />
-              </div>
               <span className="h-px flex-1 bg-gradient-to-r from-transparent via-white/[0.08] to-transparent" />
             </div>
 
@@ -905,7 +901,7 @@ function ClassementPage() {
                 <span>#</span>
                 <span>Joueur</span>
                 <span className="text-center">Points</span>
-                <span className="text-center">Écart pts</span>
+                <span className="text-center">Écart</span>
                 <span className="text-center">Score exact</span>
                 <span>Régularité</span>
                 <span className="text-center">Évolution</span>
