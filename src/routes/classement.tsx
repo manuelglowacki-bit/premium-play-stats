@@ -963,11 +963,11 @@ function ClassementPage() {
                           : p.rank === 3
                             ? "border-orange-200/95 from-orange-400/[0.42] via-[#3a2b2b]/78 to-[#0c1723]/88 shadow-[0_0_56px_rgba(249,115,22,.36),inset_0_0_36px_rgba(249,115,22,.14)]"
                             : dangerLevel === 3
-                              ? "border-rose-300/45 from-rose-500/[0.17] via-[#1a1020]/94 to-[#0a0c17]/96 shadow-[0_0_30px_rgba(244,63,94,.12)]"
+                              ? "border-rose-400/70 from-rose-500/[0.34] via-[#2a1020]/92 to-[#0d0b16]/96 shadow-[0_0_40px_rgba(244,63,94,.26)]"
                               : dangerLevel === 2
-                                ? "border-rose-300/28 from-rose-500/[0.10] via-[#151223]/94 to-[#090d18]/96"
+                                ? "border-rose-400/48 from-rose-500/[0.22] via-[#211125]/93 to-[#0b0c17]/96 shadow-[0_0_30px_rgba(244,63,94,.16)]"
                                 : dangerLevel === 1
-                                  ? "border-rose-300/16 from-rose-500/[0.05] via-[#121527]/94 to-[#081119]/96"
+                                  ? "border-rose-400/30 from-rose-500/[0.13] via-[#191327]/94 to-[#091018]/96 shadow-[0_0_24px_rgba(244,63,94,.09)]"
                                   : "border-white/[0.09] from-[#102238]/92 via-[#0c1b2c]/94 to-[#081421]/96";
 
                     const rankTone =
@@ -975,8 +975,8 @@ function ClassementPage() {
                       p.rank === 2 ? "text-slate-100" :
                       p.rank === 3 ? "text-orange-100" :
                       dangerLevel === 3 ? "text-rose-100" :
-                      dangerLevel === 2 ? "text-rose-200/85" :
-                      dangerLevel === 1 ? "text-rose-200/65" :
+                      dangerLevel === 2 ? "text-rose-200" :
+                      dangerLevel === 1 ? "text-rose-200/85" :
                       "text-slate-100";
 
                     const pointTone =
@@ -1164,11 +1164,11 @@ function ClassementPage() {
                         : p.rank === 3
                           ? "border-orange-300/85 from-orange-400/[0.23] via-[#1e2634]/90 to-[#0a1621]/95 shadow-[0_0_32px_rgba(249,115,22,.17)]"
                           : dangerLevel === 3
-                            ? "border-rose-300/45 from-rose-500/[0.17] to-[#0a0c17]/96 shadow-[0_0_26px_rgba(244,63,94,.12)]"
+                            ? "border-rose-400/70 from-rose-500/[0.34] to-[#0d0b16]/96 shadow-[0_0_34px_rgba(244,63,94,.26)]"
                             : dangerLevel === 2
-                              ? "border-rose-300/28 from-rose-500/[0.10] to-[#090d18]/96"
+                              ? "border-rose-400/48 from-rose-500/[0.22] to-[#0b0c17]/96 shadow-[0_0_26px_rgba(244,63,94,.16)]"
                               : dangerLevel === 1
-                                ? "border-rose-300/16 from-rose-500/[0.05] to-[#081119]/96"
+                                ? "border-rose-400/30 from-rose-500/[0.13] to-[#091018]/96"
                                 : "border-white/[0.09] from-[#102238]/92 to-[#081522]/96";
 
                   const rankTone =
@@ -1181,9 +1181,9 @@ function ClassementPage() {
                           : dangerLevel === 3
                             ? "text-rose-100"
                             : dangerLevel === 2
-                              ? "text-rose-200/85"
+                              ? "text-rose-200"
                               : dangerLevel === 1
-                                ? "text-rose-200/65"
+                                ? "text-rose-200/85"
                                 : "text-slate-100";
 
                   const pointTone =
@@ -1228,11 +1228,11 @@ function ClassementPage() {
                             <div
                               className={`flex h-10 w-10 items-center justify-center rounded-xl border bg-black/20 font-mono text-[10px] font-black ${
                                 dangerLevel === 3
-                                  ? "border-rose-300/45"
+                                  ? "border-rose-400/70"
                                   : dangerLevel === 2
-                                    ? "border-rose-300/28"
+                                    ? "border-rose-400/48"
                                     : dangerLevel === 1
-                                      ? "border-rose-300/16"
+                                      ? "border-rose-400/30"
                                       : "border-white/10"
                               } ${rankTone}`}
                             >
