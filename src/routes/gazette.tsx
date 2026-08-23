@@ -1126,6 +1126,7 @@ function GazettePage() {
         leader: null,
         progression: null,
         performance: null,
+        bestMatchday: null,
       };
     }
 
@@ -1185,6 +1186,45 @@ function GazettePage() {
 
     const progression = movers[0] ?? null;
 
+    // MEILLEURE JOURNEE : plus gros total de points realise par un joueur
+    // sur une seule journee, depuis le debut de la saison. On additionne des
+    // points deja calcules (pointsFor) : aucun bareme n'est recalcule ici.
+    const dayTotals: {
+      name: string;
+      avatar: string;
+      points: number;
+      journeeNumber: number | string;
+    }[] = [];
+
+    journees.forEach((journee) => {
+      const dayMatchIds = [...journee.matches, ...journee.bonus]
+        .filter((match) => isActuallyFinished(match))
+        .map((match) => String(match.id));
+      if (dayMatchIds.length === 0) return;
+
+      profiles.forEach((profile) => {
+        const total = dayMatchIds.reduce(
+          (sum, matchId) => sum + pointsFor(profile.id, matchId),
+          0,
+        );
+        if (total <= 0) return;
+        dayTotals.push({
+          name: profile.pseudo || "Joueur",
+          avatar: profile.avatar_url || "",
+          points: total,
+          journeeNumber: journee.number,
+        });
+      });
+    });
+
+    // A egalite de points, on met en avant la journee la plus recente.
+    const bestMatchday =
+      dayTotals.sort(
+        (a, b) =>
+          b.points - a.points ||
+          Number(b.journeeNumber) - Number(a.journeeNumber),
+      )[0] ?? null;
+
     // Dernier coup : on cherche le meilleur prono sur le dernier match.
     let performance: any = null;
 
@@ -1224,10 +1264,12 @@ function GazettePage() {
       leader: rankedPlayers[0] ?? null,
       progression,
       performance,
+      bestMatchday,
     };
   }, [
     rankedPlayers,
     profiles,
+    journees,
     predictionsByUser,
     matchesById,
     lastFinished,
@@ -1810,32 +1852,32 @@ function GazettePage() {
                   </p>
                 </div>
 
-                {/* 2 — PLUS BELLE PROGRESSION */}
+                {/* 2 — MEILLEURE JOURNÉE */}
                 <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[.05] p-4 shadow-[0_10px_35px_rgba(16,185,129,.05)]">
-                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-emerald-300">PLUS BELLE PROGRESSION</p>
+                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-emerald-300">MEILLEURE JOURNÉE</p>
 
-                  {gazetteDynamicBlocks.progression ? (
+                  {gazetteDynamicBlocks.bestMatchday ? (
                     <>
                       <div className="mt-2 flex items-baseline gap-2">
                         <span className="font-display text-3xl font-black leading-none text-white">
-                          +{gazetteDynamicBlocks.progression.movement}
+                          {gazetteDynamicBlocks.bestMatchday.points}
                         </span>
                         <span className="font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300">
-                          place{gazetteDynamicBlocks.progression.movement > 1 ? "s" : ""}
+                          point{gazetteDynamicBlocks.bestMatchday.points > 1 ? "s" : ""} · J{gazetteDynamicBlocks.bestMatchday.journeeNumber}
                         </span>
                       </div>
                       <p className="mt-2 truncate font-display text-base font-black text-white">
-                        {gazetteDynamicBlocks.progression.name}
+                        {gazetteDynamicBlocks.bestMatchday.name}
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
-                        Après le dernier match terminé
+                        Record sur une journée cette saison
                       </p>
                     </>
                   ) : (
                     <>
                       <p className="mt-2 font-display text-2xl font-black text-white">—</p>
                       <p className="mt-1 text-xs text-slate-500">
-                        La prochaine évolution apparaîtra après un match.
+                        Le record apparaîtra après les premiers résultats.
                       </p>
                     </>
                   )}
