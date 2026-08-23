@@ -31,6 +31,14 @@ export type LeagueMatch = {
   away_team: string | null;
   home_score: number | null;
   away_score: number | null;
+  /**
+   * `finished: true` signifie "résultat actuel scorable" pour les appels live
+   * comme pour les matchs réellement terminés. Les pages live construisent
+   * cette vue en mémoire sans modifier Supabase.
+   */
+  finished?: boolean | null;
+  status?: string | null;
+  kickoff?: string | null;
   is_bonus?: boolean | null;
 };
 
@@ -182,7 +190,20 @@ export function computeLeagueStats(
     const userId = String(pred.user_id);
     const matchId = String(pred.match_id);
     const match = matchById.get(matchId);
-    if (!match || match.home_score == null || match.away_score == null) return;
+
+    // IMPORTANT :
+    // - un vrai match terminé => finished=true
+    // - un match LIVE transformé en snapshot de calcul par les pages => finished=true
+    // - un simple score 0-0 présent en base pour un match futur => finished=false
+    // Ainsi, l'exact LIVE est bien calculé sans jamais scorer un match qui n'a pas commencé.
+    if (
+      !match ||
+      match.home_score == null ||
+      match.away_score == null ||
+      match.finished !== true
+    ) {
+      return;
+    }
 
     const homePrediction = Number(pred.home_prediction);
     const awayPrediction = Number(pred.away_prediction);
@@ -213,6 +234,8 @@ export function computeLeagueStats(
         regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
         addDayPoints(userId, dayId, pts);
       }
+      // Le score exact BONUS est compté aussi sur le score LIVE courant :
+      // le caller aura marqué le match `finished: true` dans sa vue de calcul.
       if (pts === 3) {
         exactScores[userId] = (exactScores[userId] ?? 0) + 1;
       }
@@ -257,6 +280,8 @@ export function computeLeagueStats(
       regularitySuccess[userId] = (regularitySuccess[userId] ?? 0) + 1;
       addDayPoints(userId, matchDayId, pts);
     }
+    // Le score exact du club de cœur évolue aussi en LIVE :
+    // exemple prono 2-1, score live 2-1 => 2 pts + 1 exact en direct.
     if (isFavorite && pts === 2) {
       exactScores[userId] = (exactScores[userId] ?? 0) + 1;
     }

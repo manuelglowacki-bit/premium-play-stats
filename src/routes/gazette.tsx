@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import {
   ArrowLeftRight,
@@ -32,6 +32,13 @@ import {
   type LeagueProfile,
 } from "@/lib/leaderboardStats";
 import { fetchExternalGazetteNews, type GazetteArticle } from "@/services/gazetteNewsService";
+import {
+  fetchLiveApiMatches,
+  reconcileMatchesWithLive,
+  markLiveMatchesScorable,
+  FINISHED_STATUSES,
+  IN_PROGRESS_STATUSES,
+} from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/gazette")({
   head: () => ({
@@ -264,6 +271,9 @@ function hasScore(match: any) {
 
 
 function getMatchState(match: any): "upcoming" | "live" | "finished" {
+  // Vocabulaire de statuts UNIQUE (src/lib/liveMatches.ts) — la Gazette ne
+  // doit pas reconnaître un sous-ensemble différent de LIVE/FINISHED par
+  // rapport à Classement/Accueil/Profil/Stats/Pronostics.
   const raw = String(
     match?.status ??
       match?.match_status ??
@@ -271,15 +281,15 @@ function getMatchState(match: any): "upcoming" | "live" | "finished" {
       match?.fixture_status ??
       match?.status_short ??
       ""
-  ).toLowerCase();
+  ).toUpperCase();
 
-  if (["live", "1h", "2h", "ht", "et", "p", "paused", "in_play", "in-play", "playing", "inprogress", "in_progress"].includes(raw)) {
+  if (IN_PROGRESS_STATUSES.has(raw)) {
     return "live";
   }
-  if (["finished", "ft", "aet", "pen", "ended", "complete", "completed"].includes(raw)) {
+  if (FINISHED_STATUSES.has(raw)) {
     return "finished";
   }
-  if (["postponed", "cancelled", "canceled", "suspended"].includes(raw)) {
+  if (["POSTPONED", "CANCELLED", "CANCELED", "SUSPENDED"].includes(raw)) {
     return "upcoming";
   }
 
@@ -733,8 +743,13 @@ function GazettePage() {
   const [rankingTeamNames, setRankingTeamNames] = useState<Record<string, string | undefined>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [clock, setClock] = useState(Date.now());
+  // Empêche une requête devenue obsolète (refresh live précédent encore en
+  // vol) d'écraser un résultat plus récent — même garde que Classement/
+  // Accueil/Profil/Stats.
+  const loadSeqRef = useRef(0);
 
   async function loadData(silent = false) {
+    const requestId = ++loadSeqRef.current;
     if (!silent) setLoading(true);
     setError("");
 
@@ -748,7 +763,7 @@ function GazettePage() {
         { data: predictionData, error: predictionError },
         { data: teamsData, error: teamsError },
         { data: favoriteHistoryData, error: favoriteHistoryError },
-        apiPayload,
+        apiLiveMatches,
       ] = await Promise.all([
         supabase.from("competitions").select("id, external_code, code"),
         getMatchdays(),
@@ -760,16 +775,12 @@ function GazettePage() {
         supabase
           .from("user_season_favorite_teams")
           .select("user_id, season_id, favorite_team_id"),
-        fetch("/api/ligue1/matchs?season=2026", {
-          headers: { Accept: "application/json" },
-        })
-          .then(async (response) => {
-            if (!response.ok) return null;
-            const body = await response.json().catch(() => null);
-            return body?.ok ? body : null;
-          })
-          .catch(() => null),
+        // Même fetcher que toutes les autres pages (src/lib/liveMatches.ts) —
+        // Ligue 1 + les 4 championnats bonus, jamais un fetch dédié.
+        fetchLiveApiMatches(),
       ]);
+
+      if (requestId !== loadSeqRef.current) return;
 
       if (competitionsError) throw competitionsError;
       if (bonusOptionsError) throw bonusOptionsError;
@@ -804,65 +815,18 @@ function GazettePage() {
         bonusMatchesByMatchday.set(option.matchday_id, list);
       });
 
-      // Supabase reste la source du calendrier. Pour le direct, on fusionne
-      // le statut et le score provenant de l'API Ligue 1.
-      const apiMatchByFixture = new Map<string, any>();
-      const apiMatchByTeams = new Map<string, any>();
-
-      for (const apiMatch of Array.isArray(apiPayload?.matchs) ? apiPayload.matchs : []) {
-        if (apiMatch?.apiFixtureId != null) {
-          apiMatchByFixture.set(String(apiMatch.apiFixtureId), apiMatch);
-        }
-
-        const home = normalizeClubLogoName(apiMatch?.domicile ?? "");
-        const away = normalizeClubLogoName(apiMatch?.exterieur ?? "");
-        if (home && away) {
-          apiMatchByTeams.set(`${home}__${away}`, apiMatch);
-        }
-      }
-
-      const mergeLiveApiMatch = (match: any) => {
-        const apiMatch =
-          match?.api_fixture_id != null
-            ? apiMatchByFixture.get(String(match.api_fixture_id))
-            : apiMatchByTeams.get(
-                `${normalizeClubLogoName(match?.home_team ?? "")}__${normalizeClubLogoName(match?.away_team ?? "")}`,
-              );
-
-        if (!apiMatch) return match;
-
-        const status = String(
-          apiMatch.statut ??
-          apiMatch.status ??
-          match.status ??
-          "SCHEDULED",
-        );
-
-        return {
-          ...match,
-          status,
-          live_status: status,
-          finished: ["FINISHED", "FT", "AET", "PEN"].includes(status.toUpperCase()),
-          home_score:
-            apiMatch.scoreDomicile ??
-            apiMatch.score_home ??
-            match.home_score ??
-            null,
-          away_score:
-            apiMatch.scoreExterieur ??
-            apiMatch.score_away ??
-            match.away_score ??
-            null,
-        };
-      };
-
+      // Supabase reste la source du calendrier. Pour le direct, la fusion
+      // (statut/score + garde anti-régression + cache sessionStorage) passe
+      // EXCLUSIVEMENT par src/lib/liveMatches.ts — même fonction que
+      // Classement/Accueil/Profil/Stats/Pronostics, plus de fetch ni de
+      // fusion dédiés à la Gazette.
       const normalized: Journee[] = ligue1Matchdays
         .map((matchday: any) => ({
           id: matchday.id,
           number: matchday.number,
           title: `J${matchday.number}`,
-          matches: (matchesByMatchday.get(matchday.id) ?? []).map(mergeLiveApiMatch),
-          bonus: (bonusMatchesByMatchday.get(matchday.id) ?? []).map(mergeLiveApiMatch),
+          matches: reconcileMatchesWithLive(matchesByMatchday.get(matchday.id) ?? [], apiLiveMatches),
+          bonus: reconcileMatchesWithLive(bonusMatchesByMatchday.get(matchday.id) ?? [], apiLiveMatches),
         }))
         .sort((a, b) => Number(a.number) - Number(b.number));
 
@@ -927,7 +891,9 @@ function GazettePage() {
 
   useEffect(() => {
     loadData();
-    const refresh = window.setInterval(() => loadData(true), 30000);
+    // Même cadence que les autres pages (15s) — un compromis charge API /
+    // fraîcheur live, cf. src/lib/liveMatches.ts.
+    const refresh = window.setInterval(() => loadData(true), 15000);
     const ticker = window.setInterval(() => setClock(Date.now()), 1000);
     return () => {
       window.clearInterval(refresh);
@@ -1031,8 +997,13 @@ function GazettePage() {
   }, [journees]);
 
   const rankedPlayers = useMemo(() => {
-    const ligue1Matches = journees.flatMap((j) => j.matches) as LeagueMatch[];
-    const bonusMatches = journees.flatMap((j) => j.bonus) as LeagueMatch[];
+    // `journees[].matches/.bonus` gardent leur statut RÉEL (utilisé pour
+    // l'affichage : badges EN DIRECT, minuteur, etc.). Le calcul des points,
+    // lui, doit voir un match commencé comme immédiatement scorable — même
+    // vue dérivée que Classement/Accueil/Profil/Stats
+    // (markLiveMatchesScorable, src/lib/liveMatches.ts), jamais Supabase modifié.
+    const ligue1Matches = markLiveMatchesScorable(journees.flatMap((j) => j.matches)) as LeagueMatch[];
+    const bonusMatches = markLiveMatchesScorable(journees.flatMap((j) => j.bonus)) as LeagueMatch[];
 
     const stats = computeLeagueStats(
       ligue1Matches,
@@ -1672,7 +1643,7 @@ function getDisplayedLiveMinute(match: any, now: number) {
   ).toUpperCase();
 
   // Le statut FINISHED/FT est prioritaire : le chrono s'arrête.
-  if (["FINISHED", "FT", "AET", "PEN"].includes(rawStatus)) {
+  if (FINISHED_STATUSES.has(rawStatus)) {
     return "FT";
   }
 

@@ -1,0 +1,26 @@
+{
+  "name": "Prono Ligue 1 LM",
+  "short_name": "Prono Ligue 1 LM",
+  "description": "Pronostique les résultats de la Ligue 1, affronte tes amis et grimpe au classement.",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#060b16",
+  "background_color": "#060b16",
+  "start_url": "/",
+  "scope": "/",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

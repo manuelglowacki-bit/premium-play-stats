@@ -168,7 +168,10 @@ export type CareerPredictionRow = {
 export function aggregateCareerStatsByUser<T extends CareerPredictionRow>(
   predictions: T[],
   isExactPrediction: (prediction: T) => boolean,
-  seasonKeyByMatchId: (matchId: string) => string | null | undefined,
+  // Conservé pour compatibilité d'appel (Classement/Accueil/Profil passent
+  // tous un resolver), mais volontairement NON UTILISÉ pour exclure une
+  // prédiction — voir le correctif ci-dessous.
+  _seasonKeyByMatchId: (matchId: string) => string | null | undefined,
 ): Map<string, CareerStats> {
   const byUser = new Map<string, CareerStats>();
 
@@ -177,10 +180,20 @@ export function aggregateCareerStatsByUser<T extends CareerPredictionRow>(
     if (!uid) continue;
     if (prediction.match_id == null) continue;
 
-    const matchId = String(prediction.match_id);
-    const seasonKey = seasonKeyByMatchId(matchId);
-    if (!seasonKey) continue;
-
+    // BUG CORRIGÉ (audit du point manquant "Points carrière" ≠ "Points") :
+    // cette fonction exigeait auparavant une résolution de saison réussie
+    // (matchId -> matchday_id -> season_id) pour compter la moindre
+    // prédiction — alors que cette clé de saison n'est JAMAIS utilisée
+    // ensuite pour regrouper ou filtrer quoi que ce soit, uniquement comme
+    // porte d'entrée. Résultat : dès que la chaîne se cassait pour UN match
+    // (matchday_id manquant, historique incomplet, match bonus dont le
+    // matchday_id pointe vers une autre compétition...), le point déjà
+    // comptabilisé par computeLeagueStats() (Classement/Stats/Accueil, qui
+    // ne conditionne JAMAIS un point à cette résolution) disparaissait
+    // silencieusement de la carrière. La carrière cumule TOUTES les saisons
+    // sans jamais réinitialiser : elle doit donc suivre EXACTEMENT les
+    // mêmes points que le reste de l'app, y compris les points de la
+    // journée en cours calculés en LIVE (pointsByPredictionKey).
     const current = byUser.get(uid) || { points: 0, exactScores: 0, predictionsCount: 0 };
     current.points += Number(prediction.points || 0);
     if (isExactPrediction(prediction)) current.exactScores += 1;

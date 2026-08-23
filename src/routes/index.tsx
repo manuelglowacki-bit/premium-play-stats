@@ -22,6 +22,7 @@ import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES } from "@/lib/careerLevel";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
+import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -66,6 +67,7 @@ function IndexPage() {
   const [currentMatchday, setCurrentMatchday] = useState("J1");
   const [potAmount, setPotAmount] = useState(0);
   const [careerLevel, setCareerLevel] = useState(1);
+  const homeRequestSeq = useRef(0);
 
 
   // 1. Liste des équipes
@@ -85,6 +87,7 @@ function IndexPage() {
     let cancelled = false;
 
     async function fetchHomeData() {
+      const requestId = ++homeRequestSeq.current;
       try {
         // On récupère chaque ressource indépendamment pour ne pas tout casser
         const [
@@ -115,7 +118,7 @@ function IndexPage() {
           supabase
             .from("matches")
             .select(
-              "id,matchday_id,matchday_code,matchday,match_day,status,kickoff,kickoff_time,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
+              "id,matchday_id,matchday_code,matchday,match_day,status,kickoff,kickoff_time,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished,api_fixture_id",
             )
             .order("kickoff", { ascending: true }),
           // Cagnotte théorique = nombre de joueurs inscrits × droit d'entrée
@@ -150,11 +153,28 @@ function IndexPage() {
         if (bonusOptionsError) console.warn("Erreur chargement bonus :", bonusOptionsError);
         if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
-        if (cancelled) return;
+        if (cancelled || requestId !== homeRequestSeq.current) return;
 
         const profileById = new Map((profiles || []).map((p: any) => [p.id, p]));
         const teamById = new Map((teams || []).map((t: any) => [t.id, t]));
-        const matchById = new Map((matches || []).map((m: any) => [String(m.id), m]));
+
+        // Même source live que le Classement (et toutes les autres pages) :
+        // fusion + garde anti-régression + fenêtre "match commencé -> scorable"
+        // centralisées dans src/lib/liveMatches.ts, jamais dupliquées ici.
+        const liveApiMatches = await fetchLiveApiMatches();
+
+        if (cancelled || requestId !== homeRequestSeq.current) return;
+
+        const reconciledMatches = reconcileMatchesWithLive((matches || []) as any[], liveApiMatches);
+
+        // Vue "scorable" dérivée : un match commencé avec un score live
+        // devient provisoirement scorable pour computeLeagueStats, sans
+        // jamais modifier Supabase (voir markLiveMatchesScorable).
+        const liveScoringMatches = markLiveMatchesScorable(reconciledMatches);
+
+        const matchById = new Map(
+          reconciledMatches.map((m: any) => [String(m.id), m]),
+        );
 
         // Pas de colonne `exact_score` en base : un pronostic est "exact"
         // quand home_prediction/away_prediction correspondent exactement au
@@ -185,7 +205,7 @@ function IndexPage() {
             .map((md: any) => String(md.id)),
         );
 
-        const ligue1Matches = (matches || []).filter(
+        const ligue1Matches = (liveScoringMatches || []).filter(
           (m: any) =>
             m.home_score != null &&
             m.away_score != null &&
@@ -197,7 +217,7 @@ function IndexPage() {
 
         const bonusOptions = (bonusOptionsData || []) as { matchday_id: string; match_id: string }[];
         const bonusMatchIds = new Set(bonusOptions.map((o) => String(o.match_id)));
-        const bonusMatches = (matches || []).filter(
+        const bonusMatches = (liveScoringMatches || []).filter(
           (m: any) => m.home_score != null && m.away_score != null && m.finished && bonusMatchIds.has(String(m.id)),
         );
 
@@ -313,7 +333,7 @@ function IndexPage() {
 setLeaderboard(rankedRankings);
 
         // -------- Journée la plus récente terminée --------
-        const finished = (matches || []).filter((m: any) =>
+        const finished = (reconciledMatches || []).filter((m: any) =>
           String(m.status || "").toLowerCase() === "finished" ||
           String(m.status || "").toLowerCase() === "ft"
         );
@@ -344,7 +364,7 @@ setLeaderboard(rankedRankings);
           // Libellé de journée ("J5") par matchday_id — pur affichage, un
           // seul match suffit pour retrouver le libellé de sa journée.
           const dayLabelByMatchdayId = new Map<string, string>();
-          (matches || []).forEach((m: any) => {
+          (reconciledMatches || []).forEach((m: any) => {
             if (!m.matchday_id || dayLabelByMatchdayId.has(String(m.matchday_id))) return;
             const rawDay = m.matchday_code || m.matchday || m.match_day;
             if (rawDay === null || rawDay === undefined || rawDay === "") return;
@@ -410,7 +430,22 @@ setLeaderboard(rankedRankings);
     }
 
     fetchHomeData();
-    return () => { cancelled = true; };
+
+    const interval = window.setInterval(fetchHomeData, 15000);
+    const onFocus = () => fetchHomeData();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchHomeData();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [user?.id, teams]);
 
   // Horloge légère pour que le verrouillage se déclenche sans rechargement
@@ -978,8 +1013,3 @@ setLeaderboard(rankedRankings);
     </AppShell>
   );
 }
-
-
-
-
-

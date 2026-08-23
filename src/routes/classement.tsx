@@ -1,5 +1,5 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -14,6 +14,7 @@ import { matchday as currentMatchday } from "@/lib/prono-data";
 import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLevel";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
+import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/classement")({
   head: () => ({
@@ -46,7 +47,7 @@ type RankedPlayer = PlayerProfile & {
   points: number;
   exactScores: number;
   predictionsCount: number;
-  /** Nombre de pronostics 1N2 réussis (cumul sur toutes les journées terminées) — sert au calcul de la régularité. */
+  /** Nombre de pronostics ayant rapporté au moins 1 point — sert au calcul du pourcentage de régularité. */
   regularitySuccess: number;
   /** Nombre de journées Ligue 1 sur lesquelles le joueur a effectivement pronostiqué. */
   playedMatchdays: number;
@@ -122,6 +123,9 @@ function ClassementPage() {
   const { user } = useAuth();
 
   const [players, setPlayers] = useState<PlayerProfile[] | null>(null);
+  // Empêche une ancienne requête live de revenir après une requête plus récente
+  // et d'écraser le classement avec des points obsolètes.
+  const loadSequenceRef = useRef(0);
   const [teamsById, setTeamsById] = useState<Record<string, TeamRow>>({});
   const [season, setSeason] = useState("2026-2027");
 
@@ -178,6 +182,9 @@ function ClassementPage() {
     };
 
     async function load() {
+      const loadId = ++loadSequenceRef.current;
+      const isStale = () => cancelled || loadId !== loadSequenceRef.current;
+
       try {
         // La source du classement est maintenant cohérente avec le système
         // actuel :
@@ -208,7 +215,7 @@ function ClassementPage() {
           supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
         ]);
 
-        if (cancelled) return;
+        if (isStale()) return;
         if (profilesError) throw profilesError;
         if (teamsError) throw teamsError;
         if (settingsError) throw settingsError;
@@ -241,7 +248,7 @@ function ClassementPage() {
         const matchdayIds = ligue1Matchdays.map((md: any) => String(md.id));
 
         if (matchdayIds.length === 0) {
-          if (!cancelled) {
+          if (!isStale()) {
             setPlayers(profilesData ?? []);
             setPointsByUser({});
             setPredictionsCountByUser({});
@@ -269,7 +276,7 @@ function ClassementPage() {
             .in("matchday_id", matchdayIds),
         ]);
 
-        if (cancelled) return;
+        if (isStale()) return;
         if (competitionsError) throw competitionsError;
         if (matchesError) throw matchesError;
 
@@ -293,7 +300,7 @@ function ClassementPage() {
         // (même saison, competition_id non vide), d'où des numéros dupliqués
         // dans les chips (ex. "J17 J17 J17 J18…"). Dédoublonnage par numéro en
         // plus, par sécurité vis-à-vis d'éventuelles anciennes lignes en base.
-        if (!cancelled) {
+        if (!isStale()) {
           const uniqueByNumber = new Map<number, { id: string; number: number }>();
           ligue1Matchdays
             .filter((md: any) => ligue1MatchdayIds.has(String(md.id)))
@@ -315,60 +322,16 @@ function ClassementPage() {
         // DIRECT LIVE :
         // Supabase reste la source du calendrier et des pronostics, mais le
         // score/statut en cours est rafraîchi depuis l'API football-data.org.
-        // L'endpoint /api/ligue1/matchs?competition=ALL renvoie Ligue 1 +
-        // les 4 championnats bonus avec le même apiFixtureId que celui stocké
-        // dans `matches.api_fixture_id`.
-        let liveApiByFixture = new Map<number, any>();
+        // Fusion + garde anti-régression + fenêtre "match commencé -> scorable"
+        // : logique UNIQUE, partagée avec Accueil/Profil/Stats/Pronostics,
+        // voir src/lib/liveMatches.ts (avant cette extraction, le Classement
+        // n'avait ni garde anti-régression, ni scoring en direct pendant un
+        // match encore EN COURS — un vrai retard par rapport aux 3 autres
+        // pages, corrigé ici).
+        const liveApiMatches = await fetchLiveApiMatches();
+        if (isStale()) return;
 
-        try {
-          const liveResponse = await fetch("/api/ligue1/matchs?season=2026&competition=ALL", {
-            headers: { Accept: "application/json" },
-            cache: "no-store",
-          });
-
-          if (liveResponse.ok) {
-            const livePayload = await liveResponse.json().catch(() => null);
-            const liveMatches = Array.isArray(livePayload?.allMatches)
-              ? livePayload.allMatches
-              : [];
-
-            liveApiByFixture = new Map(
-              liveMatches
-                .filter((m: any) => m?.apiFixtureId != null)
-                .map((m: any) => [Number(m.apiFixtureId), m]),
-            );
-          }
-        } catch (liveError) {
-          // Le classement continue avec Supabase si l'API live est
-          // momentanément indisponible.
-          console.warn("API live indisponible, conservation des données Supabase :", liveError);
-        }
-
-        const applyLiveScore = (match: MatchForRanking): MatchForRanking => {
-          if (match.api_fixture_id == null) return match;
-
-          const live = liveApiByFixture.get(Number(match.api_fixture_id));
-          if (!live) return match;
-
-          const status = String(live.statut ?? live.status ?? match.status ?? "SCHEDULED");
-          const upperStatus = status.toUpperCase();
-
-          return {
-            ...match,
-            status,
-            finished: ["FINISHED", "FT", "AET", "PEN"].includes(upperStatus),
-            home_score:
-              live.scoreDomicile != null
-                ? Number(live.scoreDomicile)
-                : match.home_score,
-            away_score:
-              live.scoreExterieur != null
-                ? Number(live.scoreExterieur)
-                : match.away_score,
-          };
-        };
-
-        const liveMatches = matches.map(applyLiveScore);
+        const liveMatches = reconcileMatchesWithLive(matches, liveApiMatches);
 
         // Les 4 matchs bonus sont rattachés à la journée Ligue 1 via
         // bonus_options.matchday_id. Le match bonus lui-même peut appartenir
@@ -388,7 +351,7 @@ function ClassementPage() {
           .select("matchday_id, match_id, is_active")
           .in("matchday_id", matchdayIds);
 
-        if (cancelled) return;
+        if (isStale()) return;
         if (bonusOptionsError) throw bonusOptionsError;
 
         const bonusOptions = (bonusOptionsData ?? []) as BonusOptionForRanking[];
@@ -404,10 +367,13 @@ function ClassementPage() {
             )
             .in("id", bonusMatchIds);
 
-          if (cancelled) return;
+          if (isStale()) return;
           if (bonusMatchesError) throw bonusMatchesError;
 
-          bonusMatches = ((bonusMatchesData ?? []) as MatchForRanking[]).map(applyLiveScore);
+          bonusMatches = reconcileMatchesWithLive(
+            (bonusMatchesData ?? []) as MatchForRanking[],
+            liveApiMatches,
+          );
         }
 
         const allScoredMatchIds = [
@@ -422,7 +388,7 @@ function ClassementPage() {
           .select("user_id, match_id, home_prediction, away_prediction, created_at")
           .in("match_id", allScoredMatchIds);
 
-        if (cancelled) return;
+        if (isStale()) return;
         if (predictionsError) throw predictionsError;
 
         const profiles = (profilesData ?? []) as PlayerProfile[];
@@ -459,8 +425,17 @@ function ClassementPage() {
           favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
         });
 
+        // Vue "scorable" dérivée de liveMatches/bonusMatches (voir
+        // src/lib/liveMatches.ts) : réservée à computeLeagueStats. Un match
+        // encore EN COURS (pas encore FINISHED côté API) mais dont le score
+        // est déjà connu doit déjà rapporter des points — jamais utilisée
+        // pour "dernière journée terminée"/l'évolution (matchesByDayNumber
+        // plus bas continue d'utiliser liveMatches/bonusMatches, l'état RÉEL).
+        const scorableLigue1Matches = markLiveMatchesScorable(liveMatches);
+        const scorableBonusMatches = markLiveMatchesScorable(bonusMatches);
+
         const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, pointsByMatchday, pointsByPredictionKey } =
-          computeLeagueStats(liveMatches, bonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
+          computeLeagueStats(scorableLigue1Matches, scorableBonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
             seasonByMatchdayId: seasonByMatchdayIdObj,
             favoriteTeamBySeason,
           });
@@ -485,8 +460,12 @@ function ClassementPage() {
         // courante, donc ce calcul est exact dès aujourd'hui. Le jour où une
         // saison 2 démarre, cette entrée devra être élargie à un jeu de
         // données multi-saisons.
+        // liveMatches/bonusMatches (état RÉEL fusionné avec le live, voir
+        // src/lib/liveMatches.ts) — jamais `matches` brut : un match encore
+        // en cours doit déjà compter pour le score exact/carrière, comme
+        // partout ailleurs dans l'app.
         const matchByIdForCareer = new Map<string, any>();
-        [...matches, ...bonusMatches].forEach((m: any) => matchByIdForCareer.set(String(m.id), m));
+        [...liveMatches, ...bonusMatches].forEach((m: any) => matchByIdForCareer.set(String(m.id), m));
 
         const isExactPrediction = (p: any) => {
           if (p.home_prediction == null || p.away_prediction == null) return false;
@@ -547,22 +526,47 @@ function ClassementPage() {
           }
         });
 
-        const finishedNumbers = [...new Set(
-          liveMatches
-            .filter((m) => m.finished && m.home_score != null && m.away_score != null)
-            .map((m) => m.matchday_id ? l1NumberById.get(String(m.matchday_id)) : undefined)
-            .filter((n): n is number => typeof n === "number" && n > 0)
-        )].sort((a, b) => a - b);
+        // Une journée est considérée comme TERMINÉE uniquement lorsque TOUS
+        // ses matchs Ligue 1 sont terminés. Avant, un seul match terminé de J2
+        // suffisait à faire entrer J2 dans "finishedNumbers", ce qui rendait
+        // l'évolution instable pendant la journée.
+        const matchesByDayNumber = new Map<number, MatchForRanking[]>();
+        liveMatches.forEach((m) => {
+          const dayNumber = m.matchday_id
+            ? l1NumberById.get(String(m.matchday_id))
+            : undefined;
+          if (dayNumber == null || dayNumber <= 0) return;
+          const dayMatches = matchesByDayNumber.get(dayNumber) ?? [];
+          dayMatches.push(m);
+          matchesByDayNumber.set(dayNumber, dayMatches);
+        });
 
+        const finishedNumbers = [...matchesByDayNumber.entries()]
+          .filter(([, dayMatches]) =>
+            dayMatches.length > 0 &&
+            dayMatches.every(
+              (m) => m.finished && m.home_score != null && m.away_score != null,
+            ),
+          )
+          .map(([dayNumber]) => dayNumber)
+          .sort((a, b) => a - b);
+
+        // BASELINE DE L'ÉVOLUTION — doit être le classement juste avant la
+        // journée EN COURS, jamais "il y a deux journées". `latestFinishedNumber`
+        // est la dernière journée où TOUS les matchs Ligue 1 sont réellement
+        // FINISHED (voir matchesByDayNumber ci-dessus, sur l'état réel non
+        // forcé) : c'est exactement "avant la journée en cours", que celle-ci
+        // soit en direct ou pas encore commencée. Cette référence ne bouge
+        // JAMAIS pendant la journée en cours (elle ne dépend d'aucun score
+        // live) : seul currentRanks (plus bas, calculé sur scorableLigue1Matches/
+        // scorableBonusMatches) évolue à chaque refresh.
         const latestFinishedNumber = finishedNumbers.at(-1) ?? null;
-        const previousFinishedNumber =
-          finishedNumbers.length >= 2 ? finishedNumbers[finishedNumbers.length - 2] : null;
 
-        // RÉGULARITÉ — ici on affiche le nombre de journées réellement jouées
-        // par chaque joueur depuis le début, et non un ratio de matchs réussis.
-        // Une journée compte dès qu'un joueur possède au moins un pronostic
-        // rattaché à cette journée Ligue 1 (bonus compris via son rattachement
-        // à la journée par bonus_options).
+        // RÉGULARITÉ :
+        // - regularitySuccess = nombre de pronostics ayant rapporté au moins 1 point
+        // - predictionsCount = nombre de pronostics effectivement scorés
+        // La régularité affichée est donc un vrai pourcentage de réussite et
+        // évolue à chaque nouveau résultat, au lieu d'afficher uniquement Jx/Jy.
         const playedMatchdaysSets: Record<string, Set<number>> = {};
         for (const p of predictionsData ?? []) {
           const userId = String(p.user_id ?? "");
@@ -590,11 +594,11 @@ function ClassementPage() {
           return Math.sign(predictedDiff) === Math.sign(actualDiff);
         };
 
-        if (previousFinishedNumber != null) {
+        if (latestFinishedNumber != null) {
           for (const p of predictionsData ?? []) {
             const userId = String(p.user_id ?? "");
             const dayNumber = matchdayNumberByMatchId.get(String(p.match_id));
-            if (!userId || dayNumber == null || dayNumber > previousFinishedNumber) continue;
+            if (!userId || dayNumber == null || dayNumber > latestFinishedNumber) continue;
 
             previousPredictionsByUser[userId] = (previousPredictionsByUser[userId] ?? 0) + 1;
             previousPointsByUser[userId] =
@@ -626,16 +630,27 @@ function ClassementPage() {
           careerTitle: "Débutant",
         }));
 
-        const previousRanking = previousFinishedNumber != null
+        // Base d'évolution LIVE : classement avant le début de la journée en cours.
+        const baselineRanking = latestFinishedNumber != null
           ? rankPlayers(previousRankedInput as any)
-          : [];
+          : rankPlayers(
+              profiles.map((p) => ({
+                ...p,
+                points: 0,
+                exactScores: 0,
+                predictionsCount: 0,
+                regularitySuccess: 0,
+                careerLevel: 1,
+                careerTitle: "Débutant",
+              })) as any,
+            );
 
         const previousRanks: Record<string, number> = {};
-        previousRanking.forEach((player: any) => {
+        baselineRanking.forEach((player: any) => {
           previousRanks[player.id] = player.rank;
         });
 
-        if (!cancelled) {
+        if (!isStale()) {
           setPlayers(profiles);
           setPointsByUser(points);
           setPredictionsCountByUser(predictionsCount);
@@ -646,10 +661,49 @@ function ClassementPage() {
           setBestMatchday(topMatchday);
           setCareerStatsByUser(Object.fromEntries(careerByUser));
           setPreviousRankByUser(previousRanks);
+
+          // SOURCE DE VÉRITÉ POUR LE PROFIL :
+          // le Profil lit ce snapshot produit par la page Classement,
+          // au lieu de reconstruire une seconde fois le classement.
+          try {
+            // On publie uniquement les valeurs déjà calculées par le Classement.
+            // Aucun second appel à rankPlayers() : le moteur officiel reste inchangé.
+            const canonicalRanked = profiles.map((player: any) => ({
+              id: player.id,
+              rank: 0,
+              points: Number(points[player.id] ?? 0),
+              exactScores: Number(exactScores[player.id] ?? 0),
+              predictionsCount: Number(predictionsCount[player.id] ?? 0),
+              regularitySuccess: Number(regularitySuccess[player.id] ?? 0),
+              playedMatchdays: Number(playedMatchdaysByUser[player.id] ?? 0),
+              career: careerByUser.get(player.id) ?? {
+                points: 0,
+                exactScores: 0,
+              },
+            }));
+
+            window.localStorage.setItem(
+              "prono_ligue1_classement_snapshot",
+              JSON.stringify({
+                season: seasonName,
+                updatedAt: Date.now(),
+                players: canonicalRanked,
+              }),
+            );
+
+            window.dispatchEvent(
+              new CustomEvent("classement-snapshot-updated"),
+            );
+          } catch (snapshotError) {
+            console.warn(
+              "Snapshot Classement -> Profil indisponible :",
+              snapshotError,
+            );
+          }
         }
       } catch (error) {
         console.error("Erreur chargement/calcul du classement :", error);
-        if (!cancelled) {
+        if (!isStale()) {
           setPlayers([]);
           setPointsByUser({});
           setPredictionsCountByUser({});
@@ -673,16 +727,24 @@ function ClassementPage() {
     // Le classement est vivant : pendant un match, le score de l'API peut
     // changer sans qu'aucun événement Supabase ne soit déclenché. On recharge
     // donc les données toutes les 30 secondes.
-    const liveRefreshTimer = window.setInterval(refreshRanking, 30_000);
+    const liveRefreshTimer = window.setInterval(refreshRanking, 15_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshRanking();
+    };
 
     window.addEventListener("pronos-updated", refreshRanking);
     window.addEventListener("pronos-saved", refreshRanking);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       cancelled = true;
+      // Invalide immédiatement toute requête encore en vol.
+      ++loadSequenceRef.current;
       window.clearInterval(liveRefreshTimer);
       window.removeEventListener("pronos-updated", refreshRanking);
       window.removeEventListener("pronos-saved", refreshRanking);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
   const careerTitles = [
@@ -986,24 +1048,37 @@ function ClassementPage() {
                           </div>
 
                           <div>
-                            <div className="mb-1.5 flex items-baseline justify-between gap-2 font-mono text-[8px] uppercase tracking-wider text-slate-400">
-                              <span className="font-bold text-slate-300">{p.playedMatchdays}/{totalDays}</span>
-                              <span>régularité</span>
-                            </div>
-                            <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.06]">
-                              <div
-                                className={`h-full rounded-full ${
-                                  p.rank === 1 ? "bg-gradient-to-r from-amber-500 to-yellow-200" :
-                                  p.rank === 2 ? "bg-gradient-to-r from-slate-400 to-white" :
-                                  p.rank === 3 ? "bg-gradient-to-r from-orange-600 to-orange-300" :
-                                  p.rank === totalPlayers - 2 ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white" :
-                                  p.rank === totalPlayers - 1 ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white" :
-                                  p.rank === totalPlayers ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white" :
-                                  "bg-gradient-to-r from-slate-600 to-slate-400"
-                                }`}
-                                style={{ width: `${totalDays > 0 ? Math.round((p.playedMatchdays / totalDays) * 100) : 0}%` }}
-                              />
-                            </div>
+                            {(() => {
+                              const regularityTotal = p.predictionsCount ?? 0;
+                              const regularitySuccess = p.regularitySuccess ?? 0;
+                              const regularityPct = regularityTotal > 0
+                                ? Math.round((regularitySuccess / regularityTotal) * 100)
+                                : 0;
+                              return (
+                                <>
+                                  <div className="mb-1.5 flex items-baseline justify-between gap-2 font-mono text-[8px] uppercase tracking-wider text-slate-400">
+                                    <span className="font-bold text-slate-300">
+                                      {regularityPct}% <span className="text-slate-600">({regularitySuccess}/{regularityTotal})</span>
+                                    </span>
+                                    <span>régularité</span>
+                                  </div>
+                                  <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.06]">
+                                    <div
+                                      className={`h-full rounded-full ${
+                                        p.rank === 1 ? "bg-gradient-to-r from-amber-500 to-yellow-200" :
+                                        p.rank === 2 ? "bg-gradient-to-r from-slate-400 to-white" :
+                                        p.rank === 3 ? "bg-gradient-to-r from-orange-600 to-orange-300" :
+                                        p.rank === totalPlayers - 2 ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white" :
+                                        p.rank === totalPlayers - 1 ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white" :
+                                        p.rank === totalPlayers ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white" :
+                                        "bg-gradient-to-r from-slate-600 to-slate-400"
+                                      }`}
+                                      style={{ width: `${regularityPct}%` }}
+                                    />
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
 
                           <div className="flex items-center justify-center">
@@ -1218,39 +1293,46 @@ function ClassementPage() {
                           </div>
                         </div>
 
-                        <div className="min-w-0 px-1">
-                          <div className="mb-1 flex items-center justify-center gap-1 font-mono text-[6px] uppercase tracking-wider text-slate-400">
-                            <span className="font-bold text-slate-300">
-                              {p.playedMatchdays}/{totalDays}
-                            </span>
-                            <span>J.</span>
-                          </div>
-                          <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.10]">
-                            <div
-                              className={`h-full rounded-full ${
-                                p.rank === 1
-                                  ? "bg-gradient-to-r from-amber-400 to-yellow-200"
-                                  : p.rank === 2
-                                    ? "bg-gradient-to-r from-slate-300 to-white"
-                                    : p.rank === 3
-                                      ? "bg-gradient-to-r from-orange-300 to-amber-200"
-                                      : p.rank === totalPlayers - 2
-                                        ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white"
-                                        : p.rank === totalPlayers - 1
-                                          ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white"
-                                          : p.rank === totalPlayers
-                                            ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white"
-                                            : "bg-slate-400"
-                              }`}
-                              style={{
-                                width: `${totalDays ? Math.round((p.playedMatchdays / totalDays) * 100) : 0}%`,
-                              }}
-                            />
-                          </div>
-                          <div className="mt-0.5 text-center font-mono text-[5px] uppercase tracking-widest text-slate-500">
-                            présence
-                          </div>
-                        </div>
+                        {(() => {
+                          const regularityTotal = p.predictionsCount ?? 0;
+                          const regularitySuccess = p.regularitySuccess ?? 0;
+                          const regularityPct = regularityTotal > 0
+                            ? Math.round((regularitySuccess / regularityTotal) * 100)
+                            : 0;
+                          return (
+                            <div className="min-w-0 px-1">
+                              <div className="mb-1 flex items-center justify-center gap-1 font-mono text-[6px] uppercase tracking-wider text-slate-400">
+                                <span className="font-bold text-slate-300">
+                                  {regularityPct}%
+                                </span>
+                                <span>réussite</span>
+                              </div>
+                              <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.10]">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    p.rank === 1
+                                      ? "bg-gradient-to-r from-amber-400 to-yellow-200"
+                                      : p.rank === 2
+                                        ? "bg-gradient-to-r from-slate-300 to-white"
+                                        : p.rank === 3
+                                          ? "bg-gradient-to-r from-orange-300 to-amber-200"
+                                          : p.rank === totalPlayers - 2
+                                            ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white"
+                                            : p.rank === totalPlayers - 1
+                                              ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white"
+                                              : p.rank === totalPlayers
+                                                ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white"
+                                                : "bg-slate-400"
+                                  }`}
+                                  style={{ width: `${regularityPct}%` }}
+                                />
+                              </div>
+                              <div className="mt-0.5 text-center font-mono text-[5px] uppercase tracking-widest text-slate-500">
+                                {regularitySuccess}/{regularityTotal}
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         <div className="flex min-w-0 justify-center">
                           <div

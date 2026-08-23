@@ -23,6 +23,12 @@ import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { withAlpha } from "@/lib/team-theme";
 import { resolveBonusClubLogo } from "@/services/bonusClubLogoService";
+import {
+  fetchLiveApiMatches,
+  LIVE_SCORE_CACHE_PREFIX,
+  FINISHED_STATUSES,
+  IN_PROGRESS_STATUSES,
+} from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/pronostics")({
   head: () => ({
@@ -404,6 +410,18 @@ function PronosticsPage() {
   const [logoFailed, setLogoFailed] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const autoSelectedRef = useRef(false);
+  // Toujours à jour, contrairement à `matches` capturé une seule fois par
+  // la closure de l'effet DIRECT LIVE (dépendances `[]`, volontairement non
+  // relancé à chaque chargement de matchs pour ne pas réinitialiser le
+  // timer de rafraîchissement toutes les 10s).
+  const matchesRef = useRef<MatchRow[]>([]);
+  useEffect(() => {
+    matchesRef.current = matches;
+  }, [matches]);
+  // Empêche un refresh live devenu obsolète (fetch lent, ancien tick encore
+  // en vol) d'écraser un résultat plus récent — même garde que les pages
+  // de calcul (request sequence, voir section "requêtes concurrentes").
+  const liveSeqRef = useRef(0);
   // Passe à `true` dès que le joueur touche à un pick/score — empêche
   // l'effet de restauration (basé sur des données qui arrivent par vagues :
   // matches, bonusOptions, favoriteTeamId) d'écraser une saisie en cours.
@@ -640,40 +658,169 @@ function PronosticsPage() {
     let cancelled = false;
 
     async function refreshLive() {
+      const requestId = ++liveSeqRef.current;
       try {
-        const response = await fetch(
-          "/api/ligue1/matchs?season=2026&competition=ALL",
-          {
-            headers: { Accept: "application/json" },
-            cache: "no-store",
-          },
-        );
-
-        if (!response.ok) return;
-
-        const payload = await response.json().catch(() => null);
-        const apiMatches = Array.isArray(payload?.allMatches)
-          ? payload.allMatches
-          : [];
+        // Même fetcher que toutes les autres pages (src/lib/liveMatches.ts).
+        const apiMatches = await fetchLiveApiMatches();
+        if (cancelled || requestId !== liveSeqRef.current) return;
 
         const next: Record<string, any> = {};
+
         for (const apiMatch of apiMatches) {
-          if (apiMatch?.apiFixtureId != null) {
-            next[String(apiMatch.apiFixtureId)] = apiMatch;
+          if (apiMatch?.apiFixtureId == null) continue;
+
+          const key = String(apiMatch.apiFixtureId);
+          let reconciled = { ...apiMatch };
+
+          const apiHome = apiMatch.scoreDomicile ?? apiMatch.scoreHome ?? apiMatch.homeScore ?? null;
+          const apiAway = apiMatch.scoreExterieur ?? apiMatch.scoreAway ?? apiMatch.awayScore ?? null;
+          const apiStatus = String(apiMatch.statut ?? apiMatch.status ?? "SCHEDULED").toUpperCase();
+
+          // Ne jamais faire régresser un score déjà reçu.
+          // Un retour temporaire de l'API vers 0-0/null, ou une réponse partielle,
+          // ne doit pas annuler un 1-1 déjà affiché.
+          try {
+            const cacheKey = `${LIVE_SCORE_CACHE_PREFIX}${key}`;
+            const cachedRaw = sessionStorage.getItem(cacheKey);
+            const cached = cachedRaw ? JSON.parse(cachedRaw) : null;
+
+            const hasApiScore =
+              apiHome != null &&
+              apiAway != null &&
+              Number.isFinite(Number(apiHome)) &&
+              Number.isFinite(Number(apiAway));
+
+            if (hasApiScore) {
+              const incomingHome = Number(apiHome);
+              const incomingAway = Number(apiAway);
+              const cachedHome =
+                cached?.home_score != null ? Number(cached.home_score) : null;
+              const cachedAway =
+                cached?.away_score != null ? Number(cached.away_score) : null;
+
+              // Le score d'un match de football ne régresse pas :
+              // on conserve le plus récent score connu si l'API renvoie
+              // temporairement une valeur inférieure.
+              const acceptIncoming =
+                cachedHome == null ||
+                cachedAway == null ||
+                incomingHome > cachedHome ||
+                incomingAway > cachedAway ||
+                (incomingHome === cachedHome && incomingAway === cachedAway);
+
+              if (acceptIncoming) {
+                reconciled = {
+                  ...apiMatch,
+                  scoreDomicile: incomingHome,
+                  scoreExterieur: incomingAway,
+                  statut: apiStatus,
+                };
+              } else {
+                reconciled = {
+                  ...apiMatch,
+                  scoreDomicile: cachedHome,
+                  scoreExterieur: cachedAway,
+                  statut: cached.status ?? apiStatus,
+                };
+              }
+
+              sessionStorage.setItem(
+                cacheKey,
+                JSON.stringify({
+                  home_score:
+                    reconciled.scoreDomicile != null
+                      ? Number(reconciled.scoreDomicile)
+                      : null,
+                  away_score:
+                    reconciled.scoreExterieur != null
+                      ? Number(reconciled.scoreExterieur)
+                      : null,
+                  status: reconciled.statut ?? reconciled.status ?? apiStatus,
+                  updatedAt: Date.now(),
+                }),
+              );
+            } else if (cached) {
+              reconciled = {
+                ...apiMatch,
+                scoreDomicile:
+                  cached.home_score != null ? Number(cached.home_score) : null,
+                scoreExterieur:
+                  cached.away_score != null ? Number(cached.away_score) : null,
+                statut: cached.status ?? apiStatus,
+              };
+            }
+          } catch {
+            // sessionStorage indisponible/corrompu : on utilise la réponse API brute.
+          }
+
+          next[key] = reconciled;
+        }
+
+        // Résilience totale (section "API live") : un match absent de la
+        // réponse de CE cycle (API partiellement en panne, championnat
+        // temporairement non renvoyé, etc.) garde son dernier score connu
+        // au lieu de disparaître de l'affichage.
+        for (const match of matchesRef.current) {
+          if (match.api_fixture_id == null) continue;
+          const key = String(match.api_fixture_id);
+          if (next[key]) continue;
+
+          try {
+            const cachedRaw = sessionStorage.getItem(`${LIVE_SCORE_CACHE_PREFIX}${key}`);
+            const cached = cachedRaw ? JSON.parse(cachedRaw) : null;
+            if (!cached) continue;
+
+            next[key] = {
+              apiFixtureId: match.api_fixture_id,
+              scoreDomicile: cached.home_score,
+              scoreExterieur: cached.away_score,
+              statut: cached.status ?? match.status ?? "SCHEDULED",
+            };
+          } catch {
+            // Pas de cache exploitable pour ce match.
           }
         }
 
-        if (!cancelled) {
+        if (!cancelled && requestId === liveSeqRef.current) {
           setLiveByFixture(next);
           setLiveTick(Date.now());
         }
       } catch (error) {
+        if (cancelled || requestId !== liveSeqRef.current) return;
         console.warn("API live indisponible sur la page Pronos :", error);
+
+        // Même en cas de panne réseau totale, conserver les derniers scores connus.
+        const cachedOnly: Record<string, any> = {};
+        try {
+          for (const match of matchesRef.current) {
+            if (match.api_fixture_id == null) continue;
+            const raw = sessionStorage.getItem(
+              `${LIVE_SCORE_CACHE_PREFIX}${match.api_fixture_id}`,
+            );
+            if (!raw) continue;
+            const cached = JSON.parse(raw);
+            cachedOnly[String(match.api_fixture_id)] = {
+              apiFixtureId: match.api_fixture_id,
+              scoreDomicile: cached.home_score,
+              scoreExterieur: cached.away_score,
+              statut: cached.status ?? match.status ?? "SCHEDULED",
+            };
+          }
+        } catch {
+          // Pas de cache exploitable.
+        }
+
+        if (!cancelled && Object.keys(cachedOnly).length > 0) {
+          setLiveByFixture(cachedOnly);
+          setLiveTick(Date.now());
+        }
       }
     }
 
     void refreshLive();
-    const timer = window.setInterval(refreshLive, 30_000);
+    // Même cadence que Classement/Accueil/Profil/Stats/Gazette (15s, cf.
+    // src/lib/liveMatches.ts) — compromis charge API / fraîcheur live.
+    const timer = window.setInterval(refreshLive, 15_000);
 
     return () => {
       cancelled = true;
@@ -705,7 +852,7 @@ function PronosticsPage() {
     const status = getLiveStatus(match);
     const finished =
       match.finished ||
-      ["FINISHED", "FT", "AET", "PEN"].includes(status);
+      FINISHED_STATUSES.has(status);
 
     if (finished) {
       if (match.home_score == null || match.away_score == null) return null;
@@ -720,7 +867,7 @@ function PronosticsPage() {
 
     const kickoffMs = match.kickoff ? new Date(match.kickoff).getTime() : NaN;
     const kickoffStarted = Number.isFinite(kickoffMs) && liveTick >= kickoffMs;
-    const apiLive = ["IN_PLAY", "LIVE", "PAUSED", "HT", "HALFTIME"].includes(status);
+    const apiLive = IN_PROGRESS_STATUSES.has(status);
 
     if (!apiLive && !kickoffStarted) return null;
 
@@ -2477,6 +2624,63 @@ function PronosticsPage() {
                   {time}
                 </p>
 
+                {/* SCORE DU MATCH + POINTS EN DIRECT
+                    Affichés sous CHAQUE match bonus, comme pour les autres matchs.
+                    Le score réel vient du moteur live/final ; les points ne sont
+                    calculés que pour le bonus effectivement sélectionné par le joueur. */}
+                {(() => {
+                  const currentScore = getLiveScore(match);
+                  if (!currentScore) return null;
+
+                  const hasPrediction = score.home !== "" && score.away !== "";
+                  const displayPoints =
+                    selected && hasPrediction
+                      ? getLivePoints(
+                          match,
+                          undefined,
+                          score.home,
+                          score.away,
+                          3,
+                          2,
+                        )
+                      : null;
+
+                  return (
+                    <div className="relative mt-4 border-t border-white/10 pt-3 flex flex-col items-center leading-none">
+                      <div className="flex items-center gap-2">
+                        {currentScore.live && (
+                          <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9px] font-black uppercase text-emerald-300 animate-pulse">
+                            {liveLabel(match)}
+                          </span>
+                        )}
+                        <span className="font-display text-base font-black tracking-wide text-white">
+                          {currentScore.home} — {currentScore.away}
+                        </span>
+                      </div>
+
+                      <span
+                        className={`mt-1 font-display text-[11px] font-black uppercase tracking-wider ${
+                          displayPoints != null
+                            ? displayPoints > 0
+                              ? "text-emerald-300"
+                              : "text-red-300"
+                            : "text-slate-400"
+                        }`}
+                      >
+                        {!selected
+                          ? "Match non sélectionné"
+                          : hasPrediction
+                            ? displayPoints != null
+                              ? displayPoints > 0
+                                ? `+${displayPoints} PT`
+                                : "0 PT"
+                              : "Prono à saisir"
+                            : "Prono à saisir"}
+                      </span>
+                    </div>
+                  );
+                })()}
+
                 {/* VERROUILLAGE */}
                 {locked && (
                   <p className="relative mt-2 text-center font-mono text-[9px] font-bold uppercase tracking-wider text-red-300">
@@ -2524,50 +2728,7 @@ function PronosticsPage() {
                       />
                     </div>
 
-                    {(() => {
-                      const currentScore = getLiveScore(match);
-                      if (!currentScore) return null;
 
-                      const displayPoints =
-                        score.home !== "" && score.away !== ""
-                          ? getLivePoints(
-                              match,
-                              undefined,
-                              score.home,
-                              score.away,
-                              3,
-                              2,
-                            )
-                          : 0;
-
-                      return (
-                        <div className="mt-3 flex flex-col items-center leading-none">
-                          <div className="flex items-center gap-2">
-                            {currentScore.live && (
-                              <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9px] font-black uppercase text-emerald-300 animate-pulse">
-                                {liveLabel(match)}
-                              </span>
-                            )}
-                            <span className="font-display text-base font-black tracking-wide text-white">
-                              {currentScore.home} — {currentScore.away}
-                            </span>
-                          </div>
-                          <span
-                            className={`mt-1 font-display text-[11px] font-black uppercase tracking-wider ${
-                              displayPoints > 0
-                                ? "text-emerald-300"
-                                : "text-red-300"
-                            }`}
-                          >
-                            {score.home !== "" && score.away !== ""
-                              ? displayPoints > 0
-                                ? `+${displayPoints} PT`
-                                : "0 PT"
-                              : "Prono à saisir"}
-                          </span>
-                        </div>
-                      );
-                    })()}
                   </div>
                 )}
               </div>

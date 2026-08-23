@@ -1824,14 +1824,33 @@ function PaymentsTab({
   const prizePlayerCount = players.length;
   const prizePoolTotal = prizePlayerCount * 10;
 
-  // Répartition automatique 50 % / 30 % / 20 %.
-  // Le 1er et le 2e sont arrondis à la dizaine supérieure.
-  // Le 3e reçoit automatiquement le reste pour que les 3 gains
-  // correspondent toujours exactement à la cagnotte.
-  const prizeFirst = Math.ceil((prizePoolTotal * 0.50) / 10) * 10;
-  const prizeSecond = Math.ceil((prizePoolTotal * 0.30) / 10) * 10;
-  const prizeThird = Math.max(0, prizePoolTotal - prizeFirst - prizeSecond);
+  // Base 50/30/20, puis arrondi aux dizaines pour que chaque gain
+  // se termine toujours par 0 et que la somme reste exactement égale
+  // à la cagnotte.
+  const prizeFirst = Math.round((prizePoolTotal * 0.50) / 10) * 10;
+  const prizeSecondBase = Math.round((prizePoolTotal * 0.30) / 10) * 10;
+  const prizeThirdBase = Math.round((prizePoolTotal * 0.20) / 10) * 10;
 
+  // On ajuste le 2e et le 3e rang pour respecter exactement la cagnotte.
+  // Le 1er reste à 50 % arrondi à la dizaine.
+  let prizeSecond = prizeSecondBase;
+  let prizeThird = prizePoolTotal - prizeFirst - prizeSecond;
+
+  if (prizeThird < 0) {
+    prizeSecond = Math.max(0, prizePoolTotal - prizeFirst);
+    prizeThird = 0;
+  }
+
+  // Le 3e doit également être une dizaine. On ajuste le 2e en conséquence.
+  prizeThird = Math.round(prizeThird / 10) * 10;
+  prizeSecond = prizePoolTotal - prizeFirst - prizeThird;
+
+  // Sécurité finale : tous les montants restent des dizaines et le total
+  // reste exactement égal à la cagnotte.
+  if (prizeSecond < 0) {
+    prizeSecond = 0;
+    prizeThird = prizePoolTotal - prizeFirst;
+  }
 
   const playerById = useMemo(() => {
     const map = new Map<string, Player>();
@@ -3598,7 +3617,9 @@ function BonusTab({
     await updateMatch(match.id, {
       home_score: home,
       away_score: away,
-      finished: bothPresent ? true : match.finished,
+      // Le match n'est considéré terminé que si les DEUX scores sont présents.
+      // Cela permet aussi d'annuler proprement un score saisi par erreur.
+      finished: bothPresent,
     });
 
     // Reflète immédiatement le nouveau score dans l'état local de
@@ -3637,6 +3658,67 @@ function BonusTab({
   function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode, standings?: CompetitionStandings): BonusCandidate | null {
     return selectBestBonusMatch([toBonusMatch(match)], code, standings);
   }
+
+  async function clearBonusScore() {
+    if (!editingBonus) return;
+
+    const targetMatch = matches.find((m) => m.id === editingBonus.matchId);
+    if (!targetMatch) {
+      notify("Match introuvable.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Supprimer le score saisi par erreur et remettre ce match comme non terminé ?"
+    );
+    if (!confirmed) return;
+
+    setSavingBonusEdit(true);
+    try {
+      await updateMatch(targetMatch.id, {
+        home_score: null,
+        away_score: null,
+        finished: false,
+      });
+
+      if (selectedBonusKey) {
+        setBonusSelections((prev) => {
+          const sel = prev[selectedBonusKey];
+          const existing = sel?.[editingBonus.code];
+          if (!sel || !existing) return prev;
+
+          return {
+            ...prev,
+            [selectedBonusKey]: {
+              ...sel,
+              [editingBonus.code]: {
+                ...existing,
+                match: {
+                  ...existing.match,
+                  home_score: null,
+                  away_score: null,
+                  finished: false,
+                },
+              },
+            },
+          };
+        });
+      }
+
+      setEditingBonus((prev) =>
+        prev ? { ...prev, home: "", away: "" } : prev,
+      );
+
+      await onChanged();
+      notify("Score annulé. Le match est de nouveau en attente.");
+    } catch (e) {
+      console.error("Erreur lors de l'annulation du score :", e);
+      notify(errorMessage(e, "Impossible d'annuler le score"));
+    } finally {
+      setSavingBonusEdit(false);
+    }
+  }
+
 
   // ============================================================
   // Modal "Modifier le bonus" — championnat, match sélectionné (avec
@@ -4143,6 +4225,15 @@ function BonusTab({
             maxWidthClassName="max-w-xl"
             footer={
               <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={clearBonusScore}
+                  disabled={savingBonusEdit}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-3 font-display text-xs font-bold uppercase tracking-wide text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                >
+                  <Trash2 size={15} />
+                  Annuler le score
+                </button>
                 <GhostButton onClick={() => setEditingBonus(null)} disabled={savingBonusEdit} className="w-full sm:w-auto">
                   Annuler
                 </GhostButton>
@@ -4919,7 +5010,7 @@ function SettingsTab({
   // tant que settings n'est pas chargé.
   const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 1));
 
-  // Équipe de cÅ“ur
+  // Équipe de cœur
   const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState(settings?.favorite_team_deadline?.slice(0, 16) ?? "");
   const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(settings?.favorite_team_auto_lock ?? true);
 
@@ -5068,7 +5159,7 @@ function SettingsTab({
             ⭐
           </span>
           <div>
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cÅ“ur</h2>
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cœur</h2>
             <p className="text-xs text-slate-400">
               Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
             </p>

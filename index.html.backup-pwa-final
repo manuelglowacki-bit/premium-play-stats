@@ -1,0 +1,27 @@
+﻿<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Prono Ligue 1</title>
+
+    <!-- PWA — manifest + icônes (voir public/manifest.webmanifest) -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#060b16" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Installation "Sur l'écran d'accueil" iOS/Safari (pas de support
+         natif du manifest sur iOS < 16.4, ces balises restent nécessaires) -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Prono Ligue 1 LM" />
+
+    <!-- Android/Chrome installés : couleur de la barre d'adresse -->
+    <meta name="mobile-web-app-capable" content="yes" />
+  </head>
+  <body class="bg-[#060b16] min-h-screen text-slate-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

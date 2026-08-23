@@ -32,6 +32,12 @@ import {
 } from "@/lib/careerLevel";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
+import {
+  fetchLiveApiMatches,
+  reconcileMatchesWithLive,
+  markLiveMatchesScorable,
+  LIVE_SCORE_CACHE_PREFIX,
+} from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/profil")({
   component: ProfilPage,
@@ -80,11 +86,42 @@ function ProfilPage() {
   // les saisons (jamais réinitialisé). null tant que non chargé.
   const [career, setCareer] = useState<CareerResult | null>(null);
   const [careerPredictionsCount, setCareerPredictionsCount] = useState(0);
+  const statsRequestSeq = useRef(0);
+  const [liveTick, setLiveTick] = useState(() => Date.now());
+   // Le Profil privilégie le snapshot publié par le Classement pour les
+  // points/exacts/régularité, avec recalcul local uniquement en repli.
+  const readClassementSnapshot = () => {
+    try {
+      const raw = window.localStorage.getItem("prono_ligue1_classement_snapshot");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const readLivePronosCache = () => {
+    const scores: Record<string, any> = {};
+    try {
+      for (let i = 0; i < window.sessionStorage.length; i += 1) {
+        const key = window.sessionStorage.key(i);
+        if (!key || !key.startsWith(LIVE_SCORE_CACHE_PREFIX)) continue;
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        scores[key.slice(LIVE_SCORE_CACHE_PREFIX.length)] = parsed;
+      }
+    } catch {
+      // Le Profil continue avec le snapshot Classement/Supabase.
+    }
+    return scores;
+  };
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadData() {
+      const requestId = ++statsRequestSeq.current;
+
       try {
         const {
           data: { session },
@@ -98,7 +135,7 @@ function ProfilPage() {
           return;
         }
 
-        if (cancelled) return;
+        if (cancelled || requestId !== statsRequestSeq.current) return;
         setUser(session.user);
 
         const [
@@ -109,6 +146,7 @@ function ProfilPage() {
           { data: matchesData, error: matchesError },
           { data: matchdaysData, error: matchdaysError },
           { data: allProfilesData, error: allProfilesError },
+          apiLiveMatches,
         ] = await Promise.all([
           supabase
             .from("profiles")
@@ -139,7 +177,7 @@ function ProfilPage() {
           supabase
             .from("matches")
             .select(
-              "id,matchday,matchday_id,status,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
+              "id,matchday,matchday_id,status,kickoff,api_fixture_id,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
             ),
 
           // Niveau de carrière (cumulé toutes saisons) — même jointure que
@@ -156,6 +194,11 @@ function ProfilPage() {
           // favori de chacun (computeLeagueStats), même besoin que sur
           // l'Accueil et la page Classement.
           supabase.from("profiles").select("id, pseudo, favorite_team_id, favorite_team"),
+
+          // Scores LIVE : Supabase reste la source du calendrier, l'API fournit
+          // le score/statut courant — même fetcher que toutes les autres
+          // pages (src/lib/liveMatches.ts).
+          fetchLiveApiMatches(),
         ]);
 
         const [
@@ -231,6 +274,16 @@ function ProfilPage() {
 
         setAutoLock(settings?.favorite_team_auto_lock ?? true);
 
+        if (cancelled || requestId !== statsRequestSeq.current) return;
+
+        // ---------------------------------------------------------------------
+        // SCORES LIVE — fusion + garde anti-régression centralisées dans
+        // src/lib/liveMatches.ts, identiques à Classement/Accueil/Stats.
+        // Un score déjà connu ne peut pas régresser pendant le LIVE (ex. 1-1 -> 0-0)
+        // à cause d'une réponse API momentanément incomplète.
+        // ---------------------------------------------------------------------
+        const mergedMatches = reconcileMatchesWithLive((matchesData || []) as any[], apiLiveMatches);
+
         // Classement : recalculé à partir de `predictions` (tous les joueurs)
         const allPredictions = (allPredictionsData || []) as Array<{
           user_id: string | null;
@@ -241,7 +294,7 @@ function ProfilPage() {
         }>;
 
         const matchScoreById = new Map<string, { home_score: number | null; away_score: number | null }>();
-        (matchesData || []).forEach((match: any) => {
+        mergedMatches.forEach((match: any) => {
           matchScoreById.set(String(match.id), {
             home_score: match.home_score ?? null,
             away_score: match.away_score ?? null,
@@ -273,8 +326,14 @@ function ProfilPage() {
             .map((md: any) => String(md.id)),
         );
 
-        const allMatches = (matchesData || []) as any[];
-        const ligue1Matches = allMatches.filter(
+        const allMatches = mergedMatches as any[];
+
+        // Pour le moteur de points uniquement, un match commencé avec un score
+        // live devient un résultat provisoire. Rien n'est écrit en base.
+        // Même fonction que Classement/Accueil/Stats (src/lib/liveMatches.ts).
+        const liveScoringMatches = markLiveMatchesScorable(allMatches);
+
+        const ligue1Matches = liveScoringMatches.filter(
           (m) =>
             m.home_score != null &&
             m.away_score != null &&
@@ -286,8 +345,12 @@ function ProfilPage() {
 
         const bonusOptions = (bonusOptionsData || []) as { matchday_id: string; match_id: string }[];
         const bonusMatchIds = new Set(bonusOptions.map((o) => String(o.match_id)));
-        const bonusMatches = allMatches.filter(
-          (m) => m.home_score != null && m.away_score != null && m.finished && bonusMatchIds.has(String(m.id)),
+        const bonusMatches = liveScoringMatches.filter(
+          (m) =>
+            m.home_score != null &&
+            m.away_score != null &&
+            m.finished &&
+            bonusMatchIds.has(String(m.id)),
         );
 
         const teamNameById: Record<string, string | undefined> = {};
@@ -325,6 +388,8 @@ function ProfilPage() {
           if (!row?.user_id || !row?.season_id || !row?.favorite_team_id) return;
           favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
         });
+
+        if (cancelled || requestId !== statsRequestSeq.current) return;
 
         const {
           pointsByUser: rankingPointsByUser,
@@ -378,37 +443,57 @@ function ProfilPage() {
           (allProfilesData || []).map((row: any) => [row.id, row.pseudo || "Joueur"]),
         );
 
-        const allUserIds = new Set(Object.keys(rankingPointsByUser));
-        allUserIds.add(session.user.id);
-
-        const rankedRows = Array.from(allUserIds).map((uid) => ({
-          user_id: uid,
-          total_points: rankingPointsByUser[uid] || 0,
-          exact_scores: rankingExactByUser[uid] || 0,
-          predictions_count: rankingCountByUser[uid] || 0,
-          // Champs canoniques pour rankPlayers (src/lib/leaderboardRanking.ts)
-          // — même classement que la page Classement et l'Accueil.
-          points: rankingPointsByUser[uid] || 0,
-          exactScores: rankingExactByUser[uid] || 0,
-          predictionsCount: rankingCountByUser[uid] || 0,
-          regularitySuccess: rankingRegularityByUser[uid] || 0,
-          pseudo: pseudoById.get(uid) || "Joueur",
-        }));
-
-        // Tri + attribution du rang : source unique de vérité, réutilisée
-        // telle quelle par la page Classement et l'Accueil.
-        const rankedWithPosition = rankPlayers(rankedRows);
-
-        const meRanking = rankedWithPosition.find(
-          (row) => row.user_id === session.user.id
+        // ================================================================
+        // PROFIL = miroir du CLASSEMENT + état LIVE de PRONOSTICS
+        // ================================================================
+        // Le Classement publie son résultat canonique dans localStorage.
+        // On le privilégie pour le rang/points/exacts/régularité : pas de second
+        // calcul divergent.
+        const classementSnapshot = readClassementSnapshot();
+        const classementMe = classementSnapshot?.players?.find(
+          (row: any) => String(row.id) === String(session.user.id),
         );
 
-        const rank = meRanking?.rank || 0;
-        const totalPoints = Number(meRanking?.total_points || 0);
-        const exactScores = Number(meRanking?.exact_scores || 0);
+        // Le cache session partagé par Pronostics contient les derniers scores
+        // live. Sa lecture permet au Profil de suivre immédiatement les matchs
+        // déjà vus sur la page Pronos.
+        readLivePronosCache();
 
         const predictions = allPredictions.filter(
           (prediction) => prediction.user_id === session.user.id
+        );
+
+        const fallbackAllUserIds = new Set(Object.keys(rankingPointsByUser));
+        fallbackAllUserIds.add(session.user.id);
+
+        const fallbackRankedRows = Array.from(fallbackAllUserIds).map((uid) => ({
+          id: uid,
+          name: pseudoById.get(uid) || "Joueur",
+          avatar: "",
+          points: Number(rankingPointsByUser[uid] || 0),
+          exactScores: Number(rankingExactByUser[uid] || 0),
+          predictionsCount: Number(rankingCountByUser[uid] || 0),
+          regularitySuccess: Number(rankingRegularityByUser[uid] || 0),
+          pseudo: pseudoById.get(uid) || "Joueur",
+        }));
+
+        const fallbackRanked = rankPlayers(fallbackRankedRows as any);
+        const fallbackMe = fallbackRanked.find(
+          (row: any) => String(row.id) === String(session.user.id),
+        );
+
+        const rank = Number(fallbackMe?.rank ?? 0);
+        const totalPoints = Number(
+          classementMe?.points ??
+          rankingPointsByUser[session.user.id] ??
+          fallbackMe?.points ??
+          0,
+        );
+        const exactScores = Number(
+          classementMe?.exactScores ??
+          rankingExactByUser[session.user.id] ??
+          fallbackMe?.exactScores ??
+          0,
         );
 
         // Libellé de journée ("J5") par matchday_id — pur affichage.
@@ -444,9 +529,17 @@ function ProfilPage() {
           exactScores,
           successRate,
           totalPronos:
-            Number(meRanking?.predictions_count ?? predictions.length) || 0,
+            Number(
+              classementMe?.predictionsCount ??
+              rankingCountByUser[session.user.id] ??
+              fallbackMe?.predictionsCount ??
+              predictions.length,
+            ) || 0,
           bestDay,
         });
+
+        // Live snapshot consumed by every performance block above.
+        setLiveTick(Date.now());
 
         if (profile?.favorite_team_id) {
           setTempSelectedTeam(profile.favorite_team_id);
@@ -454,14 +547,40 @@ function ProfilPage() {
       } catch (err) {
         console.error("Erreur de chargement Supabase du profil :", err);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && requestId === statsRequestSeq.current) setLoading(false);
       }
     }
 
     loadData();
 
+     // Même cadence que Classement/Accueil/Stats/Gazette (15s, cf.
+     // src/lib/liveMatches.ts) — compromis charge API / fraîcheur live.
+     const liveRefreshTimer = window.setInterval(() => {
+      setLiveTick(Date.now());
+      if (document.visibilityState === "visible") {
+        loadData();
+      }
+    }, 15_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadData();
+      }
+    };
+
+    const handleFocus = () => {
+      loadData();
+    };
+
+     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+
     return () => {
       cancelled = true;
+      ++statsRequestSeq.current;
+      window.clearInterval(liveRefreshTimer);
+       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
   // Horloge légère : le verrouillage devient effectif sans rechargement de page.

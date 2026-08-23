@@ -11,10 +11,11 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { computeLeagueStats, type LeagueMatch, type LeagueProfile, type LeagueBonusOption } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
+import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/stats")({
   head: () => ({
@@ -35,6 +36,8 @@ type MatchRow = {
   matchday: string | null;
   matchday_id?: string | null;
   status: string | null;
+  finished?: boolean | null;
+  kickoff?: string | null;
   api_fixture_id?: number | null;
   home_score: number | null;
   away_score: number | null;
@@ -283,11 +286,14 @@ function PodiumPlayer({
 function StatsPage() {
   const [stats, setStats] = useState<StatsState>(EMPTY_STATS);
   const [selectedRange, setSelectedRange] = useState(5);
+  const statsRequestSeq = useRef(0);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [leaderboard, setLeaderboard] = useState<LeaderboardPlayer[]>([]);
 
   async function loadStats() {
+    const requestId = ++statsRequestSeq.current;
+
     setLoading(true);
     setErrorMessage("");
 
@@ -296,6 +302,8 @@ function StatsPage() {
         data: { user },
         error: authError,
       } = await supabase.auth.getUser();
+
+      if (requestId !== statsRequestSeq.current) return;
 
       if (authError) throw authError;
 
@@ -313,12 +321,12 @@ function StatsPage() {
         { data: bonusOptionsData, error: bonusOptionsError },
         { data: matchdaysData, error: matchdaysError },
         { data: favoriteHistoryData, error: favoriteHistoryError },
-        apiLivePayload,
+        apiLiveMatches,
       ] = await Promise.all([
         supabase
           .from("matches")
           .select(
-            "id, matchday, matchday_id, status, api_fixture_id, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
+            "id, matchday, matchday_id, status, finished, kickoff, api_fixture_id, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
           ),
         // Tous les joueurs (pas seulement le compte connecté) : nécessaire
         // pour recalculer le Top joueurs via computeLeagueStats(), même
@@ -336,16 +344,8 @@ function StatsPage() {
         // Saison par journée + équipe favorite historisée par saison (Lot 4).
         supabase.from("matchdays").select("id, season_id, season"),
         supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
-        fetch("/api/ligue1/matchs?season=2026&competition=ALL", {
-          headers: { Accept: "application/json" },
-          cache: "no-store",
-        })
-          .then(async (response) => {
-            if (!response.ok) return null;
-            const body = await response.json().catch(() => null);
-            return body?.ok ? body : null;
-          })
-          .catch(() => null),
+        // Même fetcher que toutes les autres pages (src/lib/liveMatches.ts).
+        fetchLiveApiMatches(),
       ]);
 
       if (matchesError) throw matchesError;
@@ -355,57 +355,27 @@ function StatsPage() {
       if (matchdaysError) console.warn("Erreur chargement journées (favori historique) :", matchdaysError);
       if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
+      if (requestId !== statsRequestSeq.current) return;
+
       const allMatches = (matches || []) as MatchRow[];
 
       // Direct live : Supabase reste la source du calendrier, tandis que
       // l'API fournit le score/statut courant. Un match 0-0 en cours est donc
-      // immédiatement utilisable par le même moteur de points que le Classement.
-      const liveByFixture = new Map<number, any>();
-      const liveMatches = Array.isArray(apiLivePayload?.allMatches)
-        ? apiLivePayload.allMatches
-        : [];
+      // immédiatement utilisable par le même moteur de points que le
+      // Classement — fusion + garde anti-régression + fenêtre "match
+      // commencé -> scorable" centralisées dans src/lib/liveMatches.ts.
+      const matchesWithLiveScore = reconcileMatchesWithLive(allMatches, apiLiveMatches);
 
-      liveMatches.forEach((apiMatch: any) => {
-        if (apiMatch?.apiFixtureId != null) {
-          liveByFixture.set(Number(apiMatch.apiFixtureId), apiMatch);
-        }
-      });
+      if (requestId !== statsRequestSeq.current) return;
 
-      const matchesWithLiveScore = allMatches.map((match) => {
-        if (match.api_fixture_id == null) return match;
-
-        const live = liveByFixture.get(Number(match.api_fixture_id));
-        if (!live) return match;
-
-        const status = String(
-          live.statut ?? live.status ?? match.status ?? "SCHEDULED",
-        );
-
-        return {
-          ...match,
-          status,
-          home_score:
-            live.scoreDomicile != null
-              ? Number(live.scoreDomicile)
-              : match.home_score,
-          away_score:
-            live.scoreExterieur != null
-              ? Number(live.scoreExterieur)
-              : match.away_score,
-        };
-      });
+      const liveScoringMatches = markLiveMatchesScorable(matchesWithLiveScore);
 
       const allPredictions = (allPredictionsData || []) as PredictionRow[];
       const userPredictions = allPredictions.filter((p) => p.user_id === user.id);
 
-      const matchDayById = new Map<string, string>();
       const matchById = new Map<string, MatchRow>();
-
-      matchesWithLiveScore.forEach((match) => {
+      liveScoringMatches.forEach((match) => {
         matchById.set(String(match.id), match);
-        if (match.matchday) {
-          matchDayById.set(String(match.id), String(match.matchday));
-        }
       });
 
       // Points réels — même moteur que Classement/Accueil/Profil. Matchs
@@ -414,7 +384,7 @@ function StatsPage() {
       // computeLeagueStats l'attend.
       const bonusOptions = (bonusOptionsData || []) as LeagueBonusOption[];
       const bonusMatchIdSet = new Set(bonusOptions.map((o) => String(o.match_id)));
-      const ligue1MatchesForScoring: LeagueMatch[] = matchesWithLiveScore
+      const ligue1MatchesForScoring: LeagueMatch[] = liveScoringMatches
         .filter((m) => !m.is_bonus && m.home_score != null && m.away_score != null)
         .map((m) => ({
           id: m.id,
@@ -426,7 +396,7 @@ function StatsPage() {
           home_score: m.home_score,
           away_score: m.away_score,
         }));
-      const bonusMatchesForScoring: LeagueMatch[] = matchesWithLiveScore
+      const bonusMatchesForScoring: LeagueMatch[] = liveScoringMatches
         .filter((m) => bonusMatchIdSet.has(String(m.id)) && m.home_score != null && m.away_score != null)
         .map((m) => ({
           id: m.id,
@@ -457,6 +427,8 @@ function StatsPage() {
         favoriteTeamBySeason[`${row.user_id}:${row.season_id}`] = row.favorite_team_id;
       });
 
+      if (requestId !== statsRequestSeq.current) return;
+
       const leagueStats = computeLeagueStats(
         ligue1MatchesForScoring,
         bonusMatchesForScoring,
@@ -470,23 +442,59 @@ function StatsPage() {
       const realPointsFor = (prediction: PredictionRow) =>
         leagueStats.pointsByPredictionKey[`${user.id}:${prediction.match_id}`] ?? 0;
 
-      const byDay = new Map<string, DayStat>();
+      // ------------------------------------------------------------------
+      // TOTAUX PERSONNELS — LA MÊME SOURCE QUE CLASSEMENT/ACCUEIL/PROFIL.
+      // BUG CORRIGÉ : ces totaux étaient auparavant ré-additionnés localement
+      // dans la boucle par journée ci-dessous, filtrée par une résolution de
+      // journée (match.matchday / matchday_id) qui pouvait exclure des
+      // pronostics du calcul (ex. matchs bonus, dont matchday_id pointe vers
+      // une AUTRE compétition) — d'où un "Total points" à 0 alors que
+      // computeLeagueStats() (utilisé par le Classement) trouvait bien 2.
+      // On lit maintenant directement les agrégats du moteur, pour CE joueur,
+      // sans aucun recalcul ni filtre supplémentaire : mêmes chiffres que
+      // rankableRows plus bas (Top joueurs) et que le Classement.
+      // ------------------------------------------------------------------
+      const totalPoints = leagueStats.pointsByUser[user.id] ?? 0;
+      const exactScores = leagueStats.exactScoresByUser[user.id] ?? 0;
+      const totalPredictions = leagueStats.predictionsCountByUser[user.id] ?? 0;
+      const successfulPredictions = leagueStats.regularitySuccessByUser[user.id] ?? 0;
 
-      let totalPoints = 0;
-      let exactScores = 0;
-      let totalPredictions = 0;
-      let successfulPredictions = 0;
+      // ------------------------------------------------------------------
+      // RÉPARTITION PAR JOURNÉE (graphique, meilleure journée, bonus/standard/
+      // exact) — détail que computeLeagueStats() n'expose pas par match, donc
+      // reconstruit ici à partir de pointsByPredictionKey (valeurs déjà
+      // calculées par le moteur, jamais réinventées). La journée d'un match
+      // BONUS est celle qui l'a sélectionné (bonus_options.matchday_id),
+      // JAMAIS son propre matchday_id (qui pointe vers PL/PD/SA/BL1) — même
+      // résolution que pointsByUserAndMatchday côté moteur, même logique que
+      // le Profil (voir "Meilleure journée").
+      // ------------------------------------------------------------------
+      const bonusMatchdayByMatchId = new Map<string, string>();
+      bonusOptions.forEach((option) => {
+        bonusMatchdayByMatchId.set(String(option.match_id), String(option.matchday_id));
+      });
+
+      const dayLabelById = new Map<string, string>();
+      liveScoringMatches.forEach((match) => {
+        const matchdayId = bonusMatchdayByMatchId.get(String(match.id)) ?? match.matchday_id;
+        if (!matchdayId || dayLabelById.has(String(matchdayId))) return;
+        if (match.matchday == null) return;
+        dayLabelById.set(String(matchdayId), `J${match.matchday}`);
+      });
+
+      const byDay = new Map<string, DayStat>();
       let standardPoints = 0;
       let exactPoints = 0;
       let bonusPoints = 0;
       let bonusSuccessful = 0;
 
       userPredictions.forEach((prediction) => {
-        const day = matchDayById.get(String(prediction.match_id));
-        if (!day) return;
+        const match = matchById.get(String(prediction.match_id));
+        const matchdayId = bonusMatchdayByMatchId.get(String(prediction.match_id)) ?? match?.matchday_id;
+        if (!matchdayId) return;
+        const day = dayLabelById.get(String(matchdayId)) ?? String(matchdayId);
 
         const points = realPointsFor(prediction);
-        const match = matchById.get(String(prediction.match_id));
         const exact = isExactPrediction(prediction, match);
         const bonus = isBonusPrediction(match);
 
@@ -505,12 +513,6 @@ function StatsPage() {
         current.points += points;
         current.predictions += 1;
         if (exact) current.exactScores += 1;
-
-        totalPoints += points;
-        totalPredictions += 1;
-
-        if (points > 0) successfulPredictions += 1;
-        if (exact) exactScores += 1;
 
         if (bonus) {
           current.bonusPoints += points;
@@ -545,6 +547,8 @@ function StatsPage() {
         (item) => Math.abs(item.points - average) <= epsilon,
       ).length;
       const losses = Math.max(0, playedDays - wins - draws);
+
+      if (requestId !== statsRequestSeq.current) return;
 
       setStats({
         totalPoints,
@@ -583,6 +587,8 @@ function StatsPage() {
 
         const ranked = rankPlayers(rankableRows).slice(0, 5);
 
+        if (requestId !== statsRequestSeq.current) return;
+
         setLeaderboard(
           ranked.map((row) => ({
             userId: row.userId,
@@ -597,6 +603,7 @@ function StatsPage() {
         setLeaderboard([]);
       }
     } catch (error: any) {
+      if (requestId !== statsRequestSeq.current) return;
       console.error("Erreur chargement statistiques:", error);
       setErrorMessage(
         error?.message ||
@@ -605,7 +612,9 @@ function StatsPage() {
       setStats(EMPTY_STATS);
       setLeaderboard([]);
     } finally {
-      setLoading(false);
+      if (requestId === statsRequestSeq.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -616,14 +625,33 @@ function StatsPage() {
       loadStats();
     });
 
-    // Le score live et les statistiques doivent évoluer sans attendre FT.
-    // L'API est interrogée toutes les 30 secondes (pas chaque seconde).
+    // Les statistiques suivent les scores sans attendre la fin du match.
+    // Recalcul automatique toutes les 15 secondes (même cadence que
+    // Classement/Accueil/Gazette, cf. src/lib/liveMatches.ts — compromis
+    // charge API / fraîcheur live) + rafraîchissement immédiat lorsque
+    // l'utilisateur revient sur l'onglet.
     const liveRefreshTimer = window.setInterval(() => {
       loadStats();
-    }, 30_000);
+    }, 15_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadStats();
+      }
+    };
+
+    const handleFocus = () => {
+      loadStats();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
 
     return () => {
+      ++statsRequestSeq.current;
       window.clearInterval(liveRefreshTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
       authListener.subscription.unsubscribe();
     };
   }, []);
