@@ -2605,8 +2605,14 @@ function PronosticsPage() {
             Match bonus
           </h2>
 
+          {/* Le "4" etait ecrit en dur. bonusCandidates fait pourtant
+              disparaitre silencieusement tout championnat sans ligne dans
+              bonus_options pour la journee : le bloc pouvait annoncer quatre
+              championnats en n'en affichant que trois. Le compte suit
+              desormais ce qui est reellement propose. */}
           <p className="mt-1 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-            1 match à choisir · 4 championnats
+            1 match à choisir · {bonusCandidates.length} championnat
+            {bonusCandidates.length > 1 ? "s" : ""}
           </p>
         </div>
       </div>
@@ -2719,7 +2725,11 @@ function PronosticsPage() {
                       size="size-11"
                       className="drop-shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
                     />
-                    <p className="w-full truncate text-center font-display text-sm font-bold text-white drop-shadow-md">
+                    {/* "Ipswich To...", "Club Atléti..." : la troncature sur
+                        une ligne coupait la moitie des noms. Deux lignes
+                        autorisees, avec une taille legerement reduite — un nom
+                        de club reste plus lisible sur deux lignes que coupe. */}
+                    <p className="line-clamp-2 w-full text-center font-display text-[13px] font-bold leading-tight text-white drop-shadow-md">
                       {home.name}
                     </p>
                   </div>
@@ -2734,7 +2744,7 @@ function PronosticsPage() {
                       size="size-11"
                       className="drop-shadow-[0_4px_10px_rgba(0,0,0,0.45)]"
                     />
-                    <p className="w-full truncate text-center font-display text-sm font-bold text-white drop-shadow-md">
+                    <p className="line-clamp-2 w-full text-center font-display text-[13px] font-bold leading-tight text-white drop-shadow-md">
                       {away.name}
                     </p>
                   </div>
