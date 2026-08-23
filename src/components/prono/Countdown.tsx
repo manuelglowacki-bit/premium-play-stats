@@ -48,12 +48,17 @@ export function CountdownBlocks({ target }: { target?: number | null }) {
   const timeLeft = useCountdown(target ?? COUNTDOWN_TARGET);
 
   return (
-    <div className="grid grid-cols-4 gap-2">
-      {/* Jours (Vert) */}
+    // auto-fit : la grille se referme quand le bloc "JOURS" disparait.
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(64px,1fr))] gap-2">
+      {/* Jours (Vert) — masque des qu'il n'en reste plus, meme raison que
+          CountdownBlocksIconic : sous les 24 h, "00 JOURS" prend la place des
+          minutes sans rien apprendre. */}
+      {timeLeft.days > 0 && (
       <div className="bg-[#061f17] border border-emerald-900/60 rounded-xl p-2 flex flex-col items-center justify-center shadow-inner">
         <span className="text-xl font-black text-emerald-500 mb-0.5">{String(timeLeft.days).padStart(2, '0')}</span>
         <span className="text-[9px] font-bold text-slate-400 tracking-wider">JOURS</span>
       </div>
+      )}
       {/* Heures (Bleu) */}
       <div className="bg-[#0f172a] border border-blue-900/60 rounded-xl p-2 flex flex-col items-center justify-center shadow-inner">
         <span className="text-xl font-black text-blue-400 mb-0.5">{String(timeLeft.hours).padStart(2, '0')}</span>
@@ -77,8 +82,13 @@ export function CountdownBlocks({ target }: { target?: number | null }) {
 export function CountdownBlocksIconic({ target }: { target?: number | null }) {
   const timeLeft = useCountdown(target ?? COUNTDOWN_TARGET);
 
+  // Les jours disparaissent quand il n'en reste plus. Un decompte passe
+  // l'essentiel de sa vie sous les 24 h : "00 JOURS" occupait alors autant de
+  // place que les minutes, qui sont la seule chose que le joueur regarde.
   const items = [
-    { value: timeLeft.days, label: "JOURS", Icon: CalendarDays, color: "emerald" as const },
+    ...(timeLeft.days > 0
+      ? [{ value: timeLeft.days, label: "JOURS", Icon: CalendarDays, color: "emerald" as const }]
+      : []),
     { value: timeLeft.hours, label: "HEURES", Icon: Clock, color: "sky" as const },
     { value: timeLeft.minutes, label: "MINUTES", Icon: Timer, color: "amber" as const },
     { value: timeLeft.seconds, label: "SECONDES", Icon: Gauge, color: "violet" as const },
@@ -96,20 +106,22 @@ export function CountdownBlocksIconic({ target }: { target?: number | null }) {
       {items.map(({ value, label, Icon, color }) => {
         const c = colorMap[color];
         return (
+          /* Cartes divisees par deux en hauteur : elles faisaient pres de
+             100 px chacune, soit un quart du bandeau pour quatre nombres. */
           <div
             key={label}
-            className={`rounded-2xl border ${c.border} ${c.bg} p-4 flex items-center gap-3`}
+            className={`flex items-center gap-2.5 rounded-xl border ${c.border} ${c.bg} px-3 py-2`}
           >
             <span
-              className={`grid size-11 shrink-0 place-items-center rounded-full border ${c.border} ${c.iconBg} ${c.text}`}
+              className={`grid size-7 shrink-0 place-items-center rounded-lg border ${c.border} ${c.iconBg} ${c.text}`}
             >
-              <Icon className="size-5" />
+              <Icon className="size-3.5" />
             </span>
             <div className="min-w-0">
-              <b className={`block font-display text-3xl leading-none ${c.text}`}>
+              <b className={`block font-display text-xl leading-none ${c.text}`}>
                 {String(value).padStart(2, "0")}
               </b>
-              <span className="mt-1 block font-mono text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <span className="mt-0.5 block font-mono text-[9px] font-bold uppercase tracking-wider text-slate-400">
                 {label}
               </span>
             </div>

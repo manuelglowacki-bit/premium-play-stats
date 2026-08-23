@@ -1645,21 +1645,28 @@ function PronosticsPage() {
                 )}
               </div>
 
+              {/* TAILLES INVERSEES. "Mes pronostics" occupait jusqu'a 3.6rem
+                  alors que la barre de navigation dit deja ou l'on est ; la
+                  JOURNEE, seule information qui indique sur QUOI on pronostique,
+                  tenait en 14 px sous ce titre geant. Le rapport est inverse :
+                  la journee prend la tete, le titre devient un surtitre.
+                  Le degrade descendait par ailleurs vers un bleu clair des la
+                  moitie des lettres, ce qui delavait le bas du texte. */}
+              <p className="mt-3 font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-400/90">
+                Mes pronostics
+              </p>
               <h1
-                className="mt-3 bg-gradient-to-b from-white via-white to-[color-mix(in_oklab,var(--sky)_32%,white)] bg-clip-text font-display text-[clamp(2rem,6vw,3.6rem)] font-bold uppercase leading-none tracking-tight text-transparent"
+                className="mt-1 flex items-center gap-2.5 bg-gradient-to-b from-white from-30% via-white via-70% to-[color-mix(in_oklab,var(--sky)_26%,white)] bg-clip-text font-display text-[clamp(1.9rem,5vw,3rem)] font-bold uppercase leading-none tracking-tight text-transparent"
                 style={{
                   filter:
                     "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",
                 }}
               >
-                Mes pronostics
-              </h1>
-              <p className="mt-2.5 flex items-center gap-1.5 text-sm font-bold uppercase tracking-wide text-slate-200">
-                <Trophy className="size-4 text-amber-400" />
+                <Trophy className="size-7 shrink-0 text-amber-400 md:size-8" />
                 {selectedMatchday
-                  ? `JOURNÉE ${selectedMatchday.number}`
-                  : "SÉLECTIONNE UNE JOURNÉE"}
-              </p>
+                  ? `Journée ${selectedMatchday.number}`
+                  : "Sélectionne une journée"}
+              </h1>
             </div>
 
             <div className="shrink-0 text-right">
@@ -1698,8 +1705,20 @@ function PronosticsPage() {
                   </span>
                 </div>
               </div>
-              <p className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                Pronostics
+              {/* La legende disait "Pronostics", ce que le "10/10" juste
+                  au-dessus indique deja. Elle porte desormais l'etat, et
+                  rapproche l'anneau du message d'avancement qui vivait tout
+                  en bas du bandeau. */}
+              <p
+                className={`mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+                  allDone ? "text-emerald-400" : "text-slate-400"
+                }`}
+              >
+                {total === 0
+                  ? "Pronostics"
+                  : allDone
+                    ? "Complet"
+                    : `${total - filled} à remplir`}
               </p>
               {/* Le bouton "Valider" qui vivait ici a été retiré : l'action
                   de validation a désormais un unique emplacement, bien plus
@@ -1718,7 +1737,9 @@ function PronosticsPage() {
                 <Clock className="size-3.5 text-emerald-400" />
                 Fin des pronos
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {/* auto-fit : la grille se referme proprement quand la carte
+                  "JOURS" disparait, au lieu de laisser une case vide. */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(130px,1fr))]">
                 <CountdownBlocksIconic target={nextLockAt} />
               </div>
             </div>
