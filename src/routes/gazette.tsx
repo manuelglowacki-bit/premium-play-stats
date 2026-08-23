@@ -1003,7 +1003,13 @@ function GazettePage() {
     return map;
   }, [journees]);
 
-  const rankedPlayers = useMemo(() => {
+  // Agrégats officiels du moteur, exposés tels quels : le détail par
+  // pronostic (pointsByPredictionKey) est LA source des points d'un joueur sur
+  // un match donné. La colonne `predictions.points`, elle, n'est jamais écrite
+  // par l'application (column_default 0, aucun trigger) — la lire renvoyait
+  // systématiquement 0, d'où les "0 point pris sur cette journée" de la
+  // Gazette alors que le joueur avait bel et bien marqué.
+  const leagueStats = useMemo(() => {
     // `journees[].matches/.bonus` gardent leur statut RÉEL (utilisé pour
     // l'affichage : badges EN DIRECT, minuteur, etc.). Le calcul des points,
     // lui, doit voir un match commencé comme immédiatement scorable — même
@@ -1012,7 +1018,7 @@ function GazettePage() {
     const ligue1Matches = markLiveMatchesScorable(journees.flatMap((j) => j.matches)) as LeagueMatch[];
     const bonusMatches = markLiveMatchesScorable(journees.flatMap((j) => j.bonus)) as LeagueMatch[];
 
-    const stats = computeLeagueStats(
+    return computeLeagueStats(
       ligue1Matches,
       bonusMatches,
       rankingBonusOptions,
@@ -1023,19 +1029,6 @@ function GazettePage() {
         favoriteTeamBySeason: rankingFavoriteHistory,
       },
     );
-
-    const rows = profiles.map((profile) => ({
-      id: profile.id,
-      name: profile.pseudo || "Joueur",
-      avatar: profile.avatar_url || "",
-      points: stats.pointsByUser[profile.id] ?? 0,
-      exactScores: stats.exactScoresByUser[profile.id] ?? 0,
-      predictionsCount: stats.predictionsCountByUser[profile.id] ?? 0,
-      regularitySuccess: stats.regularitySuccessByUser[profile.id] ?? 0,
-      pseudo: profile.pseudo || "Joueur",
-    }));
-
-    return rankPlayers(rows);
   }, [
     profiles,
     journees,
@@ -1044,6 +1037,28 @@ function GazettePage() {
     rankingFavoriteHistory,
     rankingTeamNames,
   ]);
+
+  // Points RÉELS d'un joueur sur un match précis, tels que calculés par le
+  // moteur. Remplace partout la lecture de `prono.points` (colonne morte).
+  const pointsFor = useMemo(() => {
+    const table = leagueStats.pointsByPredictionKey;
+    return (userId: string, matchId: string) => table[`${userId}:${matchId}`] ?? 0;
+  }, [leagueStats]);
+
+  const rankedPlayers = useMemo(() => {
+    const rows = profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.pseudo || "Joueur",
+      avatar: profile.avatar_url || "",
+      points: leagueStats.pointsByUser[profile.id] ?? 0,
+      exactScores: leagueStats.exactScoresByUser[profile.id] ?? 0,
+      predictionsCount: leagueStats.predictionsCountByUser[profile.id] ?? 0,
+      regularitySuccess: leagueStats.regularitySuccessByUser[profile.id] ?? 0,
+      pseudo: profile.pseudo || "Joueur",
+    }));
+
+    return rankPlayers(rows);
+  }, [profiles, leagueStats]);
 
   const leader = rankedPlayers[0] ?? null;
   const second = rankedPlayers[1] ?? null;
@@ -1061,22 +1076,31 @@ function GazettePage() {
           match.matchday_id !== currentJournee?.id ||
           !isActuallyFinished(match)
         ) return;
-        pointsToday += Number(prono.points || 0);
+        pointsToday += pointsFor(player.id, String(matchId));
         if (isExactPrediction(match, prono)) exactToday += 1;
       });
       return { ...player, pointsToday, exactToday };
     });
 
+    // Rang AVANT la journée = classement recalculé sur les points du joueur
+    // moins ceux pris sur cette journée.
+    // BUG CORRIGÉ : cette table renvoyait le rang COURANT (recherche de
+    // `player.rank` dans rankedPlayers), donc un mouvement toujours nul —
+    // elle n'était d'ailleurs consommée nulle part.
     const previousRanks = new Map<string, number>();
-    profiles.forEach((profile) => {
-      previousRanks.set(profile.id, rankedPlayers.find((p) => p.id === profile.id)?.rank ?? 0);
-    });
+    rankPlayers(
+      moves.map((player) => ({
+        ...player,
+        points: player.points - player.pointsToday,
+        exactScores: Math.max(0, player.exactScores - player.exactToday),
+      })) as any,
+    ).forEach((player: any) => previousRanks.set(String(player.id), Number(player.rank)));
 
     const biggestMover = [...moves].sort((a, b) => b.pointsToday - a.pointsToday || b.exactToday - a.exactToday)[0] ?? null;
     const closestRace = leader && second ? leader.points - second.points : 0;
 
     return { moves, biggestMover, closestRace, previousRanks };
-  }, [rankedPlayers, predictionsByUser, matchesById, currentJournee, profiles, clock]);
+  }, [rankedPlayers, predictionsByUser, matchesById, currentJournee, profiles, clock, pointsFor]);
 
   const lastFinished = journeeFinishedMatches[journeeFinishedMatches.length - 1]?.match ?? null;
   const lastFinishedId = String(lastFinished?.id ?? "");
@@ -1112,7 +1136,7 @@ function GazettePage() {
         if (!match || !isActuallyFinished(match)) return;
         if (previousMatchId && String(matchId) === previousMatchId) return;
 
-        points += Number(prono.points || 0);
+        points += pointsFor(profile.id, String(matchId));
         predictionsCount += 1;
         if (isExactPrediction(match, prono)) exactScores += 1;
       });
@@ -1165,7 +1189,7 @@ function GazettePage() {
 
           if (!prono) return null;
 
-          const points = Number(prono.points || 0);
+          const points = pointsFor(profile.id, String(previousMatchId));
           const exact = isExactPrediction(lastFinished, prono);
 
           return {
@@ -1199,6 +1223,7 @@ function GazettePage() {
     matchesById,
     lastFinished,
     lastFinishedId,
+    pointsFor,
   ]);
 
 
@@ -1220,6 +1245,81 @@ function GazettePage() {
     const mover = evolution?.biggestMover;
     const moverName = mover?.name ?? leader?.name ?? "Le leader";
     const gap = evolution?.closestRace ?? 0;
+
+    // ------------------------------------------------------------------
+    // BLOCS PARTAGÉS par les trois branches (direct / avant match / en cours).
+    // Auparavant chaque branche réécrivait ses propres phrases, avec les mêmes
+    // defauts recopiés : `gap` présenté comme un total, aucun accord en nombre,
+    // et un "profite le plus des résultats" affirmé même pour un joueur à zéro.
+    // ------------------------------------------------------------------
+    const exAequo = Boolean(leader && second && gap === 0);
+
+    // `gap` est un ÉCART, jamais un total.
+    const hierarchie = !leader
+      ? "Les premiers points de la journée sont désormais enregistrés."
+      : !second
+        ? `${leader.name} ouvre le compteur avec ${accord(leader.points, "point")} et reste pour l'instant seul en piste.`
+        : exAequo
+          ? `${leader.name} et ${second.name} se tiennent à hauteur, ${accord(leader.points, "point")} chacun : rien ne les sépare à ce stade.${third ? ` ${third.name} complète le podium.` : ""}`
+          : gap === 1
+            ? `${leader.name} mène avec ${accord(leader.points, "point")}, mais ${second.name} n'est qu'à une longueur et attend le moindre faux pas.${third ? ` ${third.name} complète le podium.` : ""}`
+            : `${leader.name} mène avec ${accord(leader.points, "point")} et compte ${accord(gap, "longueur")} d'avance sur ${second.name}.${third ? ` ${third.name} complète le podium.` : ""}`;
+
+    // ANGLE — mouvement au classement depuis le début de la journée.
+    const grimpeur = (evolution?.moves ?? [])
+      .map((player: any) => ({
+        ...player,
+        gain: (evolution?.previousRanks.get(String(player.id)) ?? player.rank) - player.rank,
+      }))
+      .filter((player: any) => player.gain > 0)
+      .sort((a: any, b: any) => b.gain - a.gain || b.pointsToday - a.pointsToday)[0] ?? null;
+
+    // Le meilleur marqueur du jour est souvent aussi celui qui remonte le
+    // plus : deux paragraphes consécutifs sur le même joueur se liraient comme
+    // une redite. On fusionne, et l'angle "remontée" laisse alors sa place.
+    const memeJoueur = Boolean(grimpeur && mover && String(grimpeur.id) === String(mover.id));
+    const places = (n: number) => (n > 1 ? `${n} places` : "une place");
+
+    // Un joueur à 0 point pris n'a "profité" de rien.
+    const operation = !mover || mover.pointsToday <= 0
+      ? "Aucun joueur n'a encore creusé l'écart sur cette journée : les compteurs restent groupés."
+      : `${mover.name} signe la meilleure opération du moment, avec ${accord(mover.pointsToday, "point")} pris sur les rencontres déjà jouées${mover.exactToday > 0 ? `, dont ${accord(mover.exactToday, "score exact", "scores exacts")}` : ""}${memeJoueur && grimpeur ? ` — ${places(grimpeur.gain)} gagnée${grimpeur.gain > 1 ? "s" : ""} au classement, ${grimpeur.rank}e désormais` : ""}.`;
+
+    const mouvement = grimpeur && !memeJoueur
+      ? `${grimpeur.name} réalise la plus belle remontée : ${places(grimpeur.gain)} gagnée${grimpeur.gain > 1 ? "s" : ""} depuis le coup d'envoi de la journée, ${grimpeur.rank}e désormais.`
+      : null;
+
+    // ANGLE — le match qui a piégé tout le monde, ou celui que personne
+    // n'a manqué. Compté sur les points RÉELS du moteur.
+    const parMatch = journeeFinishedMatches.map(({ match }) => {
+      let gagnants = 0;
+      let parieurs = 0;
+      profiles.forEach((profile) => {
+        // Un match que PERSONNE n'a pronostiqué a lui aussi zéro gagnant :
+        // sans ce compteur, il serait présenté comme "le piège de la journée"
+        // alors que nul n'a simplement tenté sa chance dessus.
+        if (!predictionsByUser.get(profile.id)?.byMatch.get(String(match.id))) return;
+        parieurs += 1;
+        if (pointsFor(profile.id, String(match.id)) > 0) gagnants += 1;
+      });
+      return { match, gagnants, parieurs };
+    });
+
+    const affiche = (match: any) =>
+      `${shortTeam(getTeamHome(match))}–${shortTeam(getTeamAway(match))} (${getScoreHome(match)}–${getScoreAway(match)})`;
+
+    // Piège : au moins deux joueurs ont tenté, aucun n'a marqué.
+    const piege = parMatch.find((entry) => entry.parieurs >= 2 && entry.gagnants === 0) ?? null;
+    // Évidence : la quasi-totalité de ceux qui ont joué le match ont marqué.
+    const evidence = [...parMatch]
+      .filter((entry) => entry.parieurs >= 3 && entry.gagnants >= Math.ceil(entry.parieurs * 0.8))
+      .sort((a, b) => b.parieurs - a.parieurs)[0] ?? null;
+
+    const surprise = piege
+      ? `${affiche(piege.match)} restera le piège de la journée : sur ${accord(piege.parieurs, "joueur")} à avoir tenté le coup, pas un n'a pris le moindre point.`
+      : evidence
+        ? `Personne ou presque ne s'est trompé sur ${affiche(evidence.match)} : ${evidence.gagnants} joueurs sur ${evidence.parieurs} y ont marqué.`
+        : null;
 
     if (live > 0) {
       const liveMatch = liveMatches[0].match;
@@ -1292,9 +1392,15 @@ function GazettePage() {
         title: liveTitle,
         intro: endGame ?? liveIntro,
         paragraphs: [
-          `${done} match${done > 1 ? "s" : ""} ${done > 1 ? "sont" : "est"} déjà terminé${done > 1 ? "s" : ""} sur cette ${currentJournee.title}. La hiérarchie se construit donc encore en temps réel.`,
-          leader ? `${leader.name} occupe actuellement la première place avec ${leader.points} point${leader.points > 1 ? "s" : ""}. ${second ? `${second.name} suit à ${gap} point${gap > 1 ? "s" : ""}.` : ""}` : "Le classement se met en place au fil des résultats.",
-          `${moverName} est pour l'instant le joueur qui profite le plus des résultats déjà enregistrés${mover?.pointsToday ? ` avec ${mover.pointsToday} point${mover.pointsToday > 1 ? "s" : ""} pris sur la journée.` : "."}`,
+          done > 0
+            ? `${accord(done, "match")} ${done > 1 ? "sont" : "est"} déjà ${done > 1 ? "terminés" : "terminé"} sur cette ${currentJournee.title} : la hiérarchie se construit en temps réel.`
+            : `Aucune rencontre n'est encore allée à son terme sur cette ${currentJournee.title} : tout se joue en direct.`,
+          // Mêmes blocs que les autres branches — l'ancienne version répétait
+          // ici le bug de l'écart lu comme un total ("${second.name} suit à
+          // 0 point" pour une égalité) et affirmait qu'un joueur "profite le
+          // plus des résultats" même sans un seul point pris.
+          hierarchie,
+          ...([operation, mouvement, surprise].filter(Boolean) as string[]).slice(0, 1),
         ],
       };
     }
@@ -1305,7 +1411,8 @@ function GazettePage() {
         title: `${currentJournee.title} : la course va commencer`,
         intro: "Aucun résultat n'est encore figé. Les premiers matchs vont donner le ton de la journée.",
         paragraphs: [
-          `${total} rencontre${total > 1 ? "s" : ""} sont programmée${total > 1 ? "s" : ""}. Les pronostics sont en place et la première évolution du classement apparaîtra dès le premier score officiel.`,
+          // "1 rencontre sont programmée" : l'accord du verbe manquait.
+          `${accord(total, "rencontre")} ${total > 1 ? "sont programmées" : "est programmée"}. Les pronostics sont en place et la première évolution du classement apparaîtra dès le premier score officiel.`,
           "La Gazette suivra ensuite les changements de points, les scores exacts et les mouvements du podium sans attendre la fin de la journée.",
         ],
       };
@@ -1338,8 +1445,6 @@ function GazettePage() {
       return sum + count;
     }, 0);
 
-    const exAequo = Boolean(leader && second && gap === 0);
-
     // TITRE — "garde la main" est faux quand deux joueurs sont a egalite.
     const titre = !leader
       ? "La hiérarchie commence à se dessiner"
@@ -1351,38 +1456,24 @@ function GazettePage() {
             `${leader.name} passe devant, sans avoir encore fait le trou`,
           ][variant % 3];
 
-    // HIERARCHIE — `gap` est un ECART, jamais un total.
-    // BUG CORRIGE : "${second.name} reste à ${gap} point" se lisait comme
-    // "le dauphin a marqué ${gap} points". Avec un ecart nul, l'article
-    // annoncait donc "Max reste à 0 point" alors que Max etait a hauteur du
-    // leader.
-    const hierarchie = !leader
-      ? "Les premiers points de la journée sont désormais enregistrés."
-      : !second
-        ? `${leader.name} ouvre le compteur avec ${accord(leader.points, "point")} et reste pour l'instant seul en piste.`
-        : exAequo
-          ? `${leader.name} et ${second.name} se tiennent à hauteur, ${accord(leader.points, "point")} chacun : rien ne les sépare à ce stade.${third ? ` ${third.name} complète le podium.` : ""}`
-          : gap === 1
-            ? `${leader.name} mène avec ${accord(leader.points, "point")}, mais ${second.name} n'est qu'à une longueur et attend le moindre faux pas.${third ? ` ${third.name} complète le podium.` : ""}`
-            : `${leader.name} mène avec ${accord(leader.points, "point")} et compte ${accord(gap, "longueur")} d'avance sur ${second.name}.${third ? ` ${third.name} complète le podium.` : ""}`;
-
-    // MEILLEURE OPERATION — un joueur a 0 point pris n'a "profité" de rien.
-    const operation = !mover || mover.pointsToday <= 0
-      ? "Aucun joueur n'a encore creusé l'écart sur cette journée : les compteurs restent groupés."
-      : `${mover.name} signe la meilleure opération du moment, avec ${accord(mover.pointsToday, "point")} pris sur les rencontres déjà jouées${mover.exactToday > 0 ? `, dont ${accord(mover.exactToday, "score exact", "scores exacts")}` : ""}.`;
-
     // SCORES EXACTS — meme perimetre (journee) que le reste de l'article.
     const exacts = exactCount > 0
       ? `${accord(exactCount, "score exact", "scores exacts")} ${exactCount > 1 ? "ont" : "a"} déjà été ${exactCount > 1 ? "trouvés" : "trouvé"} sur les rencontres terminées. C'est précisément là que se décident les fins de saison, quand deux joueurs arrivent au même total.`
       : "Aucun score exact n'est encore tombé sur les rencontres terminées. Le premier à en signer un prendra une avance que les autres mettront du temps à combler.";
 
+    // Le corps de l'article : la hiérarchie ouvre, les scores exacts ferment,
+    // et entre les deux on retient les deux angles les plus parlants du moment
+    // (meilleure opération, remontée au classement, match piège ou évidence)
+    // au lieu de servir toujours les trois mêmes phrases.
+    const angles = [operation, mouvement, surprise].filter(Boolean) as string[];
+
     return {
       kicker: `${currentJournee.title} · ${done}/${total} MATCH${total > 1 ? "S" : ""}`,
       title: titre,
       intro: variants[variant],
-      paragraphs: [hierarchie, operation, exacts],
+      paragraphs: [hierarchie, ...angles.slice(0, 2), exacts],
     };
-  }, [currentJournee, journeeFinishedMatches, currentJourneeAllMatches.length, liveMatches, evolution, leader, second, third, lastFinishedId, profiles, predictionsByUser, clock]);
+  }, [currentJournee, journeeFinishedMatches, currentJourneeAllMatches.length, liveMatches, evolution, leader, second, third, lastFinishedId, profiles, predictionsByUser, clock, pointsFor]);
 
   const dynamicStat = useMemo(() => {
     const finished = finishedMatches.length;
@@ -1423,17 +1514,18 @@ function GazettePage() {
     journeeFinishedMatches.forEach(({ match }) => {
       profiles.forEach((profile) => {
         const prono = predictionsByUser.get(profile.id)?.byMatch.get(String(match.id));
-        if (!prono || Number(prono.points || 0) <= 0) return;
+        const gained = pointsFor(profile.id, String(match.id));
+        if (!prono || gained <= 0) return;
         candidates.push({
           player: rankedPlayers.find((p) => p.id === profile.id) ?? { name: profile.pseudo || "Joueur", avatar: profile.avatar_url || "" },
           match,
-          points: Number(prono.points || 0),
+          points: gained,
           exact: isExactPrediction(match, prono),
         });
       });
     });
     return candidates.sort((a, b) => Number(b.exact) - Number(a.exact) || b.points - a.points)[0] ?? null;
-  }, [journeeFinishedMatches, profiles, predictionsByUser, rankedPlayers]);
+  }, [journeeFinishedMatches, profiles, predictionsByUser, rankedPlayers, pointsFor]);
 
   const matchStatusLabel = (match: any) => {
     const state = getMatchState(match);
