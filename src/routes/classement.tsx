@@ -604,29 +604,33 @@ function ClassementPage() {
           return Math.sign(predictedDiff) === Math.sign(actualDiff);
         };
 
-        if (latestFinishedNumber != null) {
-          for (const p of predictionsData ?? []) {
-            const userId = String(p.user_id ?? "");
-            const dayNumber = matchdayNumberByMatchId.get(String(p.match_id));
-            if (!userId || dayNumber == null || dayNumber > latestFinishedNumber) continue;
+        // BASE D'ÉVOLUTION : le classement tel qu'il serait SANS les matchs
+        // actuellement en cours. Un match encore en direct — dont le score
+        // compte déjà dans le classement affiché — en est volontairement
+        // exclu : c'est exactement ce qui fait bouger les flèches pendant
+        // que les matchs se jouent.
+        let baselineHasData = false;
 
-            previousPredictionsByUser[userId] = (previousPredictionsByUser[userId] ?? 0) + 1;
-            previousPointsByUser[userId] =
-              (previousPointsByUser[userId] ?? 0) +
-              (pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0);
+        for (const p of predictionsData ?? []) {
+          const userId = String(p.user_id ?? "");
+          if (!userId) continue;
 
-            const match = matchByIdForCareer.get(String(p.match_id));
-            // Le classement précédent reste STRICTEMENT officiel : un match
-            // encore en direct ne doit jamais entrer dans la comparaison de
-            // l'évolution, même si son score live est déjà connu.
-            if (!match || !match.finished || match.home_score == null || match.away_score == null) continue;
+          const match = matchByIdForCareer.get(String(p.match_id));
+          if (!match || match.finished !== true || match.home_score == null || match.away_score == null) {
+            continue;
+          }
+          baselineHasData = true;
 
-            if (isExactPrediction(p)) {
-              previousExactByUser[userId] = (previousExactByUser[userId] ?? 0) + 1;
-            }
-            if (outcomeCorrect(p, match)) {
-              previousRegularityByUser[userId] = (previousRegularityByUser[userId] ?? 0) + 1;
-            }
+          previousPredictionsByUser[userId] = (previousPredictionsByUser[userId] ?? 0) + 1;
+          previousPointsByUser[userId] =
+            (previousPointsByUser[userId] ?? 0) +
+            (pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0);
+
+          if (isExactPrediction(p)) {
+            previousExactByUser[userId] = (previousExactByUser[userId] ?? 0) + 1;
+          }
+          if (outcomeCorrect(p, match)) {
+            previousRegularityByUser[userId] = (previousRegularityByUser[userId] ?? 0) + 1;
           }
         }
 
@@ -640,18 +644,12 @@ function ClassementPage() {
           careerTitle: "Débutant",
         }));
 
-        // Base d'évolution LIVE : classement avant le début de la journée en
-        // cours. Tant qu'AUCUNE journée n'est entièrement terminée, il n'y a
-        // pas de classement précédent : on n'en invente pas.
-        //
-        // L'ancien repli classait tout le monde à 0 point ; l'ordre obtenu ne
-        // dépendait alors que des départages, et la comparaison produisait des
-        // mouvements inventés (un joueur pouvait afficher -4 sans que le
-        // classement ait bougé). Sans base réelle, la colonne Évolution
-        // affiche « — » pour tout le monde, ce qui est la vérité.
-        const baselineRanking = latestFinishedNumber != null
-          ? rankPlayers(previousRankedInput as any)
-          : [];
+        // Tant qu'AUCUN match n'est terminé, il n'existe pas de classement de
+        // référence : on n'en invente pas. L'ancien repli classait tout le
+        // monde à 0 point, l'ordre obtenu ne dépendait que des départages, et
+        // la comparaison produisait des mouvements qui n'avaient jamais eu
+        // lieu (un joueur affichait -4 sans que le classement ait bougé).
+        const baselineRanking = baselineHasData ? rankPlayers(previousRankedInput as any) : [];
 
         const previousRanks: Record<string, number> = {};
         baselineRanking.forEach((player: any) => {
