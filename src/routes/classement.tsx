@@ -855,7 +855,7 @@ function ClassementPage() {
         )}
 
         {!loading && totalPlayers > 0 && (
-          <section className="relative z-10 mx-auto mt-6 max-w-[1180px] sm:mt-8">
+          <section className="relative z-10 mx-auto mt-6 max-w-[1060px] sm:mt-8">
             {/* Gains : placés au-dessus du classement pour libérer de la largeur dans les cartes joueurs. */}
             <div className="mb-5 overflow-hidden rounded-2xl border border-amber-300/20 bg-gradient-to-r from-[#101c2b]/95 via-[#17283a]/90 to-[#0b1725]/95 shadow-[0_0_34px_rgba(245,158,11,.08)]">
               <div className="flex flex-col gap-2.5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:py-2.5">
@@ -897,7 +897,7 @@ function ClassementPage() {
 
             {/* Desktop : 1er → dernier, une seule liste continue. */}
             <div className="hidden sm:block">
-              <div className="grid grid-cols-[64px_minmax(0,1fr)_104px_82px_150px_110px_92px] items-center gap-3 px-5 pb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+              <div className="grid grid-cols-[56px_minmax(0,1fr)_92px_72px_88px_132px_86px] items-center gap-3 px-5 pb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
                 <span>#</span>
                 <span>Joueur</span>
                 <span className="text-center">Points</span>
@@ -949,30 +949,21 @@ function ClassementPage() {
                           ? "border-white/95 from-white/[0.38] via-[#30445b]/78 to-[#0a1624]/88 shadow-[0_0_54px_rgba(226,232,240,.34),inset_0_0_34px_rgba(226,232,240,.13)]"
                           : p.rank === 3
                             ? "border-orange-200/95 from-orange-400/[0.42] via-[#3a2b2b]/78 to-[#0c1723]/88 shadow-[0_0_56px_rgba(249,115,22,.36),inset_0_0_36px_rgba(249,115,22,.14)]"
-                            : p.rank === totalPlayers - 2
-                              ? "border-amber-300/90 from-amber-400/[0.34] via-[#5a3410]/88 to-[#1c1208]/94 shadow-[0_0_52px_rgba(245,158,11,.30),inset_0_0_32px_rgba(245,158,11,.12)]"
-                              : p.rank === totalPlayers - 1
-                                ? "border-orange-300/95 from-orange-500/[0.38] via-[#5a210b]/88 to-[#1d0c06]/94 shadow-[0_0_56px_rgba(249,115,22,.34),inset_0_0_34px_rgba(249,115,22,.14)]"
-                                : p.rank === totalPlayers
-                                  ? "border-rose-300/95 from-rose-500/[0.42] via-[#5b0b18]/88 to-[#24060b]/94 shadow-[0_0_62px_rgba(244,63,94,.38),inset_0_0_36px_rgba(244,63,94,.16)]"
-                                  : "border-white/[0.09] from-[#102238]/92 via-[#0c1b2c]/94 to-[#081421]/96";
+                            : p.rank === totalPlayers && totalPlayers > 3
+                              ? "border-rose-300/25 from-[#1b1220]/92 via-[#12101f]/94 to-[#0a0c17]/96"
+                              : "border-white/[0.09] from-[#102238]/92 via-[#0c1b2c]/94 to-[#081421]/96";
 
                     const rankTone =
                       p.rank === 1 ? "text-amber-100" :
                       p.rank === 2 ? "text-slate-100" :
                       p.rank === 3 ? "text-orange-100" :
-                      p.rank === totalPlayers - 2 ? "text-amber-100" :
-                      p.rank === totalPlayers - 1 ? "text-orange-100" :
-                      p.rank === totalPlayers ? "text-rose-100" :
+                      p.rank === totalPlayers && totalPlayers > 3 ? "text-rose-200/80" :
                       "text-slate-100";
 
                     const pointTone =
                       p.rank === 1 ? "text-amber-300" :
                       p.rank === 2 ? "text-slate-100" :
                       p.rank === 3 ? "text-orange-300" :
-                      p.rank === totalPlayers - 2 ? "text-amber-100 drop-shadow-[0_0_12px_rgba(245,158,11,.62)]" :
-                      p.rank === totalPlayers - 1 ? "text-orange-100 drop-shadow-[0_0_12px_rgba(249,115,22,.68)]" :
-                      p.rank === totalPlayers ? "text-rose-100 drop-shadow-[0_0_14px_rgba(244,63,94,.72)]" :
                       "text-white";
 
                     const gapTone =
@@ -992,7 +983,7 @@ function ClassementPage() {
                         className={`group relative overflow-hidden rounded-2xl border bg-gradient-to-br shadow-[0_14px_34px_rgba(0,0,0,.22)] transition-all duration-300 hover:-translate-y-[1px] hover:border-white/[0.16] ${topTone} ${isMe ? "ring-1 ring-emerald-300/20" : ""}`}
                       >
                         <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-white/[0.045] to-transparent" />
-                        <div className="relative grid grid-cols-[64px_minmax(0,1fr)_104px_82px_150px_110px_92px] items-center gap-4 px-5 py-4">
+                        <div className="relative grid grid-cols-[56px_minmax(0,1fr)_92px_72px_88px_132px_86px] items-center gap-4 px-5 py-4">
                           <div className="relative flex h-14 w-14 items-center justify-center">
                             {p.rank <= 3 ? (
                               <div className={`h-14 w-14 transition-transform duration-300 group-hover:scale-110 ${
@@ -1003,7 +994,7 @@ function ClassementPage() {
                                 <RankMedal rank={p.rank as 1 | 2 | 3} scope="desktop" />
                               </div>
                             ) : (
-                              <div className={`relative flex h-12 w-12 items-center justify-center rounded-xl border bg-black/20 font-mono text-sm font-black shadow-[inset_0_1px_0_rgba(255,255,255,.1),0_4px_10px_rgba(0,0,0,.35)] ${p.rank > totalPlayers - 3 ? "border-white/20" : "border-white/[0.1]"} ${rankTone}`}>
+                              <div className={`relative flex h-12 w-12 items-center justify-center rounded-xl border bg-black/20 font-mono text-sm font-black shadow-[inset_0_1px_0_rgba(255,255,255,.1),0_4px_10px_rgba(0,0,0,.35)] border-white/[0.1] ${rankTone}`}>
                                 {String(p.rank).padStart(2, "0")}
                               </div>
                             )}
@@ -1076,9 +1067,6 @@ function ClassementPage() {
                                         p.rank === 1 ? "bg-gradient-to-r from-amber-500 to-yellow-200" :
                                         p.rank === 2 ? "bg-gradient-to-r from-slate-400 to-white" :
                                         p.rank === 3 ? "bg-gradient-to-r from-orange-600 to-orange-300" :
-                                        p.rank === totalPlayers - 2 ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white" :
-                                        p.rank === totalPlayers - 1 ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white" :
-                                        p.rank === totalPlayers ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white" :
                                         "bg-gradient-to-r from-slate-600 to-slate-400"
                                       }`}
                                       style={{ width: `${regularityPct}%` }}
@@ -1092,7 +1080,7 @@ function ClassementPage() {
                           <div className="flex items-center justify-center">
                             <div className={`flex min-w-[72px] h-8 items-center justify-center gap-1.5 rounded-full border px-2 transition-transform duration-300 group-hover:scale-105 ${evolutionTone}`}>
                               {trend === "up" ? <ArrowUp className="h-3.5 w-3.5" /> : trend === "down" ? <ArrowDown className="h-3.5 w-3.5" /> : <Minus className="h-3 w-3" />}
-                              <span className="font-mono text-[10px] font-black">{trendLabel}</span>
+                              {trend !== "same" && <span className="font-mono text-[10px] font-black">{trendLabel}</span>}
                             </div>
                           </div>
                         </div>
@@ -1151,13 +1139,9 @@ function ClassementPage() {
                         ? "border-slate-100/80 from-white/[0.20] via-[#17283a]/90 to-[#091521]/95 shadow-[0_0_32px_rgba(226,232,240,.15)]"
                         : p.rank === 3
                           ? "border-orange-300/85 from-orange-400/[0.23] via-[#1e2634]/90 to-[#0a1621]/95 shadow-[0_0_32px_rgba(249,115,22,.17)]"
-                          : p.rank === totalPlayers - 2
-                            ? "border-amber-300/90 from-amber-400/[0.34] via-[#5a3410]/90 to-[#1c1208]/94 shadow-[0_0_42px_rgba(245,158,11,.30)]"
-                            : p.rank === totalPlayers - 1
-                              ? "border-orange-300/95 from-orange-500/[0.38] via-[#5a210b]/90 to-[#1d0c06]/94 shadow-[0_0_46px_rgba(249,115,22,.34)]"
-                              : p.rank === totalPlayers
-                                ? "border-rose-300/95 from-rose-500/[0.42] via-[#5b0b18]/90 to-[#24060b]/95 shadow-[0_0_50px_rgba(244,63,94,.38)]"
-                                : "border-white/[0.09] from-[#102238]/92 to-[#081522]/96";
+                          : p.rank === totalPlayers && totalPlayers > 3
+                            ? "border-rose-300/25 from-[#1b1220]/92 to-[#0a0c17]/96"
+                            : "border-white/[0.09] from-[#102238]/92 to-[#081522]/96";
 
                   const rankTone =
                     p.rank === 1
@@ -1166,13 +1150,9 @@ function ClassementPage() {
                         ? "text-slate-100"
                         : p.rank === 3
                           ? "text-orange-100"
-                          : p.rank === totalPlayers - 2
-                            ? "text-amber-100"
-                            : p.rank === totalPlayers - 1
-                              ? "text-orange-100"
-                              : p.rank === totalPlayers
-                                ? "text-rose-100"
-                                : "text-slate-100";
+                          : p.rank === totalPlayers && totalPlayers > 3
+                            ? "text-rose-200/80"
+                            : "text-slate-100";
 
                   const pointTone =
                     p.rank === 1
@@ -1181,13 +1161,7 @@ function ClassementPage() {
                         ? "text-slate-100"
                         : p.rank === 3
                           ? "text-orange-300"
-                          : p.rank === totalPlayers - 2
-                            ? "text-amber-200"
-                            : p.rank === totalPlayers - 1
-                              ? "text-orange-200"
-                              : p.rank === totalPlayers
-                                ? "text-rose-200"
-                                : "text-white";
+                          : "text-white";
 
                   const evolutionTone =
                     trend === "up"
@@ -1221,13 +1195,9 @@ function ClassementPage() {
                           ) : (
                             <div
                               className={`flex h-10 w-10 items-center justify-center rounded-xl border bg-black/20 font-mono text-[10px] font-black ${
-                                p.rank === totalPlayers - 2
-                                  ? "border-cyan-300/35 shadow-[0_0_14px_rgba(34,211,238,.12)]"
-                                  : p.rank === totalPlayers - 1
-                                    ? "border-violet-300/35 shadow-[0_0_14px_rgba(167,139,250,.12)]"
-                                    : p.rank === totalPlayers
-                                      ? "border-rose-300/40 shadow-[0_0_14px_rgba(251,113,133,.14)]"
-                                      : "border-white/10"
+                                p.rank === totalPlayers && totalPlayers > 3
+                                  ? "border-rose-300/25"
+                                  : "border-white/10"
                               } ${rankTone}`}
                             >
                               {String(p.rank).padStart(2, "0")}
@@ -1300,8 +1270,8 @@ function ClassementPage() {
                           }`}>
                             {p.rank === 1 ? "—" : `-${Math.max(0, (list[0]?.points ?? 0) - p.points)}`}
                           </div>
-                          <div className="mt-0.5 font-mono text-[6px] font-bold uppercase tracking-widest text-slate-500">
-                            écart pts
+                          <div className="mt-0.5 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-500">
+                            écart
                           </div>
                         </div>
 
@@ -1315,11 +1285,11 @@ function ClassementPage() {
                             : 0;
                           return (
                             <div className="min-w-0 px-1">
-                              <div className="mb-1 flex items-center justify-center gap-1 font-mono text-[6px] uppercase tracking-wider text-slate-400">
-                                <span className="font-bold text-slate-300">
+                              <div className="mb-1 flex items-center justify-center gap-1 font-mono text-[8px] uppercase tracking-wider text-slate-400">
+                                <span className="font-bold text-slate-200">
                                   {regularityPct}%
                                 </span>
-                                <span>réussite</span>
+                                <span>régularité</span>
                               </div>
                               <div className="h-[4px] overflow-hidden rounded-full bg-white/[0.10]">
                                 <div
@@ -1330,18 +1300,12 @@ function ClassementPage() {
                                         ? "bg-gradient-to-r from-slate-300 to-white"
                                         : p.rank === 3
                                           ? "bg-gradient-to-r from-orange-300 to-amber-200"
-                                          : p.rank === totalPlayers - 2
-                                            ? "bg-gradient-to-r from-cyan-300 via-sky-200 to-white"
-                                            : p.rank === totalPlayers - 1
-                                              ? "bg-gradient-to-r from-violet-300 via-fuchsia-200 to-white"
-                                              : p.rank === totalPlayers
-                                                ? "bg-gradient-to-r from-fuchsia-300 via-rose-200 to-white"
-                                                : "bg-slate-400"
+                                          : "bg-slate-400"
                                   }`}
                                   style={{ width: `${regularityPct}%` }}
                                 />
                               </div>
-                              <div className="mt-0.5 text-center font-mono text-[5px] uppercase tracking-widest text-slate-500">
+                              <div className="mt-0.5 text-center font-mono text-[7px] uppercase tracking-widest text-slate-500">
                                 {regularitySuccess}/{regularityTotal}
                               </div>
                             </div>
