@@ -320,6 +320,7 @@ function StatsPage() {
         { data: profiles, error: profilesError },
         { data: bonusOptionsData, error: bonusOptionsError },
         { data: matchdaysData, error: matchdaysError },
+        { data: competitionsData, error: competitionsError },
         { data: favoriteHistoryData, error: favoriteHistoryError },
         apiLiveMatches,
       ] = await Promise.all([
@@ -342,7 +343,11 @@ function StatsPage() {
           .select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
         supabase.from("bonus_options").select("matchday_id, match_id"),
         // Saison par journée + équipe favorite historisée par saison (Lot 4).
-        supabase.from("matchdays").select("id, season_id, season"),
+        // competition_id en plus : nécessaire pour isoler les vraies journées
+        // Ligue 1 des journées bonus (PL/PD/SA/BL1), même logique que
+        // index.tsx / profil.tsx / classement.tsx.
+        supabase.from("matchdays").select("id, season_id, season, competition_id"),
+        supabase.from("competitions").select("id, code, external_code"),
         supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
         // Même fetcher que toutes les autres pages (src/lib/liveMatches.ts).
         fetchLiveApiMatches(),
@@ -353,6 +358,7 @@ function StatsPage() {
       if (profilesError) console.warn("Erreur chargement profils (Top joueurs) :", profilesError);
       if (bonusOptionsError) console.warn("Erreur chargement bonus (recalcul points) :", bonusOptionsError);
       if (matchdaysError) console.warn("Erreur chargement journées (favori historique) :", matchdaysError);
+      if (competitionsError) console.warn("Erreur chargement compétitions (filtre Ligue 1) :", competitionsError);
       if (favoriteHistoryError) console.warn("Historique équipe favorite non chargé :", favoriteHistoryError);
 
       if (requestId !== statsRequestSeq.current) return;
@@ -384,8 +390,39 @@ function StatsPage() {
       // computeLeagueStats l'attend.
       const bonusOptions = (bonusOptionsData || []) as LeagueBonusOption[];
       const bonusMatchIdSet = new Set(bonusOptions.map((o) => String(o.match_id)));
+
+      // Vraies journées Ligue 1 (FL1) — même construction que classement.tsx,
+      // index.tsx et profil.tsx.
+      // BUG CORRIGÉ : sans ce filtre, Stats versait dans le lot "Ligue 1"
+      // n'importe quel match non-bonus ayant un score, y compris ceux des 4
+      // championnats bonus (PL/PD/SA/BL1) que le Classement exclut — et un
+      // match bonus stocké avec is_bonus = false était même compté DEUX fois
+      // (une fois au barème standard ici, une fois au barème bonus juste en
+      // dessous). Le lot est désormais identique à celui des trois autres
+      // pages : mêmes matchs en entrée, donc mêmes points en sortie.
+      const ligue1CompetitionIds = new Set(
+        (competitionsData ?? [])
+          .filter((c: any) => c.code === "FL1" || c.external_code === "FL1")
+          .map((c: any) => String(c.id)),
+      );
+      const ligue1MatchdayIds = new Set(
+        (matchdaysData ?? [])
+          .filter(
+            (md: any) => !md.competition_id || ligue1CompetitionIds.has(String(md.competition_id)),
+          )
+          .map((md: any) => String(md.id)),
+      );
+
       const ligue1MatchesForScoring: LeagueMatch[] = liveScoringMatches
-        .filter((m) => !m.is_bonus && m.home_score != null && m.away_score != null)
+        .filter(
+          (m) =>
+            !m.is_bonus &&
+            m.home_score != null &&
+            m.away_score != null &&
+            m.finished &&
+            m.matchday_id &&
+            ligue1MatchdayIds.has(String(m.matchday_id)),
+        )
         .map((m) => ({
           id: m.id,
           matchday_id: m.matchday_id ?? m.matchday,
