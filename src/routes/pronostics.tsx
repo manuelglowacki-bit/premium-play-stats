@@ -2385,7 +2385,12 @@ function PronosticsPage() {
 
                     return (
                       <div key={match.id} className="flex w-full flex-col items-center gap-3">
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+                        {/* La date etait en text-slate-400, pose a nu sur le
+                            fond d'ecran du club : sur l'artwork rouge de Lens,
+                            elle en devenait illisible. Elle repose desormais
+                            sur sa propre pastille sombre, ce qui la rend
+                            lisible quel que soit le club choisi. */}
+                        <span className="rounded-full border border-white/10 bg-black/55 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-slate-200 backdrop-blur-sm">
                           {dayName} {dayDate} • {time}
                         </span>
 
@@ -2403,8 +2408,13 @@ function PronosticsPage() {
                             </span>
                           </div>
 
-                          {/* Bloc VS & Cases de Score */}
-                          <div className="flex flex-col items-center shrink-0 px-2 space-y-2">
+                          {/* Bloc VS & Cases de Score.
+                              Les deux cases tombaient au milieu de la partie la
+                              plus chargee du fond d'ecran (le blason geant),
+                              avec un "VS" gris a peine visible entre elles.
+                              Elles reposent maintenant sur un panneau sombre :
+                              l'action principale du bloc se detache du decor. */}
+                          <div className="flex shrink-0 flex-col items-center space-y-2 rounded-2xl border border-white/[.07] bg-black/45 px-3 py-2.5 backdrop-blur-sm">
                             <div className="flex items-center gap-2">
                               <input
                                 inputMode="numeric"
@@ -2414,7 +2424,7 @@ function PronosticsPage() {
                                 placeholder="-"
                                 className="size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
                               />
-                              <span className="font-display text-xl text-slate-600 font-bold">
+                              <span className="font-display text-xl font-bold text-slate-400">
                                 —
                               </span>
                               <input
@@ -2426,7 +2436,7 @@ function PronosticsPage() {
                                 className="size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
                               />
                             </div>
-                            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+                            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-slate-400">
                               <span>───</span>{" "}
                               <span className="font-bold" style={{ color: theme.primary }}>
                                 VS
