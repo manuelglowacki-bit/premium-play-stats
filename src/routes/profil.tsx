@@ -32,6 +32,7 @@ import {
 } from "@/lib/careerLevel";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
+import { fetchAllRows } from "@/lib/supabaseFetchAll";
 import {
   fetchLiveApiMatches,
   reconcileMatchesWithLive,
@@ -165,20 +166,25 @@ function ProfilPage() {
             .eq("id", 1)
             .maybeSingle(),
 
-          supabase
-            .from("predictions")
-            // `points` n'est plus utilisé pour le calcul (voir plus bas) :
-            // cette colonne n'est jamais mise à jour par l'application
-            // (column_default 0, aucun trigger, vérifié en base) — les
-            // points sont recalculés depuis les résultats réels via
-            // computeLeagueStats, la même fonction que le Classement.
-            .select("user_id,match_id,home_prediction,away_prediction,created_at"),
+          // `points` n'est plus utilisé pour le calcul (voir plus bas) :
+          // cette colonne n'est jamais mise à jour par l'application
+          // (column_default 0, aucun trigger, vérifié en base) — les
+          // points sont recalculés depuis les résultats réels via
+          // computeLeagueStats, la même fonction que le Classement.
+          // Paginé : sans .range(), PostgREST tronque silencieusement à 1000
+          // lignes (voir src/lib/supabaseFetchAll.ts).
+          fetchAllRows(
+            "predictions",
+            "user_id,match_id,home_prediction,away_prediction,created_at",
+            ["user_id", "match_id"],
+          ),
 
-          supabase
-            .from("matches")
-            .select(
-              "id,matchday,matchday_id,status,kickoff,api_fixture_id,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
-            ),
+          // Paginé pour la même raison (5 championnats = plus de 1000 matchs).
+          fetchAllRows(
+            "matches",
+            "id,matchday,matchday_id,status,kickoff,api_fixture_id,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
+            ["id"],
+          ),
 
           // Niveau de carrière (cumulé toutes saisons) — même jointure que
           // l'Accueil : predictions -> matches.matchday_id -> matchdays.season_id.
@@ -463,7 +469,15 @@ function ProfilPage() {
           (prediction) => prediction.user_id === session.user.id
         );
 
-        const fallbackAllUserIds = new Set(Object.keys(rankingPointsByUser));
+        // Rang calculé sur TOUS les joueurs inscrits, comme le Classement.
+        // BUG CORRIGÉ : la liste ne contenait que les clés de
+        // rankingPointsByUser, donc uniquement les joueurs ayant déjà marqué.
+        // Les joueurs à 0 point étaient absents du classement local et le rang
+        // affiché sur le Profil remontait artificiellement (18 au lieu de 22).
+        const fallbackAllUserIds = new Set(
+          (allProfilesData || []).map((row: any) => String(row.id)),
+        );
+        Object.keys(rankingPointsByUser).forEach((uid) => fallbackAllUserIds.add(uid));
         fallbackAllUserIds.add(session.user.id);
 
         const fallbackRankedRows = Array.from(fallbackAllUserIds).map((uid) => ({
@@ -483,16 +497,24 @@ function ProfilPage() {
         );
 
         const rank = Number(fallbackMe?.rank ?? 0);
+        // BUG CORRIGÉ : le snapshot localStorage publié par le Classement
+        // passait EN PREMIER. `??` ne bascule que sur null/undefined, donc un
+        // snapshot périmé (ex. points: 1, écrit lors d'une visite précédente)
+        // gagnait indéfiniment contre le calcul frais de computeLeagueStats
+        // (points: 2) — le Profil restait figé sur une ancienne valeur pendant
+        // que le Classement, lui, se mettait à jour.
+        // Le calcul frais est désormais prioritaire ; le snapshot ne sert plus
+        // que de dernier recours si le moteur n'a rien pu produire.
         const totalPoints = Number(
-          classementMe?.points ??
           rankingPointsByUser[session.user.id] ??
           fallbackMe?.points ??
+          classementMe?.points ??
           0,
         );
         const exactScores = Number(
-          classementMe?.exactScores ??
           rankingExactByUser[session.user.id] ??
           fallbackMe?.exactScores ??
+          classementMe?.exactScores ??
           0,
         );
 
@@ -528,11 +550,13 @@ function ProfilPage() {
           points: totalPoints,
           exactScores,
           successRate,
+          // Même ordre de priorité que points/exacts ci-dessus : calcul frais
+          // d'abord, snapshot en dernier recours.
           totalPronos:
             Number(
-              classementMe?.predictionsCount ??
               rankingCountByUser[session.user.id] ??
               fallbackMe?.predictionsCount ??
+              classementMe?.predictionsCount ??
               predictions.length,
             ) || 0,
           bestDay,

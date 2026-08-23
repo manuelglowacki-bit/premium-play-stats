@@ -22,6 +22,7 @@ import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES } from "@/lib/careerLevel";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
+import { fetchAllRows } from "@/lib/supabaseFetchAll";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/")({
@@ -107,20 +108,29 @@ function IndexPage() {
             // n'a que id/pseudo/avatar_url/favorite_team/favorite_team_id/
             // favorite_team_override/is_admin/created_at/updated_at).
             .select("id,pseudo,avatar_url,favorite_team_id,favorite_team"),
-          supabase
-            .from("predictions")
-            // `points` n'est plus utilisé pour le calcul (voir plus bas) :
-            // cette colonne n'est jamais mise à jour par l'application
-            // (column_default 0, aucun trigger, vérifié en base) — les
-            // points sont recalculés depuis les résultats réels via
-            // computeLeagueStats, la même fonction que le Classement.
-            .select("user_id,match_id,home_prediction,away_prediction,created_at"),
-          supabase
-            .from("matches")
-            .select(
-              "id,matchday_id,matchday_code,matchday,match_day,status,kickoff,kickoff_time,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished,api_fixture_id",
-            )
-            .order("kickoff", { ascending: true }),
+          // `points` n'est plus utilisé pour le calcul (voir plus bas) :
+          // cette colonne n'est jamais mise à jour par l'application
+          // (column_default 0, aucun trigger, vérifié en base) — les
+          // points sont recalculés depuis les résultats réels via
+          // computeLeagueStats, la même fonction que le Classement.
+          // Paginé : sans .range(), PostgREST tronque silencieusement à 1000
+          // lignes (voir src/lib/supabaseFetchAll.ts).
+          fetchAllRows(
+            "predictions",
+            "user_id,match_id,home_prediction,away_prediction,created_at",
+            ["user_id", "match_id"],
+          ),
+          // Paginé pour la même raison (5 championnats = plus de 1000 matchs).
+          // L'ordre de pagination doit être stable : `id`, pas `kickoff` (des
+          // matchs partagent le même coup d'envoi, la pagination sauterait ou
+          // dupliquerait des lignes). L'ancien .order("kickoff") n'était utilisé
+          // nulle part : la seule sélection qui dépend d'un ordre, la journée
+          // terminée la plus récente, retrie explicitement par numéro de journée.
+          fetchAllRows(
+            "matches",
+            "id,matchday_id,matchday_code,matchday,match_day,status,kickoff,kickoff_time,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished,api_fixture_id",
+            ["id"],
+          ),
           // Cagnotte théorique = nombre de joueurs inscrits × droit d'entrée
           // configuré dans Admin → Réglages, JAMAIS basée sur qui a réellement
           // payé (voir Admin → Paiements pour ce suivi individuel, inchangé).

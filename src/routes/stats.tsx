@@ -14,6 +14,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { computeLeagueStats, type LeagueMatch, type LeagueProfile, type LeagueBonusOption } from "@/lib/leaderboardStats";
+import { fetchAllRows } from "@/lib/supabaseFetchAll";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
@@ -324,20 +325,29 @@ function StatsPage() {
         { data: favoriteHistoryData, error: favoriteHistoryError },
         apiLiveMatches,
       ] = await Promise.all([
-        supabase
-          .from("matches")
-          .select(
-            "id, matchday, matchday_id, status, finished, kickoff, api_fixture_id, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
-          ),
+        // Paginé : sans .range(), PostgREST s'arrête silencieusement à 1000
+        // lignes (voir src/lib/supabaseFetchAll.ts). Avec les 5 championnats,
+        // `matches` dépasse ce seuil et les matchs Ligue 1 de la journée
+        // pouvaient tout simplement ne pas être renvoyés.
+        fetchAllRows(
+          "matches",
+          "id, matchday, matchday_id, status, finished, kickoff, api_fixture_id, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
+          ["id"],
+        ),
         // Tous les joueurs (pas seulement le compte connecté) : nécessaire
         // pour recalculer le Top joueurs via computeLeagueStats(), même
         // moteur que le Classement — remplace l'ancienne requête sur la vue
         // `user_rankings` (inexistante en base, confirmée HTTP 404) et sur
         // des colonnes `profiles.username/player_name/account_status` qui
         // n'existent pas non plus (confirmée HTTP 400).
-        supabase
-          .from("predictions")
-          .select("user_id, match_id, home_prediction, away_prediction, created_at"),
+        // Paginé pour la même raison : tous les pronostics de tous les
+        // joueurs dépassent vite 1000 lignes. Ordre stable = la clé unique
+        // (user_id, match_id).
+        fetchAllRows(
+          "predictions",
+          "user_id, match_id, home_prediction, away_prediction, created_at",
+          ["user_id", "match_id"],
+        ),
         supabase
           .from("profiles")
           .select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
