@@ -442,6 +442,14 @@ function StatsPage() {
           away_team: m.away_team ?? null,
           home_score: m.home_score,
           away_score: m.away_score,
+          // BUG CORRIGÉ — CAUSE DU "Total points 0 / 0 pronostic" :
+          // computeLeagueStats() exige `finished === true` (leaderboardStats.ts,
+          // garde sur match.finished). Les trois autres pages passent au moteur
+          // les objets matchs BRUTS, qui portent ce champ ; Stats est la seule à
+          // les reconstruire par .map(), et ce map ne le recopiait pas.
+          // `finished` valait donc undefined, la garde rejetait CHAQUE
+          // pronostic, et tous les agrégats du joueur sortaient à zéro.
+          finished: m.finished,
         }));
       const bonusMatchesForScoring: LeagueMatch[] = liveScoringMatches
         .filter((m) => bonusMatchIdSet.has(String(m.id)) && m.home_score != null && m.away_score != null)
@@ -454,6 +462,8 @@ function StatsPage() {
           away_team: m.away_team ?? null,
           home_score: m.home_score,
           away_score: m.away_score,
+          // Même raison que pour le lot Ligue 1 ci-dessus.
+          finished: m.finished,
           is_bonus: true,
         }));
 
