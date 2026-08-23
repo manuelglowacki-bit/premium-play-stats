@@ -93,6 +93,13 @@ type GazetteTeam = {
 // HELPERS DE DONNÉES (réutilisés depuis l'ancienne Gazette)
 // ============================================================
 
+// Accord en nombre, pour ne plus lire "2 score exact" dans un article.
+// `pluriel` n'est a fournir que si le mot ne prend pas un simple "s"
+// (ex. "scores exacts", ou l'adjectif s'accorde aussi).
+function accord(n: number, singulier: string, pluriel?: string) {
+  return `${n} ${n > 1 ? pluriel ?? `${singulier}s` : singulier}`;
+}
+
 function clean(value: any) {
   return String(value || "")
     .normalize("NFD")
@@ -1317,7 +1324,12 @@ function GazettePage() {
       `Le résultat ${lastHome}–${lastAway} (${lastScore}) ajoute un nouvel épisode à la course au classement. Les prochains matchs peuvent encore tout changer.`,
     ];
 
-    const exactCount = finishedMatches.reduce((sum, { match }) => {
+    // Perimetre JOURNEE, comme le reste de l'article (kicker "7/12 matchs",
+    // mover.exactToday...). Auparavant base sur `finishedMatches`, qui ne
+    // couvre que les matchs DU JOUR : l'article pouvait annoncer "2 scores
+    // exacts" pour le meilleur joueur puis "aucun score exact" deux lignes
+    // plus bas.
+    const exactCount = journeeFinishedMatches.reduce((sum, { match }) => {
       let count = 0;
       profiles.forEach((profile) => {
         const prono = predictionsByUser.get(profile.id)?.byMatch.get(String(match.id));
@@ -1326,15 +1338,49 @@ function GazettePage() {
       return sum + count;
     }, 0);
 
+    const exAequo = Boolean(leader && second && gap === 0);
+
+    // TITRE — "garde la main" est faux quand deux joueurs sont a egalite.
+    const titre = !leader
+      ? "La hiérarchie commence à se dessiner"
+      : exAequo
+        ? `${leader.name} et ${second!.name} ne se lâchent plus`
+        : [
+            `${leader.name} garde la main, mais la journée n'a pas livré son dernier mot`,
+            `${leader.name} tient la corde, la journée reste ouverte`,
+            `${leader.name} passe devant, sans avoir encore fait le trou`,
+          ][variant % 3];
+
+    // HIERARCHIE — `gap` est un ECART, jamais un total.
+    // BUG CORRIGE : "${second.name} reste à ${gap} point" se lisait comme
+    // "le dauphin a marqué ${gap} points". Avec un ecart nul, l'article
+    // annoncait donc "Max reste à 0 point" alors que Max etait a hauteur du
+    // leader.
+    const hierarchie = !leader
+      ? "Les premiers points de la journée sont désormais enregistrés."
+      : !second
+        ? `${leader.name} ouvre le compteur avec ${accord(leader.points, "point")} et reste pour l'instant seul en piste.`
+        : exAequo
+          ? `${leader.name} et ${second.name} se tiennent à hauteur, ${accord(leader.points, "point")} chacun : rien ne les sépare à ce stade.${third ? ` ${third.name} complète le podium.` : ""}`
+          : gap === 1
+            ? `${leader.name} mène avec ${accord(leader.points, "point")}, mais ${second.name} n'est qu'à une longueur et attend le moindre faux pas.${third ? ` ${third.name} complète le podium.` : ""}`
+            : `${leader.name} mène avec ${accord(leader.points, "point")} et compte ${accord(gap, "longueur")} d'avance sur ${second.name}.${third ? ` ${third.name} complète le podium.` : ""}`;
+
+    // MEILLEURE OPERATION — un joueur a 0 point pris n'a "profité" de rien.
+    const operation = !mover || mover.pointsToday <= 0
+      ? "Aucun joueur n'a encore creusé l'écart sur cette journée : les compteurs restent groupés."
+      : `${mover.name} signe la meilleure opération du moment, avec ${accord(mover.pointsToday, "point")} pris sur les rencontres déjà jouées${mover.exactToday > 0 ? `, dont ${accord(mover.exactToday, "score exact", "scores exacts")}` : ""}.`;
+
+    // SCORES EXACTS — meme perimetre (journee) que le reste de l'article.
+    const exacts = exactCount > 0
+      ? `${accord(exactCount, "score exact", "scores exacts")} ${exactCount > 1 ? "ont" : "a"} déjà été ${exactCount > 1 ? "trouvés" : "trouvé"} sur les rencontres terminées. C'est précisément là que se décident les fins de saison, quand deux joueurs arrivent au même total.`
+      : "Aucun score exact n'est encore tombé sur les rencontres terminées. Le premier à en signer un prendra une avance que les autres mettront du temps à combler.";
+
     return {
       kicker: `${currentJournee.title} · ${done}/${total} MATCH${total > 1 ? "S" : ""}`,
-      title: leader ? `${leader.name} garde la main, mais la journée n'a pas livré son dernier mot` : "La hiérarchie commence à se dessiner",
+      title: titre,
       intro: variants[variant],
-      paragraphs: [
-        leader ? `${leader.name} mène actuellement avec ${leader.points} point${leader.points > 1 ? "s" : ""}. ${second ? `${second.name} reste à ${gap} point${gap > 1 ? "s" : ""}, tandis que ${third ? third.name : "le troisième joueur"} complète le podium.` : ""}` : "Les premiers points sont désormais enregistrés.",
-        mover ? `${mover.name} est le joueur qui a le plus profité des matchs déjà joués, avec ${mover.pointsToday} point${mover.pointsToday > 1 ? "s" : ""} pris sur cette journée${mover.exactToday ? ` et ${mover.exactToday} score exact.` : "."}` : "Les différences entre les joueurs restent encore faibles.",
-        exactCount > 0 ? `${exactCount} score${exactCount > 1 ? "s" : ""} exact${exactCount > 1 ? "s" : ""} ont déjà été trouvé${exactCount > 1 ? "s" : ""}. Ces détails peuvent devenir décisifs lorsque les écarts au classement se resserrent.` : "Aucun score exact n'a encore été enregistré sur les matchs terminés.",
-      ],
+      paragraphs: [hierarchie, operation, exacts],
     };
   }, [currentJournee, journeeFinishedMatches, currentJourneeAllMatches.length, liveMatches, evolution, leader, second, third, lastFinishedId, profiles, predictionsByUser, clock]);
 
