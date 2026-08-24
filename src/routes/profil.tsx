@@ -91,6 +91,9 @@ function ProfilPage() {
   // les saisons (jamais réinitialisé). null tant que non chargé.
   const [career, setCareer] = useState<CareerResult | null>(null);
   const [careerPredictionsCount, setCareerPredictionsCount] = useState(0);
+  // Occasions de score exact : matchs bonus et club de coeur deja joues. Ce
+  // sont les seuls ou un score exact rapporte.
+  const [careerExactOpportunities, setCareerExactOpportunities] = useState(0);
   const statsRequestSeq = useRef(0);
   const [liveTick, setLiveTick] = useState(() => Date.now());
    // Le Profil privilégie le snapshot publié par le Classement pour les
@@ -437,9 +440,28 @@ function ProfilPage() {
           points: pointsByPredictionKey[`${p.user_id}:${p.match_id}`] ?? 0,
         }));
 
+        // SCORE EXACT AU SENS DE LA LIGUE — un score exact ne compte que la
+        // ou il rapporte : match bonus (3 pts) ou club de coeur (2 pts). Sur
+        // un match ordinaire le bareme est 1/0, l'exactitude n'y change rien.
+        // Sans cette regle, la carriere annoncait "2 scores exacts" quand le
+        // Classement, les Stats et le moteur en comptaient 0.
+        const isPayingExactPrediction = (prediction: {
+          user_id?: string | null;
+          match_id: string | null;
+          home_prediction: number | null;
+          away_prediction: number | null;
+        }) => {
+          if (!isExactPrediction(prediction)) return false;
+          const points =
+            pointsByPredictionKey[`${prediction.user_id}:${prediction.match_id}`] ?? 0;
+          return bonusMatchIds.has(String(prediction.match_id))
+            ? points === 3
+            : points === 2;
+        };
+
         const careerByUser = aggregateCareerStatsByUser(
           predictionsWithRealPoints,
-          isExactPrediction,
+          isPayingExactPrediction,
           (matchId) => {
             const matchdayId = matchdayIdByMatchId.get(matchId);
             if (!matchdayId) return null;
@@ -454,6 +476,42 @@ function ProfilPage() {
         };
         setCareer(calculateCareerScore(myCareerStats));
         setCareerPredictionsCount(myCareerStats.predictionsCount || 0);
+
+        // OCCASIONS DE SCORE EXACT — matchs bonus et matchs du club de coeur
+        // deja joues. Un match de coeur rate reste une occasion : c'est bien
+        // une chance manquee, contrairement a un match ordinaire ou aucun
+        // score exact n'etait en jeu.
+        const matchParId = new Map<string, any>(
+          mergedMatches.map((m: any) => [String(m.id), m]),
+        );
+
+        const mesPronostics = allPredictions.filter(
+          (p: any) => String(p.user_id) === String(session.user.id),
+        );
+
+        setCareerExactOpportunities(
+          mesPronostics.filter((p: any) => {
+            const matchId = String(p.match_id);
+            const match = matchParId.get(matchId);
+            if (!match || match.home_score == null || match.away_score == null) return false;
+            if (bonusMatchIds.has(matchId)) return true;
+
+            // Equipe favorite DE LA SAISON du match, comme le bareme du
+            // moteur : un changement de club ne doit pas reecrire le passe.
+            const matchdayId = matchdayIdByMatchId.get(matchId);
+            const seasonId = matchdayId ? seasonByMatchdayId.get(matchdayId) : null;
+            const favori =
+              (seasonId
+                ? favoriteTeamBySeason[`${session.user.id}:${seasonId}`]
+                : undefined) ?? favoriteTeamId;
+
+            return Boolean(
+              favori &&
+                (String(match.home_team_id ?? "") === String(favori) ||
+                  String(match.away_team_id ?? "") === String(favori)),
+            );
+          }).length,
+        );
 
         const pseudoById = new Map<string, string>(
           (allProfilesData || []).map((row: any) => [row.id, row.pseudo || "Joueur"]),
@@ -1049,13 +1107,17 @@ function ProfilPage() {
                 % de scores exacts
               </div>
               <div className="mt-1.5 font-display text-3xl font-black text-white">
-                {careerPredictionsCount > 0 && career
-                  ? Math.round((career.exactScores / careerPredictionsCount) * 100)
+                {careerExactOpportunities > 0 && career
+                  ? Math.round((career.exactScores / careerExactOpportunities) * 100)
                   : 0}
                 %
               </div>
               <div className="mt-0.5 text-[10px] text-slate-500">
-                {career?.exactScores ?? 0} sur {careerPredictionsCount} pronostic{careerPredictionsCount > 1 ? "s" : ""}
+                {career?.exactScores ?? 0} sur {careerExactOpportunities} occasion
+                {careerExactOpportunities > 1 ? "s" : ""}
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-600">
+                bonus et club de cœur uniquement
               </div>
             </div>
           </div>
@@ -1169,14 +1231,16 @@ function ProfilPage() {
                   <h3 className="mt-1 truncate font-display text-3xl font-black tracking-tight text-white md:text-4xl">
                     {favoriteTeamName}
                   </h3>
+                  {/* La saison est deja annoncee en surtitre du bloc, juste
+                      au-dessus : la repeter ici n'apprenait rien. Le rang, lui,
+                      se lit enfin en entier. */}
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-300">
                       <Trophy className="size-3 text-amber-400" />
-                      Classement : {userStats.rank > 0 ? `#${userStats.rank}` : "—"}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-300">
-                      <Target className="size-3 text-emerald-400" />
-                      Saison {seasonLabel ?? "—"}
+                      Classement :{" "}
+                      {userStats.rank > 0
+                        ? `${userStats.rank}e${userStats.totalPlayers > 0 ? ` / ${userStats.totalPlayers}` : ""}`
+                        : "—"}
                     </span>
                   </div>
 
