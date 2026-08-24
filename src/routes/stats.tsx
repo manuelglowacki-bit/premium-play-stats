@@ -1090,9 +1090,9 @@ function StatsPage() {
           <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
             <SectionHeader icon={Crosshair} eyebrow="Analyse" title="Précision" />
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="mx-auto grid max-w-2xl grid-cols-2 gap-3">
               <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
-                <div className="mb-2 flex items-center gap-1.5 font-mono text-[8px] font-bold uppercase tracking-[.14em] text-slate-500">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
                   <Crosshair size={11} className="text-emerald-300" /> Régularité
                 </div>
                 <div
@@ -1116,7 +1116,7 @@ function StatsPage() {
               </div>
 
               <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
-                <div className="mb-2 flex items-center gap-1.5 font-mono text-[8px] font-bold uppercase tracking-[.14em] text-slate-500">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
                   <Target size={11} className="text-emerald-300" /> Scores exacts
                 </div>
                 <div
@@ -1159,12 +1159,12 @@ function StatsPage() {
 
             <div className="overflow-x-auto px-4 pb-4 md:px-5 md:pb-5">
               <div className="min-w-[560px]">
-                <div className="grid grid-cols-[.7fr_1fr_1fr_1fr_1fr] gap-3 border-b border-white/[0.07] px-3 pb-2 pt-3 font-mono text-[8px] font-semibold uppercase tracking-[.15em] text-slate-600">
+                <div className="grid grid-cols-[.7fr_1fr_1fr_1fr_1fr] gap-3 border-b border-white/[0.07] px-3 pb-2 pt-3 font-mono text-[9px] font-semibold uppercase tracking-[.15em] text-slate-400">
                   <span>Journée</span>
                   <span>Points</span>
                   <span>Exacts</span>
                   <span>Bonus</span>
-                  <span>Total</span>
+                  <span>Cumul saison</span>
                 </div>
 
                 <div className="divide-y divide-white/[0.05]">
