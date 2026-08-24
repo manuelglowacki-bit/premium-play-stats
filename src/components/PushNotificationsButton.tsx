@@ -226,14 +226,21 @@ export default function PushNotificationsButton({
             desactivation. L'etat est desormais annonce a gauche, et le bouton
             ne porte plus que l'action. */}
         <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {/* L'etat se lit a la couleur : vert quand les rappels fonctionnent,
+              ROUGE quand ils sont coupes — un gris discret laissait croire que
+              tout allait bien alors que le joueur ne recevra jamais rien. */}
           <span
-            className={`inline-flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] ${
-              enabled ? "text-emerald-300" : "text-slate-500"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[9px] font-black uppercase tracking-[.14em] ${
+              enabled
+                ? "border-emerald-400/40 bg-emerald-400/15 text-emerald-300"
+                : "border-red-400/40 bg-red-500/15 text-red-300"
             }`}
           >
             <span
               className={`size-1.5 rounded-full ${
-                enabled ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]" : "bg-slate-600"
+                enabled
+                  ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]"
+                  : "bg-red-400 shadow-[0_0_8px_rgba(248,113,113,.8)]"
               }`}
             />
             {enabled ? "Activées" : "Désactivées"}
@@ -245,8 +252,8 @@ export default function PushNotificationsButton({
             onClick={() => void (enabled ? disablePush() : enablePush())}
             className={`rounded-xl px-4 py-2 text-xs font-black transition ${
               enabled
-                ? "border border-slate-600 bg-slate-800/70 text-slate-300 hover:border-red-400/40 hover:text-red-300"
-                : "bg-emerald-400 text-[#06101c] hover:bg-emerald-300"
+                ? "border border-slate-700 bg-slate-800/70 text-slate-400 hover:border-red-400/40 hover:text-red-300"
+                : "bg-emerald-400 text-[#06101c] shadow-[0_0_20px_rgba(52,211,153,.35)] hover:bg-emerald-300"
             } disabled:opacity-50`}
           >
             {busy ? "..." : enabled ? "Désactiver" : "Activer"}
