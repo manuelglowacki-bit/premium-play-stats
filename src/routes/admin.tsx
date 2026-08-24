@@ -1595,6 +1595,38 @@ function PlayersTab({
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Player | null>(null);
+  // Adresses e-mail : l'identifiant technique affiche sous chaque pseudo
+  // (657b97dc-c1ae-4e5b...) n'aide personne a reconnaitre un joueur.
+  // Les e-mails vivent dans auth.users, illisible depuis le navigateur :
+  // ils passent par api/emails-joueurs.ts, reserve aux admins.
+  const [emailsById, setEmailsById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let annule = false;
+
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const jeton = data.session?.access_token;
+        if (!jeton) return;
+
+        const reponse = await fetch("/api/emails-joueurs", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${jeton}` },
+        });
+        if (!reponse.ok) return;
+
+        const corps = await reponse.json().catch(() => ({}));
+        if (!annule && corps?.emails) setEmailsById(corps.emails);
+      } catch {
+        // Sans e-mails, on retombe sur l'identifiant : jamais bloquant.
+      }
+    })();
+
+    return () => {
+      annule = true;
+    };
+  }, []);
   const [editing, setEditing] = useState<Player | null>(null);
   const [editForm, setEditForm] = useState({ pseudo: "", favorite_team_id: "" });
   const [saving, setSaving] = useState(false);
@@ -1704,7 +1736,12 @@ function PlayersTab({
                       </span>
                       <div className="min-w-0">
                         <div className="truncate font-semibold text-slate-100">{player.pseudo ?? "Sans pseudo"}</div>
-                        <div className="truncate font-mono text-[10px] text-slate-500">{player.id}</div>
+                        <div
+                          className="truncate font-mono text-[10px] text-slate-500"
+                          title={emailsById[player.id] ? player.id : undefined}
+                        >
+                          {emailsById[player.id] ?? player.id}
+                        </div>
                       </div>
                     </div>
                   </td>
