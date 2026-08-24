@@ -1972,6 +1972,13 @@ function PaymentsTab({
 
   const missingCount = Math.max(players.length - uniquePayments.length, 0);
 
+  // Nommer les joueurs sans ligne de paiement : "1 joueur sans paiement"
+  // obligeait a comparer 23 lignes a la main pour trouver lequel.
+  const missingPlayers = useMemo(() => {
+    const avecPaiement = new Set(uniquePayments.map((payment) => String(payment.user_id)));
+    return players.filter((player) => !avecPaiement.has(String(player.id)));
+  }, [players, uniquePayments]);
+
   async function togglePaid(payment: Payment) {
     setBusyId(payment.id);
     const nextPaid = !payment.paid;
@@ -2122,14 +2129,24 @@ function PaymentsTab({
             </span>
           </h2>
 
-          <PrimaryButton onClick={() => void handleRegenerate()} disabled={generating}>
-            {generating ? (
-              <RefreshCw size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            {generating ? "Régénération…" : "Régénérer"}
-          </PrimaryButton>
+          {/* Le bouton s'appelait "Regenerer", ce qui laissait craindre une
+              remise a zero des paiements. Il ne fait que deux choses : creer
+              une ligne (non payee) pour les joueurs qui n'en ont pas encore,
+              et supprimer les doublons en gardant la ligne payee. Aucun
+              paiement deja enregistre n'est efface. */}
+          <div className="flex flex-col items-end gap-1">
+            <GhostButton
+              onClick={() => void handleRegenerate()}
+              disabled={generating}
+              ariaLabel="Ajouter les joueurs manquants a la liste des paiements"
+            >
+              <RefreshCw size={14} className={generating ? "animate-spin" : ""} />
+              {generating ? "Synchronisation…" : "Ajouter les joueurs manquants"}
+            </GhostButton>
+            <span className="text-[10px] text-slate-500">
+              N'efface aucun paiement déjà enregistré
+            </span>
+          </div>
         </div>
 
         {error && (
@@ -2249,7 +2266,7 @@ function PaymentsTab({
                           ) : (
                             <CheckCircle2 size={12} />
                           )}
-                          {payment.paid ? "Non payé" : "Payé"}
+                          {payment.paid ? "Marquer non payé" : "Marquer payé"}
                         </GhostButton>
                       </td>
                     </tr>
@@ -2269,7 +2286,12 @@ function PaymentsTab({
 
           {missingCount > 0 && (
             <span className="font-semibold text-amber-400">
-              {missingCount} joueur{missingCount > 1 ? "s" : ""} sans paiement.
+              {missingPlayers.length > 0
+                ? `Sans ligne de paiement : ${missingPlayers
+                    .map((player) => player.pseudo || "Joueur")
+                    .join(", ")}`
+                : `${missingCount} joueur${missingCount > 1 ? "s" : ""} sans paiement`}
+              {" — utilise « Ajouter les joueurs manquants » en haut."}
             </span>
           )}
         </div>
