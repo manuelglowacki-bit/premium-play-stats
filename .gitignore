@@ -38,3 +38,6 @@ dist-ssr
 # jamais destinée à git — voir brancher-rappels-pronos-vapid.ps1 /
 # brancher-push-vestiaire-corrige.ps1 qui la lisent/écrivent).
 .push-vapid.local.json
+
+# Version remplie du cron : contient le secret, ne doit jamais partir sur GitHub.
+supabase/*.local.sql

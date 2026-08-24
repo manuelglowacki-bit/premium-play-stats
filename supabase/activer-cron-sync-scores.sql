@@ -35,6 +35,11 @@
 --     depasser le quota football-data, ce qui ferait perdre AUSSI
 --     l'affichage en direct. Il vit dans Vercel (CRON_SECRET) et dans le SQL
 --     que tu colles dans Supabase, nulle part ailleurs.
+--
+-- OU METTRE TES VRAIES VALEURS : nulle part dans ce fichier. Copie-le sous
+-- le nom activer-cron-sync-scores.local.sql (deja ignore par Git), remplis
+-- TON-SECRET dedans, et colle CE fichier-la dans Supabase. Le fichier local
+-- ne partira jamais sur GitHub.
 -- =========================================================
 
 create extension if not exists pg_cron;
@@ -56,7 +61,7 @@ select cron.schedule(
       url := 'https://premium-play-stats.vercel.app/api/sync-scores',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'x-cron-secret', '6be62fd2-ef96-4496-a300-29b5acaa2b11'
+        'x-cron-secret', 'TON-SECRET'
       ),
       body := jsonb_build_object('source', 'supabase-cron')
     );
