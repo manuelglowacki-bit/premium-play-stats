@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ChevronRight,
   Crosshair,
+  Heart,
   PieChart,
   Target,
   Trophy,
@@ -115,6 +116,9 @@ type StatsState = {
   /** Participation : pronostics Ligue 1 déposés / matchs Ligue 1 déjà joués. */
   predictionsMade: number;
   matchesPlayable: number;
+  /** Club de cœur : matchs de son équipe déjà joués, et pronostics réussis dessus. */
+  favoriteMatches: number;
+  favoriteSuccessful: number;
   bestDay: number;
   bestDayLabel: string;
   dayStats: DayStat[];
@@ -146,6 +150,8 @@ const EMPTY_STATS: StatsState = {
   successfulPredictions: 0,
   predictionsMade: 0,
   matchesPlayable: 0,
+  favoriteMatches: 0,
+  favoriteSuccessful: 0,
   bestDay: 0,
   bestDayLabel: "—",
   dayStats: [],
@@ -554,6 +560,10 @@ function StatsPage() {
         );
       });
 
+      const monProfil = allProfilesForStats.find((profile: any) => profile.id === user.id) as any;
+      let favoriteMatches = 0;
+      let favoriteSuccessful = 0;
+
       const byDay = new Map<string, DayStat>();
       let standardPoints = 0;
       let exactPoints = 0;
@@ -568,6 +578,28 @@ function StatsPage() {
 
         const points = realPointsFor(prediction);
         const bonus = isBonusPrediction(match);
+
+        // CLUB DE COEUR — on identifie le match par l'equipe favorite de la
+        // saison concernee (meme source que le bareme 2/1/0 du moteur), avec
+        // repli sur le favori courant du profil si l'historique est vide.
+        if (!bonus) {
+          const seasonId = match?.matchday_id
+            ? seasonByMatchdayId[String(match.matchday_id)]
+            : undefined;
+          const favori =
+            (seasonId ? favoriteTeamBySeason[`${user.id}:${seasonId}`] : undefined) ??
+            monProfil?.favorite_team_id ??
+            null;
+
+          if (
+            favori &&
+            (String(match?.home_team_id ?? "") === String(favori) ||
+              String(match?.away_team_id ?? "") === String(favori))
+          ) {
+            favoriteMatches += 1;
+            if (points > 0) favoriteSuccessful += 1;
+          }
+        }
         // SCORE EXACT AU SENS DE LA LIGUE — le tableau des dernieres journees
         // comptait tout score devine au but pres, y compris sur un match de
         // Ligue 1 ordinaire ou cela ne rapporte rien. La page affichait donc
@@ -646,6 +678,8 @@ function StatsPage() {
         successfulPredictions,
         predictionsMade,
         matchesPlayable,
+        favoriteMatches,
+        favoriteSuccessful,
         bestDay: bestDayEntry?.points || 0,
         bestDayLabel: bestDayEntry?.day || "—",
         dayStats,
@@ -806,6 +840,10 @@ function StatsPage() {
   // de calcul, juste un ratio d'affichage pour le bloc "Scores exacts".
   const goodPickRatePct = stats.predictionsMade
     ? Math.round((stats.successfulPredictions / stats.predictionsMade) * 100)
+    : 0;
+
+  const favoriteRatePct = stats.favoriteMatches
+    ? Math.round((stats.favoriteSuccessful / stats.favoriteMatches) * 100)
     : 0;
 
   const exactRatePct = stats.totalPredictions
@@ -1096,7 +1134,7 @@ function StatsPage() {
           <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
             <SectionHeader icon={Crosshair} eyebrow="Analyse" title="Précision" />
 
-            <div className="mx-auto grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="mx-auto grid max-w-5xl grid-cols-2 gap-3 lg:grid-cols-4">
               <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
                 <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
                   <Crosshair size={11} className="text-emerald-300" /> Régularité
@@ -1142,6 +1180,34 @@ function StatsPage() {
                 </div>
                 <div className="mt-2 text-center text-[10px] font-semibold text-white">
                   {stats.successfulPredictions} réussis / {stats.predictionsMade} joués
+                </div>
+              </div>
+
+              <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
+                  <Heart size={11} className="text-emerald-300" /> Club de cœur
+                </div>
+                <div
+                  className="relative flex size-20 items-center justify-center rounded-full md:size-24"
+                  style={{
+                    background: `conic-gradient(#34d399 ${favoriteRatePct * 3.6}deg, rgba(255,255,255,.06) ${favoriteRatePct * 3.6}deg 360deg)`,
+                  }}
+                >
+                  <div className="flex size-[62px] flex-col items-center justify-center rounded-full border border-white/[0.05] bg-[#06101b] md:size-[76px]">
+                    <span className="text-lg font-black text-white md:text-xl">
+                      {favoriteRatePct}%
+                    </span>
+                    <span className="mt-0.5 font-mono text-[7px] uppercase tracking-[.16em] text-slate-400">
+                      réussis
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 text-center text-[10px] font-semibold text-white">
+                  {stats.favoriteSuccessful} réussis / {stats.favoriteMatches} match
+                  {stats.favoriteMatches > 1 ? "s" : ""}
+                </div>
+                <div className="mt-0.5 text-center text-[9px] text-slate-500">
+                  ton équipe rapporte double
                 </div>
               </div>
 
