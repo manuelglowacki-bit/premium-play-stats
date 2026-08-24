@@ -2631,35 +2631,63 @@ function MatchesTab({
         </div>
       )}
 
-      {sortedMatchdays.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-1.5 overflow-x-auto rounded-2xl border border-slate-800 bg-[#0d1322]/90 p-1.5">
-          <button
-            type="button"
-            onClick={() => setSelectedMatchdayId("all")}
-            className={`shrink-0 rounded-xl px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide transition-all ${
-              selectedMatchdayId === "all"
-                ? "bg-emerald-500 text-slate-950"
-                : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
-            }`}
-          >
-            Toutes
-          </button>
-          {sortedMatchdays.map((md) => (
+      {sortedMatchdays.length > 0 && (() => {
+        const index = sortedMatchdays.findIndex((md) => md.id === selectedMatchdayId);
+        const courante = index >= 0 ? sortedMatchdays[index] : null;
+        const precedente = index > 0 ? sortedMatchdays[index - 1] : null;
+        const suivante =
+          index >= 0 && index < sortedMatchdays.length - 1 ? sortedMatchdays[index + 1] : null;
+
+        return (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-[#0d1322]/90 p-2">
+            <GhostButton
+              onClick={() => precedente && setSelectedMatchdayId(precedente.id)}
+              disabled={!precedente}
+              ariaLabel="Journée précédente"
+            >
+              <ChevronLeft size={14} />
+            </GhostButton>
+
+            <div className="min-w-[92px] text-center font-display text-lg font-black text-white">
+              {courante ? `J${courante.number}` : "Toutes"}
+            </div>
+
+            <GhostButton
+              onClick={() => suivante && setSelectedMatchdayId(suivante.id)}
+              disabled={!suivante}
+              ariaLabel="Journée suivante"
+            >
+              <ChevronRight size={14} />
+            </GhostButton>
+
+            <select
+              value={selectedMatchdayId ?? "all"}
+              onChange={(e) => setSelectedMatchdayId(e.target.value)}
+              aria-label="Aller à une journée"
+              className="rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-xs font-semibold text-slate-100 outline-none focus:border-emerald-500/60"
+            >
+              <option value="all">Toutes les journées</option>
+              {sortedMatchdays.map((md) => (
+                <option key={md.id} value={md.id}>
+                  Journée {md.number}
+                </option>
+              ))}
+            </select>
+
             <button
-              key={md.id}
               type="button"
-              onClick={() => setSelectedMatchdayId(md.id)}
-              className={`shrink-0 rounded-xl px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide transition-all ${
-                selectedMatchdayId === md.id
+              onClick={() => setSelectedMatchdayId("all")}
+              className={`ml-auto rounded-xl px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-wide transition-all ${
+                selectedMatchdayId === "all"
                   ? "bg-emerald-500 text-slate-950"
                   : "text-slate-400 hover:bg-slate-800/50 hover:text-white"
               }`}
             >
-              J{md.number}
+              Toutes
             </button>
-          ))}
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {!error && visibleMatches.length === 0 ? (
         <p className="py-10 text-center text-sm text-slate-500">
@@ -2701,44 +2729,63 @@ function MatchesTab({
                   {/* Score inline : éditable même sur un match "à venir" — la
                       sauvegarde bascule automatiquement `finished` à true dès
                       que les deux scores sont renseignés (voir saveScore). */}
-                  <div className="flex items-center gap-1">
+                  <div
+                    className={`flex items-center gap-1 rounded-xl border px-2 py-1 transition-colors ${
+                      hasDraftEdit
+                        ? "border-amber-400/50 bg-amber-400/[0.06]"
+                        : "border-slate-800 bg-transparent"
+                    }`}
+                  >
+                    <span className="mr-0.5 font-mono text-[9px] uppercase tracking-widest text-slate-500">
+                      Score
+                    </span>
                     <input
                       type="number"
                       min={0}
                       inputMode="numeric"
+                      placeholder="–"
                       value={draft.home}
                       onChange={(e) => setScoreDraft(match, { home: e.target.value })}
-                      onBlur={() => hasDraftEdit && saveScore(match)}
                       onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
                       aria-label={`Score domicile ${teamOf(teams, match.home_team_id)?.name ?? "?"}`}
-                      className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+                      className="w-11 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none placeholder:text-slate-700 focus:border-emerald-500/60"
                     />
                     <span className="text-slate-600">-</span>
                     <input
                       type="number"
                       min={0}
                       inputMode="numeric"
+                      placeholder="–"
                       value={draft.away}
                       onChange={(e) => setScoreDraft(match, { away: e.target.value })}
-                      onBlur={() => hasDraftEdit && saveScore(match)}
                       onKeyDown={(e) => e.key === "Enter" && saveScore(match)}
                       aria-label={`Score extérieur ${teamOf(teams, match.away_team_id)?.name ?? "?"}`}
-                      className="w-12 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none focus:border-emerald-500/60"
+                      className="w-11 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none placeholder:text-slate-700 focus:border-emerald-500/60"
                     />
-                    {hasDraftEdit && (
-                      <GhostButton
+
+                    {/* L'enregistrement ne se declenche plus tout seul quand on
+                        clique ailleurs : deux chiffres marquent le match
+                        TERMINE et distribuent les points a toute la ligue.
+                        Il faut donc le demander — bouton ou touche Entree. */}
+                    {hasDraftEdit ? (
+                      <button
+                        type="button"
                         onClick={() => saveScore(match)}
-                        title="Enregistrer le score"
-                        ariaLabel={`Enregistrer le score de ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
+                        title="Enregistrer le score (ou touche Entrée)"
+                        aria-label={`Enregistrer le score de ${teamOf(teams, match.home_team_id)?.name ?? "?"} vs ${
                           teamOf(teams, match.away_team_id)?.name ?? "?"
                         }`}
+                        className="ml-1 flex items-center gap-1 rounded-lg bg-amber-400 px-2 py-1 font-mono text-[10px] font-black uppercase text-slate-950 transition hover:bg-amber-300"
                       >
                         {savingScoreId === match.id ? (
-                          <RefreshCw size={12} className="animate-spin" />
+                          <RefreshCw size={11} className="animate-spin" />
                         ) : (
-                          <Save size={12} />
+                          <Save size={11} />
                         )}
-                      </GhostButton>
+                        Enregistrer
+                      </button>
+                    ) : (
+                      <span className="ml-1 w-[86px]" aria-hidden />
                     )}
                   </div>
 
