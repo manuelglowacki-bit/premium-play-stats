@@ -46,7 +46,7 @@ where jobname = 'prono-ligue1-reminders-every-minute';
 select cron.schedule(
   'prono-ligue1-reminders-every-minute',
   '* * * * *',
-  \\$
+  $$
     select net.http_post(
       url := 'https://azgksiwcgvbertzzzhvq.supabase.co/functions/v1/send-prono-reminders',
       headers := jsonb_build_object(
@@ -57,7 +57,7 @@ select cron.schedule(
         'source', 'supabase-cron'
       )
     );
-  \\$
+  $$
 );
 
 -- Vérification immédiate.
