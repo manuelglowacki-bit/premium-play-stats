@@ -16,6 +16,7 @@ import { Route as ProfilRouteImport } from './routes/profil'
 import { Route as PronosticsRouteImport } from './routes/pronostics'
 import { Route as StatistiquesRouteImport } from './routes/statistiques'
 import { Route as TropheesRouteImport } from './routes/trophees'
+import { Route as VestiaireRouteImport } from './routes/vestiaire'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -52,6 +53,11 @@ const TropheesRoute = TropheesRouteImport.update({
   path: '/trophees',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VestiaireRoute = VestiaireRouteImport.update({
+  id: '/vestiaire',
+  path: '/vestiaire',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -61,6 +67,7 @@ export interface FileRoutesByFullPath {
   '/pronostics': typeof PronosticsRoute
   '/statistiques': typeof StatistiquesRoute
   '/trophees': typeof TropheesRoute
+  '/vestiaire': typeof VestiaireRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -70,6 +77,7 @@ export interface FileRoutesByTo {
   '/pronostics': typeof PronosticsRoute
   '/statistiques': typeof StatistiquesRoute
   '/trophees': typeof TropheesRoute
+  '/vestiaire': typeof VestiaireRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -80,6 +88,7 @@ export interface FileRoutesById {
   '/pronostics': typeof PronosticsRoute
   '/statistiques': typeof StatistiquesRoute
   '/trophees': typeof TropheesRoute
+  '/vestiaire': typeof VestiaireRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -91,6 +100,7 @@ export interface FileRouteTypes {
     | '/pronostics'
     | '/statistiques'
     | '/trophees'
+    | '/vestiaire'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -100,6 +110,7 @@ export interface FileRouteTypes {
     | '/pronostics'
     | '/statistiques'
     | '/trophees'
+    | '/vestiaire'
   id:
     | '__root__'
     | '/'
@@ -109,6 +120,7 @@ export interface FileRouteTypes {
     | '/pronostics'
     | '/statistiques'
     | '/trophees'
+    | '/vestiaire'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -119,6 +131,7 @@ export interface RootRouteChildren {
   PronosticsRoute: typeof PronosticsRoute
   StatistiquesRoute: typeof StatistiquesRoute
   TropheesRoute: typeof TropheesRoute
+  VestiaireRoute: typeof VestiaireRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -172,6 +185,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TropheesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/vestiaire': {
+      id: '/vestiaire'
+      path: '/vestiaire'
+      fullPath: '/vestiaire'
+      preLoaderRoute: typeof VestiaireRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -183,6 +203,7 @@ const rootRouteChildren: RootRouteChildren = {
   PronosticsRoute: PronosticsRoute,
   StatistiquesRoute: StatistiquesRoute,
   TropheesRoute: TropheesRoute,
+  VestiaireRoute: VestiaireRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -11,12 +11,12 @@ export function BottomNav() {
         <Link
           key={to}
           to={to}
-          className="tap flex flex-1 flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-semibold text-muted-foreground"
+          className="tap flex min-w-0 flex-1 flex-col items-center gap-1 rounded-2xl px-1 py-2 text-[10px] font-semibold text-muted-foreground"
           activeProps={{ className: "bg-primary/15 text-primary [&_svg]:icon-lume" }}
           activeOptions={{ exact: to === "/" }}
         >
-          <Icon className="size-5" />
-          {label}
+          <Icon className="size-5 shrink-0" />
+          <span className="max-w-full truncate">{label}</span>
         </Link>
       ))}
     </nav>
