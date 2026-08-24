@@ -5556,7 +5556,10 @@ function SettingsTab({
             onClick={() => {
               // Lien pret a coller dans un message : il ouvre l'inscription
               // avec le code deja rempli.
-              const lien = `${window.location.origin}/auth?code=${encodeURIComponent(inviteCode)}`;
+              const base =
+                String(import.meta.env.VITE_SITE_URL ?? "").trim().replace(/\/$/, "") ||
+                window.location.origin;
+              const lien = `${base}/auth?code=${encodeURIComponent(inviteCode)}`;
               navigator.clipboard?.writeText(lien).then(
                 () => notify("Lien d'invitation copié."),
                 () => notify("Copie impossible : envoie le code seul."),
@@ -5589,12 +5592,17 @@ function SettingsTab({
         </div>
 
         {inviteCode && !inviteLoading && (() => {
-          const origine = typeof window === "undefined" ? "" : window.location.origin;
+          // Adresse STABLE du site, si elle est configuree (VITE_SITE_URL).
+          // Sans elle, on retombe sur l'adresse courante — qui peut etre celle
+          // d'une prevoyalisation, d'ou l'avertissement plus bas.
+          const siteConfigure = String(import.meta.env.VITE_SITE_URL ?? "").trim().replace(/\/$/, "");
+          const origine = siteConfigure || (typeof window === "undefined" ? "" : window.location.origin);
           // Vercel donne une adresse unique a chaque deploiement et a chaque
           // branche (…-git-…, …-projects.vercel.app). Un lien construit
           // depuis une de ces adresses meurt au deploiement suivant : le
           // joueur invite tomberait sur une page introuvable.
-          const previsualisation = /-git-|-[a-z0-9]{9,}-.*\.vercel\.app$/i.test(origine);
+          const previsualisation =
+            !siteConfigure && /-git-|-[a-z0-9]{9,}-.*\.vercel\.app$/i.test(origine);
 
           return (
             <>
