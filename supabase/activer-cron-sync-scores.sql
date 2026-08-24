@@ -18,7 +18,23 @@
 --   1. Déployer le site (la route /api/sync-scores doit exister en ligne).
 --   2. Ajouter dans Vercel la variable CRON_SECRET, avec une valeur au
 --      hasard (par exemple générée ici : select gen_random_uuid();).
---   3. Remplacer ci-dessous TON-SITE et TON-SECRET par les vraies valeurs.
+--   3. Remplacer ci-dessous TON-DOMAINE-STABLE et TON-SECRET dans le SQL
+--      COLLE DANS SUPABASE — mais surtout PAS dans ce fichier, qui est
+--      publie sur GitHub.
+--
+-- DEUX PIEGES :
+--
+--   * L'ADRESSE. Vercel donne a chaque deploiement une adresse unique du
+--     type premium-play-stats-qi3ko53xb-....vercel.app. Elle change a chaque
+--     mise en ligne : une tache qui pointe dessus finira par appeler dans le
+--     vide. Utilise l'adresse STABLE du projet (Vercel > Project >
+--     Domains), celle qui ne bouge jamais.
+--
+--   * LE SECRET. Ne le colle jamais dans ce fichier : le depot est public,
+--     n'importe qui pourrait alors declencher la tache en boucle et faire
+--     depasser le quota football-data, ce qui ferait perdre AUSSI
+--     l'affichage en direct. Il vit dans Vercel (CRON_SECRET) et dans le SQL
+--     que tu colles dans Supabase, nulle part ailleurs.
 -- =========================================================
 
 create extension if not exists pg_cron;
@@ -37,10 +53,10 @@ select cron.schedule(
   '*/30 * * * *',
   $$
     select net.http_post(
-      url := 'https://premium-play-stats-qi3ko53xb-manuelglowacki-6991s-projects.vercel.app/api/sync-scores',
+      url := 'https://TON-DOMAINE-STABLE/api/sync-scores',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'x-cron-secret', '5c0c6120-1e6d-4c24-8b04-fc0dbe582f2f'
+        'x-cron-secret', 'TON-SECRET'
       ),
       body := jsonb_build_object('source', 'supabase-cron')
     );
