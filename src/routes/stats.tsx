@@ -567,8 +567,19 @@ function StatsPage() {
         const day = dayLabelById.get(String(matchdayId)) ?? String(matchdayId);
 
         const points = realPointsFor(prediction);
-        const exact = isExactPrediction(prediction, match);
         const bonus = isBonusPrediction(match);
+        // SCORE EXACT AU SENS DE LA LIGUE — le tableau des dernieres journees
+        // comptait tout score devine au but pres, y compris sur un match de
+        // Ligue 1 ordinaire ou cela ne rapporte rien. La page affichait donc
+        // "0 score exact" dans la jauge et "Exacts : 2" dans le tableau.
+        //
+        // Un score exact ne compte que la ou il rapporte : bonus (3 pts) ou
+        // club de coeur (2 pts). Sur un match ordinaire le bareme est 1/0,
+        // donc 2 points hors bonus ne peuvent venir que du club de coeur.
+        // On lit le bareme du moteur (realPointsFor) plutot que de rejuger :
+        // memes chiffres que le Classement et le Profil.
+        const exact =
+          isExactPrediction(prediction, match) && (bonus ? points === 3 : points === 2);
 
         if (!byDay.has(day)) {
           byDay.set(day, {
