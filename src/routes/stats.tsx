@@ -248,7 +248,7 @@ function PodiumPlayer({
 
   return (
     <article
-      className={`group relative min-w-[170px] flex-1 overflow-hidden rounded-[18px] border ${medal.accent} ${medal.glow} bg-black/25 p-3 backdrop-blur-xl transition-transform duration-300 hover:-translate-y-1`}
+      className={`group relative min-w-0 overflow-hidden rounded-[18px] border ${medal.accent} ${medal.glow} bg-black/25 p-3 backdrop-blur-xl transition-transform duration-300 hover:-translate-y-1`}
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(52,211,153,.10),transparent_58%)]" />
       <div className="relative flex items-center gap-2.5">
@@ -273,7 +273,7 @@ function PodiumPlayer({
             {player.name}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-[9px] text-slate-500">
-            <span>{player.exactScores} exact{player.exactScores > 1 ? "s" : ""}</span>
+            <span>{player.exactScores} score{player.exactScores > 1 ? "s" : ""} exact{player.exactScores > 1 ? "s" : ""}</span>
           </div>
         </div>
 
@@ -1213,11 +1213,11 @@ function StatsPage() {
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(52,211,153,.08),transparent_38%)]" />
 
             <div className="relative">
-              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <SectionHeader icon={Trophy} eyebrow="Classement" title="Top joueurs" />
                 <Link
                   to="/classement"
-                  className="inline-flex items-center gap-1 font-mono text-[8px] font-bold uppercase tracking-[.16em] text-emerald-300/80 transition hover:text-emerald-300"
+                  className="inline-flex items-center gap-1 pt-2 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-emerald-300/80 transition hover:text-emerald-300"
                 >
                   Voir le classement <ChevronRight size={11} />
                 </Link>
@@ -1228,7 +1228,7 @@ function StatsPage() {
                   Classement indisponible pour le moment
                 </div>
               ) : (
-                <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="grid gap-2 sm:grid-cols-3">
                   {podium.map((player, index) => (
                     <PodiumPlayer
                       key={player.userId}
@@ -1284,7 +1284,7 @@ function StatsPage() {
                           style={{ width: `${item.percent}%` }}
                         />
                       </div>
-                      <span className="font-mono text-[8px] text-slate-600">{item.percent}%</span>
+                      <span className="w-9 shrink-0 text-right font-mono text-[10px] text-slate-400">{item.percent}%</span>
                     </div>
                   </div>
                 ))}
