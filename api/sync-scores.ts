@@ -58,14 +58,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // 1) Les matchs Ligue 1 vus par football-data, via le proxy existant
     //    (le jeton reste côté serveur, on ne le manipule pas ici).
+    // On demande explicitement la Ligue 1 : le proxy renvoie "ALL" par
+    // defaut, et sa cle `matchs` ne contient alors que la Ligue 1 — mais
+    // dependre d'un comportement par defaut est le genre de detail qui casse
+    // en silence six mois plus tard, sur une tache que personne ne regarde.
     const base = `https://${req.headers.host}`;
-    const reponseApi = await fetch(`${base}/api/ligue1/matchs`);
+    const reponseApi = await fetch(`${base}/api/ligue1/matchs?competition=FL1`, {
+      headers: { Accept: "application/json" },
+    });
     if (!reponseApi.ok) {
       return reponse(res, 502, { erreur: "football-data indisponible" });
     }
 
-    const corps = await reponseApi.json();
-    const matchsApi: MatchApi[] = Array.isArray(corps?.matchs) ? corps.matchs : corps;
+    const corps = await reponseApi.json().catch(() => null);
+    if (!corps || corps.ok === false) {
+      return reponse(res, 502, { erreur: "reponse football-data invalide" });
+    }
+
+    const brut = Array.isArray(corps.matchs)
+      ? corps.matchs
+      : Array.isArray(corps.allMatches)
+        ? corps.allMatches
+        : [];
+    const matchsApi: MatchApi[] = brut;
 
     const termines = (matchsApi ?? []).filter(
       (m) =>
