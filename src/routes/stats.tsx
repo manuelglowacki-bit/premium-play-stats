@@ -804,6 +804,10 @@ function StatsPage() {
   // Pourcentage de scores exacts — dérivé des mêmes champs déjà calculés
   // (stats.exactScores / stats.totalPredictions), aucune nouvelle logique
   // de calcul, juste un ratio d'affichage pour le bloc "Scores exacts".
+  const goodPickRatePct = stats.predictionsMade
+    ? Math.round((stats.successfulPredictions / stats.predictionsMade) * 100)
+    : 0;
+
   const exactRatePct = stats.totalPredictions
     ? Math.round((stats.exactScores / stats.totalPredictions) * 100)
     : 0;
@@ -957,11 +961,11 @@ function StatsPage() {
                 remontés ici. Tout en bas de page, ils passaient sous le menu
                 de navigation et personne ne les voyait. */}
             <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
-              <article className="rounded-2xl border border-emerald-400/10 bg-emerald-400/[0.035] px-4 py-3">
+              <article className="rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3 shadow-[0_12px_30px_rgba(0,0,0,.22)] backdrop-blur-xl">
                 <div className="flex items-center gap-2.5">
                   <TrendingUp size={15} className="text-emerald-300" />
                   <div>
-                    <div className="font-mono text-[9px] uppercase tracking-[.18em] text-emerald-300/70">
+                    <div className="font-mono text-[9px] font-semibold uppercase tracking-[.14em] text-slate-400">
                       Dernière tendance
                     </div>
                     <div className="mt-0.5 text-sm font-semibold text-white">
@@ -973,11 +977,11 @@ function StatsPage() {
                 </div>
               </article>
 
-              <article className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+              <article className="rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3 shadow-[0_12px_30px_rgba(0,0,0,.22)] backdrop-blur-xl">
                 <div className="flex items-center gap-2.5">
                   <Crosshair size={15} className="text-emerald-300" />
                   <div>
-                    <div className="font-mono text-[9px] uppercase tracking-[.18em] text-slate-400">
+                    <div className="font-mono text-[9px] font-semibold uppercase tracking-[.14em] text-slate-400">
                       Moyenne / journée
                     </div>
                     <div className="mt-0.5 text-sm font-semibold text-white">
@@ -1021,6 +1025,24 @@ function StatsPage() {
                   </span>
                   <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">
                     Reviens ici après ta première journée pronostiquée !
+                  </span>
+                </div>
+              ) : visibleDays.length === 1 ? (
+                /* Avec un seul point, le trace partait de gauche et
+                   redescendait jusqu'a zero a droite : le graphique dessinait
+                   une chute qui n'a jamais eu lieu, et le point vert flottait
+                   seul au milieu. Tant qu'il n'y a qu'une journee, il n'y a
+                   pas de progression a montrer — on affiche la valeur. */
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[.22em] text-emerald-300">
+                    {visibleDays[0].day}
+                  </span>
+                  <span className="font-display text-5xl font-black leading-none text-white">
+                    {visibleDays[0].points}
+                    <span className="ml-1 font-mono text-sm font-bold text-slate-400">pts</span>
+                  </span>
+                  <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">
+                    La courbe apparaîtra à la 2e journée
                   </span>
                 </div>
               ) : (
@@ -1136,7 +1158,7 @@ function StatsPage() {
           <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] p-4 shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl md:p-5">
             <SectionHeader icon={Crosshair} eyebrow="Analyse" title="Précision" />
 
-            <div className="mx-auto grid max-w-2xl grid-cols-2 gap-3">
+            <div className="mx-auto grid max-w-4xl grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
                 <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
                   <Crosshair size={11} className="text-emerald-300" /> Régularité
@@ -1163,6 +1185,30 @@ function StatsPage() {
 
               <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
                 <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
+                  <Trophy size={11} className="text-emerald-300" /> Bons pronos
+                </div>
+                <div
+                  className="relative flex size-20 items-center justify-center rounded-full md:size-24"
+                  style={{
+                    background: `conic-gradient(#34d399 ${goodPickRatePct * 3.6}deg, rgba(255,255,255,.06) ${goodPickRatePct * 3.6}deg 360deg)`,
+                  }}
+                >
+                  <div className="flex size-[62px] flex-col items-center justify-center rounded-full border border-white/[0.05] bg-[#06101b] md:size-[76px]">
+                    <span className="text-lg font-black text-white md:text-xl">
+                      {goodPickRatePct}%
+                    </span>
+                    <span className="mt-0.5 font-mono text-[7px] uppercase tracking-[.16em] text-slate-400">
+                      réussis
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 text-center text-[10px] font-semibold text-white">
+                  {stats.successfulPredictions} réussis / {stats.predictionsMade} joués
+                </div>
+              </div>
+
+              <div className="flex flex-col items-center rounded-2xl border border-white/[0.05] bg-black/15 px-3 py-4">
+                <div className="mb-2 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] text-slate-400">
                   <Target size={11} className="text-emerald-300" /> Scores exacts
                 </div>
                 <div
@@ -1181,9 +1227,9 @@ function StatsPage() {
                   </div>
                 </div>
                 <div className="mt-2 text-center text-[10px] font-semibold text-white">
-                  {stats.exactScores} score{stats.exactScores > 1 ? "s" : ""} exact{stats.exactScores > 1 ? "s" : ""}
+                  {stats.exactScores} exact{stats.exactScores > 1 ? "s" : ""} / {stats.totalPredictions} joués
                   <div className="mt-0.5 text-[9px] font-normal text-slate-500">
-                    sur {stats.totalPredictions} pronostic{stats.totalPredictions > 1 ? "s" : ""}
+                    sur bonus et club de cœur
                   </div>
                 </div>
               </div>
