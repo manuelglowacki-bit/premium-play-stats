@@ -1,5 +1,5 @@
 ﻿import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Lock, Mail, User, ArrowRight, Trophy, Eye, EyeOff, ShieldCheck, KeyRound } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/lib/supabase";
@@ -55,6 +55,26 @@ export function AuthPage() {
   // Code d'invitation : demande UNIQUEMENT a l'inscription. Les joueurs deja
   // inscrits se connectent comme avant, sans rien de nouveau a saisir.
   const [inviteCode, setInviteCode] = useState("");
+
+  // Lien d'invitation : /auth?code=XXXX ouvre directement le formulaire
+  // d'inscription avec le code deja saisi. Le nouveau joueur n'a plus qu'a
+  // choisir son pseudo et son mot de passe — plus de faute de frappe, plus
+  // de "c'est un zero ou un O ?".
+  //
+  // On lit window.location plutot que le routeur : cette page est aussi
+  // affichee directement par __root.tsx (avant toute connexion), sans le
+  // contexte de route qui permettrait useSearch().
+  useEffect(() => {
+    try {
+      const codeDuLien = new URLSearchParams(window.location.search).get("code");
+      if (codeDuLien && codeDuLien.trim()) {
+        setInviteCode(codeDuLien.trim());
+        setIsSignUp(true);
+      }
+    } catch {
+      /* URL illisible : le joueur saisira le code a la main */
+    }
+  }, []);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();

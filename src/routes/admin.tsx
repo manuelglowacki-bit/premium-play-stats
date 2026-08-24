@@ -5100,7 +5100,24 @@ function SettingsTab({
             ariaLabel="Copier le code d'invitation"
           >
             <Copy size={12} />
-            Copier
+            Copier le code
+          </GhostButton>
+
+          <GhostButton
+            onClick={() => {
+              // Lien pret a coller dans un message : il ouvre l'inscription
+              // avec le code deja rempli.
+              const lien = `${window.location.origin}/auth?code=${encodeURIComponent(inviteCode)}`;
+              navigator.clipboard?.writeText(lien).then(
+                () => notify("Lien d'invitation copié."),
+                () => notify("Copie impossible : envoie le code seul."),
+              );
+            }}
+            disabled={!inviteCode || inviteLoading}
+            ariaLabel="Copier le lien d'invitation"
+          >
+            <Share2 size={12} />
+            Copier le lien
           </GhostButton>
 
           <PrimaryButton
@@ -5122,8 +5139,14 @@ function SettingsTab({
           </PrimaryButton>
         </div>
 
+        {inviteCode && !inviteLoading && (
+          <p className="mt-3 break-all rounded-xl border border-slate-800 bg-[#0b1120] px-3 py-2 font-mono text-[11px] text-slate-400">
+            {`${typeof window === "undefined" ? "" : window.location.origin}/auth?code=${inviteCode}`}
+          </p>
+        )}
+
         {inviteUpdatedAt && (
-          <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-widest text-slate-500">
             Modifié le {new Date(inviteUpdatedAt).toLocaleString("fr-FR")}
           </p>
         )}
