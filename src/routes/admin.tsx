@@ -631,7 +631,26 @@ function AdminPage() {
   );
   const totalExpected = useMemo(() => players.length * entryFee, [players, entryFee]);
   const adminCount = useMemo(() => players.filter((p) => p.is_admin).length, [players]);
-  const openMatchdaysCount = useMemo(() => matchdays.filter((m) => !m.is_finished).length, [matchdays]);
+  // "Journees ouvertes" comptait les journees des CINQ championnats (Ligue 1
+  // plus les quatre championnats bonus), d'ou un 182 absurde pour une ligue
+  // qui joue 34 journees. Seule la Ligue 1 compte ici, comme partout ailleurs
+  // dans l'application.
+  const openMatchdaysCount = useMemo(() => {
+    const ligue1CompetitionIds = new Set(
+      competitions
+        .filter((c) => c.code === "FL1" || c.external_code === "FL1")
+        .map((c) => String(c.id)),
+    );
+
+    return matchdays.filter((m) => {
+      if (m.is_finished) return false;
+      if (!m.competition_id) return true;
+      // Sans competition FL1 identifiee, on ne filtre pas plutot que de
+      // masquer des journees a tort.
+      if (ligue1CompetitionIds.size === 0) return true;
+      return ligue1CompetitionIds.has(String(m.competition_id));
+    }).length;
+  }, [matchdays, competitions]);
 
   if (loading) {
     return (
@@ -675,7 +694,7 @@ function AdminPage() {
                   Gestion de la ligue
                 </h1>
                 <p className="mt-1 text-sm text-slate-400">
-                  Joueurs, paiements, matchs, journées et réglages de la saison {settings?.season ?? "2026-2027"}.
+                  Joueurs, paiements, matchs, journées et réglages{settings?.season ? ` de la saison ${settings.season}` : ""}.
                 </p>
               </div>
 
@@ -693,7 +712,16 @@ function AdminPage() {
             <div className="relative z-10 mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatPill label="Joueurs" value={String(players.length)} />
               <StatPill label="Admins" value={String(adminCount)} tone="text-sky-400" />
-              <StatPill label="Cagnotte" value={`${totalCollected}€`} tone="text-gold" />
+              {/* ATTENTION AU MOT : ici c'est l'argent REELLEMENT ENCAISSE
+                  (Admin > Paiements), alors que la "cagnotte" annoncee aux
+                  joueurs sur l'Accueil et le Classement est le total attendu
+                  (nombre de joueurs x droit d'entree). Afficher les deux
+                  evite de croire que la ligue a perdu de l'argent. */}
+              <StatPill
+                label="Encaissé / attendu"
+                value={`${totalCollected}€ / ${totalExpected}€`}
+                tone="text-gold"
+              />
               <StatPill label="Journées ouvertes" value={String(openMatchdaysCount)} tone="text-mint" />
             </div>
           </section>
@@ -4915,7 +4943,7 @@ function SettingsTab({
   notify: (message: string) => void;
 }) {
   // Général
-  const [season, setSeason] = useState(settings?.season ?? "2026-2027");
+  const [season, setSeason] = useState(settings?.season ?? "");
   const [entryFee, setEntryFee] = useState(String(settings?.entry_fee ?? 10));
   const [timezone, setTimezone] = useState(settings?.timezone ?? "Europe/Paris");
   const [registrationDeadline, setRegistrationDeadline] = useState(settings?.registration_deadline?.slice(0, 16) ?? "");
