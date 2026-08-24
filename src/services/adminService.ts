@@ -519,7 +519,16 @@ export async function syncLigue1Matches(): Promise<SyncSummary> {
           is_open: false,
           is_finished: false,
           deadline: null,
-          deadline_mode: "manual",
+          // VERROUILLAGE PAR DEFAUT. Le couple (deadline_mode "manual",
+          // deadline null) signifie AUCUN blocage : les pronostics restent
+          // ouverts apres le coup d'envoi, donc apres le resultat. Une
+          // journee creee automatiquement par la synchro arrivait ainsi
+          // grande ouverte, et rien ne le signalait.
+          //
+          // Le defaut sur : verrouillage 1 minute avant chaque coup d'envoi.
+          // L'admin peut toujours choisir autre chose depuis l'onglet
+          // Verrouillage, mais il doit le faire exprès.
+          deadline_mode: "auto_minus_1",
         }]).select("*").single();
         if (error) throw error;
         matchday = data as Matchday;
@@ -741,7 +750,8 @@ export async function syncCompetitionMatches(code: string): Promise<SyncSummary>
           is_open: false,
           is_finished: false,
           deadline: null,
-          deadline_mode: "manual",
+          // Meme regle que ci-dessus : jamais de journee creee sans verrou.
+          deadline_mode: "auto_minus_1",
         }).select("*").single();
         if (error) throw error;
         matchday = data as Matchday;
