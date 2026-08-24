@@ -61,6 +61,9 @@ function ProfilPage() {
   // Équipe de cœur
   const { favoriteTeamId, saveFavoriteTeam } = useFavoriteTeam();
   const [teams, setTeams] = useState<any[]>([]);
+  // Saison affichee : elle etait ecrite en dur ("Saison 2026-2027") a trois
+  // endroits de la page et n'aurait jamais change.
+  const [seasonLabel, setSeasonLabel] = useState<string | null>(null);
   const [tempSelectedTeam, setTempSelectedTeam] = useState("");
   const [isEditingTeam, setIsEditingTeam] = useState(false);
 
@@ -162,7 +165,7 @@ function ProfilPage() {
 
           supabase
             .from("app_settings")
-            .select("favorite_team_deadline, favorite_team_auto_lock")
+            .select("season, favorite_team_deadline, favorite_team_auto_lock")
             .eq("id", 1)
             .maybeSingle(),
 
@@ -250,6 +253,10 @@ function ProfilPage() {
         }
 
         setTeams(teamsData || []);
+
+        if ((settingsData as any)?.season) {
+          setSeasonLabel(String((settingsData as any).season));
+        }
 
         const settings = settingsData as {
           favorite_team_deadline: string | null;
@@ -528,7 +535,13 @@ function ProfilPage() {
         allMatches.forEach((match) => {
           if (!match.matchday_id || dayLabelByMatchdayId.has(String(match.matchday_id))) return;
           if (match.matchday === null || match.matchday === undefined) return;
-          dayLabelByMatchdayId.set(String(match.matchday_id), `J${match.matchday}`);
+          // Selon les lignes, `matchday` vaut "1" ou deja "J1" : prefixer
+          // sans regarder donnait "JJ1" sous Meilleure journee.
+          const brut = String(match.matchday).trim();
+          dayLabelByMatchdayId.set(
+            String(match.matchday_id),
+            /^j/i.test(brut) ? `J${brut.slice(1)}` : `J${brut}`,
+          );
         });
 
         const myPointsByDay = pointsByUserAndMatchday[session.user.id] ?? {};
@@ -810,16 +823,8 @@ function ProfilPage() {
           id="profile-push-notifications"
           className="rounded-3xl border border-emerald-400/20 bg-[#0d1322]/75 p-5 shadow-[0_0_30px_rgba(0,0,0,0.45)] backdrop-blur-xl md:p-6"
         >
-          <div className="mb-4">
-            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-300">
-              Notifications
-            </div>
-            <h2 className="mt-1 text-lg font-black text-white">
-              Rappels de pronostics
-            </h2>
-            <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">
-              Reçois une notification 1 h avant un match si tu n'as pas encore fait ton prono.
-            </p>
+          <div className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-300">
+            Notifications
           </div>
 
           <PushNotificationsButton />
@@ -913,7 +918,7 @@ function ProfilPage() {
 
               <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
                 <Activity className="size-3.5" />
-                Saison 2026–2027
+                Saison {seasonLabel ?? "—"}
               </div>
 
               {/* 4 stats compactes */}
@@ -1063,7 +1068,7 @@ function ProfilPage() {
               <div>
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-amber-400">
                   <Star className="size-3.5 fill-amber-400" />
-                  Saison 2026–2027
+                  Saison {seasonLabel ?? "—"}
                 </div>
                 <h2 className="mt-1.5 font-display text-2xl font-black uppercase tracking-tight text-white md:text-3xl">
                   Mon équipe de cœur
@@ -1161,7 +1166,7 @@ function ProfilPage() {
                     </span>
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-300">
                       <Target className="size-3 text-emerald-400" />
-                      Saison 2026–2027
+                      Saison {seasonLabel ?? "—"}
                     </span>
                   </div>
 
