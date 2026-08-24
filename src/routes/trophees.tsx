@@ -993,8 +993,25 @@ function VestiairePage() {
       setMessages((current) =>
         current.filter((message) => !message.id.startsWith("temp-"))
       );
+
+      // Deux echecs tres differents arrivaient ici avec le meme message :
+      // l'envoi de la photo, et l'enregistrement du texte. On affiche
+      // maintenant ce que le serveur a REELLEMENT repondu.
+      const brut =
+        (error as { message?: string })?.message ||
+        (error as { error_description?: string })?.error_description ||
+        "";
+
+      // Sur un texte trop long, Postgres repond "value too long for type
+      // character varying(N)" : autant le dire en francais.
+      const tropLong = /too long|character varying|check constraint/i.test(brut);
+
       setErrorMessage(
-        "Le message ou la photo n'a pas pu être envoyé. Vérifie le bucket Supabase chat-images."
+        tropLong
+          ? "Message refusé par la base : il est trop long. Raccourcis-le et réessaie."
+          : brut
+            ? `Envoi impossible — ${brut}`
+            : "Le message n'a pas pu être envoyé. Vérifie ta connexion.",
       );
     } finally {
       setSending(false);
@@ -1508,7 +1525,13 @@ function VestiairePage() {
           contentType: file.type,
         });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        // On remonte le nom du fichier ET la raison exacte donnee par le
+        // serveur. Sans ca, "verifie le bucket" est le seul indice, meme
+        // quand le probleme est le format ou la taille.
+        const raison = (uploadError as { message?: string })?.message || "raison inconnue";
+        throw new Error(`Photo « ${file.name} » refusée par le serveur : ${raison}`);
+      }
 
       const { data } = supabase.storage.from("chat-images").getPublicUrl(path);
       if (data.publicUrl) urls.push(data.publicUrl);
