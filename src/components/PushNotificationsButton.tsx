@@ -216,21 +216,42 @@ export default function PushNotificationsButton({
           <div className="mt-1 text-xs leading-relaxed text-slate-400">
             Reçois une notification 1 h avant un match si tu n'as pas encore fait ton prono.
           </div>
-          {message && <div className="mt-2 text-xs text-emerald-300">{message}</div>}
+          {message && message !== "Notifications activées ✓" && (
+            <div className="mt-2 text-xs text-emerald-300">{message}</div>
+          )}
         </div>
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void (enabled ? disablePush() : enablePush())}
-          className={`shrink-0 rounded-xl px-4 py-2 text-xs font-black transition ${
-            enabled
-              ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-              : "bg-emerald-400 text-[#06101c] hover:bg-emerald-300"
-          } disabled:opacity-50`}
-        >
-          {busy ? "..." : enabled ? "ACTIVÉ" : "ACTIVER"}
-        </button>
+        {/* Le bouton affichait l'ETAT ("ACTIVÉ") alors qu'un clic dessus fait
+            l'inverse : on croyait lire une information, on declenchait une
+            desactivation. L'etat est desormais annonce a gauche, et le bouton
+            ne porte plus que l'action. */}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <span
+            className={`inline-flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-[.14em] ${
+              enabled ? "text-emerald-300" : "text-slate-500"
+            }`}
+          >
+            <span
+              className={`size-1.5 rounded-full ${
+                enabled ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]" : "bg-slate-600"
+              }`}
+            />
+            {enabled ? "Activées" : "Désactivées"}
+          </span>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void (enabled ? disablePush() : enablePush())}
+            className={`rounded-xl px-4 py-2 text-xs font-black transition ${
+              enabled
+                ? "border border-slate-600 bg-slate-800/70 text-slate-300 hover:border-red-400/40 hover:text-red-300"
+                : "bg-emerald-400 text-[#06101c] hover:bg-emerald-300"
+            } disabled:opacity-50`}
+          >
+            {busy ? "..." : enabled ? "Désactiver" : "Activer"}
+          </button>
+        </div>
       </div>
     </div>
   );
