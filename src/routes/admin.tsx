@@ -2595,7 +2595,11 @@ function MatchesTab({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
           <Calendar size={18} className="text-emerald-400" />
-          Matchs Ligue 1 ({visibleMatches.length}/{ligue1Matches.length})
+          Matchs Ligue 1
+          <span className="ml-1 font-mono text-xs font-normal normal-case tracking-normal text-slate-400">
+            {visibleMatches.length} affiché{visibleMatches.length > 1 ? "s" : ""} sur{" "}
+            {ligue1Matches.length}
+          </span>
         </h2>
         <div className="flex flex-wrap items-center gap-2">
           <GhostButton
@@ -2860,18 +2864,34 @@ function MatchesTab({
         </Modal>
       )}
 
-      {confirmDelete && (
+      {confirmDelete && (() => {
+        const affiche = `${teamOf(teams, confirmDelete.home_team_id)?.name ?? "?"} vs ${
+          teamOf(teams, confirmDelete.away_team_id)?.name ?? "?"
+        }`;
+        // Un match a venir n'a rien a perdre. Un match commence ou termine
+        // porte les pronostics de toute la ligue : la suppression efface
+        // aussi les points gagnes dessus, chez tout le monde.
+        const dejaJoue = matchDisplayStatus(confirmDelete) !== "scheduled";
+        const score =
+          confirmDelete.home_score != null && confirmDelete.away_score != null
+            ? ` (${confirmDelete.home_score} – ${confirmDelete.away_score})`
+            : "";
+
+        return (
         <ConfirmDialog
-          title="Supprimer ce match ?"
-          description={`Le match ${teamOf(teams, confirmDelete.home_team_id)?.name ?? "?"} vs ${
-            teamOf(teams, confirmDelete.away_team_id)?.name ?? "?"
-          } sera définitivement supprimé.`}
-          confirmLabel="Supprimer"
+          title={dejaJoue ? "Supprimer un match DÉJÀ JOUÉ ?" : "Supprimer ce match ?"}
+          description={
+            dejaJoue
+              ? `${affiche}${score} est déjà joué. Le supprimer effacera aussi TOUS les pronostics des joueurs sur ce match, et les points qu'ils ont rapportés — leurs totaux et le classement changeront. Action irréversible.`
+              : `Le match ${affiche} sera définitivement supprimé.`
+          }
+          confirmLabel={dejaJoue ? "Supprimer quand même" : "Supprimer"}
           busy={busyId === confirmDelete.id}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={confirmAndDelete}
         />
-      )}
+        );
+      })()}
     </Card>
   );
 }
