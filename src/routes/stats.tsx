@@ -119,6 +119,8 @@ type StatsState = {
   /** Club de cœur : matchs de son équipe déjà joués, et pronostics réussis dessus. */
   favoriteMatches: number;
   favoriteSuccessful: number;
+  /** Matchs bonus joues : avec le club de coeur, les seuls ou un score exact rapporte. */
+  bonusPlayed: number;
   bestDay: number;
   bestDayLabel: string;
   dayStats: DayStat[];
@@ -152,6 +154,7 @@ const EMPTY_STATS: StatsState = {
   matchesPlayable: 0,
   favoriteMatches: 0,
   favoriteSuccessful: 0,
+  bonusPlayed: 0,
   bestDay: 0,
   bestDayLabel: "—",
   dayStats: [],
@@ -563,6 +566,7 @@ function StatsPage() {
       const monProfil = allProfilesForStats.find((profile: any) => profile.id === user.id) as any;
       let favoriteMatches = 0;
       let favoriteSuccessful = 0;
+      let bonusPlayed = 0;
 
       const byDay = new Map<string, DayStat>();
       let standardPoints = 0;
@@ -630,6 +634,7 @@ function StatsPage() {
         if (exact) current.exactScores += 1;
 
         if (bonus) {
+          bonusPlayed += 1;
           current.bonusPoints += points;
           bonusPoints += points;
           if (points > 0) bonusSuccessful += 1;
@@ -680,6 +685,7 @@ function StatsPage() {
         matchesPlayable,
         favoriteMatches,
         favoriteSuccessful,
+        bonusPlayed,
         bestDay: bestDayEntry?.points || 0,
         bestDayLabel: bestDayEntry?.day || "—",
         dayStats,
@@ -846,8 +852,9 @@ function StatsPage() {
     ? Math.round((stats.favoriteSuccessful / stats.favoriteMatches) * 100)
     : 0;
 
-  const exactRatePct = stats.totalPredictions
-    ? Math.round((stats.exactScores / stats.totalPredictions) * 100)
+  const exactOpportunities = stats.favoriteMatches + stats.bonusPlayed;
+  const exactRatePct = exactOpportunities
+    ? Math.round((stats.exactScores / exactOpportunities) * 100)
     : 0;
 
   // Colonne "Total" du tableau des dernières journées : cumul des points
@@ -1231,7 +1238,7 @@ function StatsPage() {
                   </div>
                 </div>
                 <div className="mt-2 text-center text-[10px] font-semibold text-white">
-                  {stats.exactScores} exact{stats.exactScores > 1 ? "s" : ""} / {stats.totalPredictions} joués
+                  {stats.exactScores} exact{stats.exactScores > 1 ? "s" : ""} / {exactOpportunities} possible{exactOpportunities > 1 ? "s" : ""}
                   <div className="mt-0.5 text-[9px] font-normal text-slate-500">
                     sur bonus et club de cœur
                   </div>
