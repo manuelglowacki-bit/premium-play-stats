@@ -53,10 +53,10 @@ select cron.schedule(
   '*/30 * * * *',
   $$
     select net.http_post(
-      url := 'https://https://premium-play-stats.vercel.app//api/sync-scores',
+      url := 'https://premium-play-stats.vercel.app/api/sync-scores',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'x-cron-secret', '5c0c6120-1e6d-4c24-8b04-fc0dbe582f2f'
+        'x-cron-secret', 'TON-SECRET'
       ),
       body := jsonb_build_object('source', 'supabase-cron')
     );
