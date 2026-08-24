@@ -3203,18 +3203,77 @@ function BonusMatchDisplay({
   );
 }
 
-/** Zone droite "GESTION" — dernière modification, statut, bouton Modifier. */
+/** Zone droite "GESTION" — score, dernière modification, statut, bouton
+ *  Modifier. Le score se saisit ICI, sur la carte : il fallait auparavant
+ *  passer par l'onglet Matchs, qui n'affiche pas les championnats bonus.
+ *  Même règle que l'onglet Matchs : rien ne part tant qu'on n'a pas
+ *  appuyé sur Entrée ou sur Enregistrer. */
 function BonusManagement({
   lastModified,
   onEdit,
   disabled,
+  scoreDraft,
+  onScoreChange,
+  onSaveScore,
+  saving,
+  scoreModifie,
 }: {
   lastModified: string;
   onEdit: () => void;
   disabled: boolean;
+  scoreDraft: { home: string; away: string } | null;
+  onScoreChange: (patch: Partial<{ home: string; away: string }>) => void;
+  onSaveScore: () => void;
+  saving: boolean;
+  scoreModifie: boolean;
 }) {
   return (
     <div className="flex flex-col justify-center gap-3.5">
+      {scoreDraft && (
+        <div>
+          <div className="font-mono text-[9px] uppercase tracking-widest text-slate-500">Score</div>
+          <div
+            className={`mt-1 flex items-center gap-1.5 rounded-xl border px-2 py-1.5 transition-colors ${
+              scoreModifie ? "border-amber-400/50 bg-amber-400/[0.06]" : "border-slate-800"
+            }`}
+          >
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              placeholder="–"
+              value={scoreDraft.home}
+              onChange={(e) => onScoreChange({ home: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && onSaveScore()}
+              aria-label="Score domicile du match bonus"
+              className="w-11 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none placeholder:text-slate-700 focus:border-emerald-500/60"
+            />
+            <span className="text-slate-600">-</span>
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              placeholder="–"
+              value={scoreDraft.away}
+              onChange={(e) => onScoreChange({ away: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && onSaveScore()}
+              aria-label="Score extérieur du match bonus"
+              className="w-11 rounded-lg border border-slate-700 bg-[#060b16] px-1.5 py-1 text-center text-xs font-bold text-slate-100 outline-none placeholder:text-slate-700 focus:border-emerald-500/60"
+            />
+            {scoreModifie && (
+              <button
+                type="button"
+                onClick={onSaveScore}
+                title="Enregistrer le score (ou touche Entrée)"
+                className="ml-auto flex items-center gap-1 rounded-lg bg-amber-400 px-2 py-1 font-mono text-[10px] font-black uppercase text-slate-950 transition hover:bg-amber-300"
+              >
+                {saving ? <RefreshCw size={11} className="animate-spin" /> : <Save size={11} />}
+                OK
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div>
         <div className="font-mono text-[9px] uppercase tracking-widest text-slate-500">Dernière modification</div>
         <div className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-sky-100/80">
@@ -3258,6 +3317,11 @@ function BonusCompetitionRow({
   kickoff,
   lastModified,
   onEdit,
+  scoreDraft,
+  onScoreChange,
+  onSaveScore,
+  saving,
+  scoreModifie,
 }: {
   code: BonusCompetitionCode;
   candidate: BonusCandidate | undefined;
@@ -3267,6 +3331,11 @@ function BonusCompetitionRow({
   kickoff: { day: string; time: string };
   lastModified: string;
   onEdit: () => void;
+  scoreDraft: { home: string; away: string } | null;
+  onScoreChange: (patch: Partial<{ home: string; away: string }>) => void;
+  onSaveScore: () => void;
+  saving: boolean;
+  scoreModifie: boolean;
 }) {
   const meta = BONUS_COMPETITION_META[code];
   const label = BONUS_COMPETITION_LABELS[code];
@@ -3300,7 +3369,16 @@ function BonusCompetitionRow({
 
         {/* ZONE DROITE — gestion */}
         <div className="p-4 sm:p-5">
-          <BonusManagement lastModified={lastModified} onEdit={onEdit} disabled={!candidate} />
+          <BonusManagement
+            lastModified={lastModified}
+            onEdit={onEdit}
+            disabled={!candidate}
+            scoreDraft={scoreDraft}
+            onScoreChange={onScoreChange}
+            onSaveScore={onSaveScore}
+            saving={saving}
+            scoreModifie={scoreModifie}
+          />
         </div>
       </div>
     </div>
@@ -4012,6 +4090,44 @@ function BonusTab({
   // un state séparé) : il retombe à false automatiquement dès que le
   // dropdown change, sans effet supplémentaire.
   const [validatedBonusMatchdayId, setValidatedBonusMatchdayId] = useState<string | null>(null);
+
+  // Saisie du score directement sur la carte du championnat bonus. Jusqu'ici
+  // il fallait passer par l'onglet Matchs, qui n'affiche que la Ligue 1 :
+  // corriger le score d'un bonus etait donc impossible depuis l'interface.
+  const [bonusScoreDrafts, setBonusScoreDrafts] = useState<
+    Record<string, { home: string; away: string }>
+  >({});
+  const [savingBonusScoreId, setSavingBonusScoreId] = useState<string | null>(null);
+
+  function bonusScoreDraftFor(match: Match) {
+    return (
+      bonusScoreDrafts[match.id] ?? {
+        home: match.home_score == null ? "" : String(match.home_score),
+        away: match.away_score == null ? "" : String(match.away_score),
+      }
+    );
+  }
+
+  // Enregistrement depuis la carte. On reutilise saveBonusScore ci-dessus
+  // (deja utilisee par la fenetre "Modifier") plutot que d'ecrire un second
+  // chemin : elle rafraichit aussi l'affichage de la ligne, sinon l'ancien
+  // score resterait a l'ecran jusqu'a une regeneration du tirage.
+  async function enregistrerScoreBonusEnLigne(code: BonusCompetitionCode, match: Match) {
+    setSavingBonusScoreId(match.id);
+    try {
+      await saveBonusScore(code, match, bonusScoreDraftFor(match));
+      setBonusScoreDrafts((prev) => {
+        const next = { ...prev };
+        delete next[match.id];
+        return next;
+      });
+      notify("Score du bonus enregistré.");
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement du score."));
+    } finally {
+      setSavingBonusScoreId(null);
+    }
+  }
   const validatedBonusMatchday = ligue1Matchdays.find((md) => md.id === validatedBonusMatchdayId) ?? null;
   const isBonusMatchdayValidated =
     selectedBonusMatchdayId !== null && selectedBonusMatchdayId === validatedBonusMatchdayId;
@@ -4472,6 +4588,20 @@ function BonusTab({
                 kickoff={kickoff}
                 lastModified={lastModified}
                 onEdit={() => openBonusEditor(code)}
+                scoreDraft={candidate?.match ? bonusScoreDraftFor(candidate.match) : null}
+                onScoreChange={(patch) => {
+                  const match = candidate?.match;
+                  if (!match) return;
+                  setBonusScoreDrafts((prev) => ({
+                    ...prev,
+                    [match.id]: { ...bonusScoreDraftFor(match), ...patch },
+                  }));
+                }}
+                onSaveScore={() => {
+                  if (candidate?.match) void enregistrerScoreBonusEnLigne(code, candidate.match);
+                }}
+                saving={savingBonusScoreId === candidate?.match?.id}
+                scoreModifie={Boolean(candidate?.match && bonusScoreDrafts[candidate.match.id])}
               />
             );
           })}
