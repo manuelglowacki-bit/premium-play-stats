@@ -2347,10 +2347,22 @@ function VestiairePage() {
                                             onClick={() => setLightboxImage(image)}
                                             className="group/image relative overflow-hidden rounded-2xl border border-white/10 bg-black/30 text-left"
                                           >
+                                            {/* Une photo seule est montrée ENTIÈRE
+                                                (object-contain) : `object-cover`
+                                                recadrait, et une image en hauteur
+                                                — un classement, une affiche —
+                                                perdait son haut et son bas.
+                                                À plusieurs, on garde le recadrage
+                                                pour que la grille reste alignée ;
+                                                un clic ouvre la photo en grand. */}
                                             <img
                                               src={image}
                                               alt={`Photo partagée ${imageIndex + 1}`}
-                                              className="max-h-[360px] w-full object-cover transition duration-300 group-hover/image:scale-[1.02]"
+                                              className={
+                                                parsed.images.length === 1
+                                                  ? "max-h-[70vh] w-auto max-w-full object-contain transition duration-300 group-hover/image:scale-[1.01]"
+                                                  : "max-h-[360px] w-full object-cover transition duration-300 group-hover/image:scale-[1.02]"
+                                              }
                                             />
                                             <span className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent opacity-0 transition group-hover/image:opacity-100" />
                                           </button>
