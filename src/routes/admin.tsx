@@ -5375,7 +5375,7 @@ function SettingsTab({
   // tant que settings n'est pas chargé.
   const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 1));
 
-  // Équipe de cÅ“ur
+  // Équipe de cœur
   const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState(settings?.favorite_team_deadline?.slice(0, 16) ?? "");
   const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(settings?.favorite_team_auto_lock ?? true);
 
@@ -5683,7 +5683,7 @@ function SettingsTab({
             ⭐
           </span>
           <div>
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cÅ“ur</h2>
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cœur</h2>
             <p className="text-xs text-slate-400">
               Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
             </p>

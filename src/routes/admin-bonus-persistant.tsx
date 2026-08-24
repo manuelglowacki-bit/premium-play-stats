@@ -3337,7 +3337,7 @@ function SettingsTab({
   // Blocage des pronostics
   const [closingDelay, setClosingDelay] = useState(String(settings?.closing_delay_minutes ?? 0));
 
-  // Ã‰quipe de cÅ“ur
+  // Ã‰quipe de cœur
   const [favoriteTeamDeadline, setFavoriteTeamDeadline] = useState(settings?.favorite_team_deadline?.slice(0, 16) ?? "");
   const [favoriteTeamAutoLock, setFavoriteTeamAutoLock] = useState(settings?.favorite_team_auto_lock ?? true);
   const [favoriteTeamBonusPoints, setFavoriteTeamBonusPoints] = useState(String(settings?.favorite_team_bonus_points ?? 0));
@@ -3463,7 +3463,7 @@ function SettingsTab({
             â­
           </span>
           <div>
-            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Ã‰quipe de cÅ“ur</h2>
+            <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Ã‰quipe de cœur</h2>
             <p className="text-xs text-slate-400">
               Date limite et verrouillage automatique du choix d'Ã©quipe favorite (onglet Joueurs).
             </p>
@@ -3483,7 +3483,7 @@ function SettingsTab({
             />
           </div>
           <NumberField
-            label="Bonus points (matchs Ã©quipe de cÅ“ur)"
+            label="Bonus points (matchs Ã©quipe de cœur)"
             value={favoriteTeamBonusPoints}
             onChange={setFavoriteTeamBonusPoints}
             icon={Gift}
