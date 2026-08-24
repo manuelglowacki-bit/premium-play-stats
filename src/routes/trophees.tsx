@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent } from "react";
+import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
 import {
   Bell,
   Camera,
@@ -266,18 +266,90 @@ function parseChatContent(content: string): ParsedChatContent {
 // Supabase Storage lui-même (voir migration chat-images) — deux niveaux de
 // vérification plutôt qu'un seul, la limite client évite surtout un upload
 // pour rien (échec côté serveur après avoir attendu inutilement).
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  // Photos prises depuis un iPhone récent : le format par défaut est HEIC/HEIF.
+  "image/heic",
+  "image/heif",
+  // Formats rencontrés en partageant depuis une galerie ou un scanner.
+  "image/avif",
+  "image/bmp",
+  "image/tiff",
+];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 Mo
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024; // 15 Mo — un GIF animé pèse vite plus qu'une photo
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024; // 25 Mo
+const MAX_PENDING_FILES = 6;
+/** Longueur maximale d'un message texte, ici et côté édition. */
+const MAX_MESSAGE_LENGTH = 2000;
 
-function mediaKind(type: string): "image" | "video" | null {
-  if (ALLOWED_IMAGE_TYPES.includes(type)) return "image";
-  if (ALLOWED_VIDEO_TYPES.includes(type)) return "video";
+const IMAGE_EXTENSIONS = [
+  ".jpg", ".jpeg", ".png", ".webp", ".gif",
+  ".heic", ".heif", ".avif", ".bmp", ".tif", ".tiff",
+];
+const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov", ".m4v"];
+
+/** Extension (point inclus, en minuscules) d'un nom de fichier, "" s'il n'en a pas. */
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot === -1 ? "" : name.slice(dot).toLowerCase();
+}
+
+/**
+ * Nature d'un fichier joint. Le type MIME est la source principale, mais il
+ * arrive qu'il soit vide ou générique ("application/octet-stream") : un HEIC
+ * partagé depuis iOS ou un fichier choisi via un gestionnaire de fichiers
+ * Android le font régulièrement. On retombe alors sur l'extension, sinon des
+ * photos parfaitement valides seraient refusées.
+ */
+function mediaKind(file: File): "image" | "video" | null {
+  if (ALLOWED_IMAGE_TYPES.includes(file.type)) return "image";
+  if (ALLOWED_VIDEO_TYPES.includes(file.type)) return "video";
+
+  const extension = fileExtension(file.name);
+  if (IMAGE_EXTENSIONS.includes(extension)) return "image";
+  if (VIDEO_EXTENSIONS.includes(extension)) return "video";
   return null;
 }
 
-const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov", ".m4v"];
+/** Type MIME à envoyer au Storage : celui du fichier, ou déduit de l'extension
+ * quand le navigateur ne l'a pas renseigné (le bucket filtre sur ce type, un
+ * champ vide y serait refusé). */
+const EXTENSION_MIME: Record<string, string> = {
+  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+  ".webp": "image/webp", ".gif": "image/gif", ".heic": "image/heic",
+  ".heif": "image/heif", ".avif": "image/avif", ".bmp": "image/bmp",
+  ".tif": "image/tiff", ".tiff": "image/tiff",
+  ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+  ".m4v": "video/mp4",
+};
+
+/** Valeur de l'attribut `accept`. On y ajoute les extensions en plus des types
+ * MIME : certains navigateurs mobiles filtrent mal sur le seul type MIME et
+ * masqueraient alors des photos parfaitement acceptables. */
+const FILE_INPUT_ACCEPT = [
+  ...ALLOWED_IMAGE_TYPES,
+  ...ALLOWED_VIDEO_TYPES,
+  ...IMAGE_EXTENSIONS,
+  ...VIDEO_EXTENSIONS,
+].join(",");
+
+/** Écran tactile ? Sur mobile la touche Entrée du clavier virtuel doit rester
+ * un retour à la ligne : y envoyer le message couperait chaque paragraphe. */
+function isTouchKeyboard(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(pointer: coarse)").matches;
+}
+
+function uploadMimeType(file: File): string {
+  if (ALLOWED_IMAGE_TYPES.includes(file.type) || ALLOWED_VIDEO_TYPES.includes(file.type)) {
+    return file.type;
+  }
+  return EXTENSION_MIME[fileExtension(file.name)] || "application/octet-stream";
+}
 
 /** Une URL de média envoyé est-elle une vidéo ? Basé sur l'extension du
  * fichier dans le chemin de stockage (voir uploadChatImages) — pas de champ
@@ -401,6 +473,8 @@ function VestiairePage() {
   const voiceUserIdRef = useRef<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const draftInputRef = useRef<HTMLTextAreaElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -869,7 +943,7 @@ function VestiairePage() {
   }
 
   async function sendMessage() {
-    const content = draft.trim();
+    const content = draft.trim().slice(0, MAX_MESSAGE_LENGTH);
 
     if ((!content && !pendingFiles.length) || !currentUserId || sending || isBanned) return;
 
@@ -1391,16 +1465,36 @@ function VestiairePage() {
   );
 
   function addEmoji(emoji: string) {
-    setDraft((current) => `${current}${emoji}`);
+    setDraft((current) => `${current}${emoji}`.slice(0, MAX_MESSAGE_LENGTH));
+  }
+
+  /** Ajuste la hauteur de la zone de saisie à son contenu (la classe max-h la
+   * plafonne ensuite, le texte se met alors à défiler). */
+  function autoGrowDraft() {
+    const element = draftInputRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }
+
+  function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    // Entrée envoie, Maj+Entrée passe à la ligne. `isComposing` protège les
+    // claviers à composition (accents, saisie asiatique) : la touche Entrée y
+    // valide un caractère, elle ne doit pas envoyer le message.
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (isTouchKeyboard()) return;
+    event.preventDefault();
+    void sendMessage();
   }
 
   function addFiles(files: File[]) {
     const accepted: File[] = [];
+    const problems: string[] = [];
     let rejectedType = false;
     let rejectedSize = false;
 
     for (const file of files) {
-      const kind = mediaKind(file.type);
+      const kind = mediaKind(file);
       if (!kind) {
         rejectedType = true;
         continue;
@@ -1414,27 +1508,38 @@ function VestiairePage() {
     }
 
     if (rejectedType) {
-      setErrorMessage("Format non supporté (photos JPEG/PNG/WebP/GIF ou vidéos MP4/WebM/MOV uniquement).");
-    } else if (rejectedSize) {
-      setErrorMessage("Fichier trop volumineux (max 8 Mo par photo, 25 Mo par vidéo).");
-    } else if (accepted.length) {
-      setErrorMessage("");
+      problems.push("Format non supporté (photos JPEG/PNG/WebP/GIF/HEIC/AVIF/BMP/TIFF ou vidéos MP4/WebM/MOV).");
+    }
+    if (rejectedSize) {
+      problems.push("Fichier trop volumineux (max 15 Mo par photo ou GIF, 25 Mo par vidéo).");
     }
 
-    if (!accepted.length) return;
+    // Ce que l'on garde vraiment, une fois le plafond de pièces jointes
+    // appliqué : sans ce calcul, un joueur qui dépasse verrait ses fichiers
+    // disparaître sans explication.
+    const freeSlots = Math.max(0, MAX_PENDING_FILES - pendingFiles.length);
+    const kept = accepted.slice(0, freeSlots);
+    if (accepted.length > kept.length) {
+      problems.push(`Maximum ${MAX_PENDING_FILES} pièces jointes par message.`);
+    }
 
-    setPendingFiles((current) => {
-      const next = [...current, ...accepted].slice(0, 6);
-      return next;
-    });
+    setErrorMessage(problems.join(" "));
+
+    if (!kept.length) return;
+
+    setPendingFiles((current) => [...current, ...kept].slice(0, MAX_PENDING_FILES));
   }
+
+  // La hauteur suit toute variation du brouillon : frappe, emoji inséré depuis
+  // le sélecteur, et remise à zéro après l'envoi.
+  useEffect(autoGrowDraft, [draft]);
 
   function removePendingFile(index: number) {
     setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
-  function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
-    const pastedMedia = Array.from(event.clipboardData.files).filter((file) => mediaKind(file.type));
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pastedMedia = Array.from(event.clipboardData.files).filter((file) => mediaKind(file));
     if (pastedMedia.length) {
       event.preventDefault();
       addFiles(pastedMedia);
@@ -1451,7 +1556,13 @@ function VestiairePage() {
     const urls: string[] = [];
 
     for (const file of files) {
-      const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
+      const contentType = uploadMimeType(file);
+      // L'extension du chemin sert ensuite à distinguer photo et vidéo à
+      // l'affichage (isVideoUrl) : on la déduit du type quand le fichier n'en
+      // porte pas, sinon une vidéo sans extension s'afficherait comme image.
+      const extension =
+        fileExtension(file.name).slice(1) ||
+        (contentType.startsWith("video/") ? "mp4" : "jpg");
       const path = `${currentUserId}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
@@ -1459,7 +1570,7 @@ function VestiairePage() {
         .upload(path, file, {
           cacheControl: "3600",
           upsert: false,
-          contentType: file.type,
+          contentType,
         });
 
       if (uploadError) throw uploadError;
@@ -2196,17 +2307,41 @@ function VestiairePage() {
                               )}
 
                               {isEditing ? (
-                                <div className="mt-2 flex gap-2">
-                                  <input
+                                <div className="mt-2 flex items-end gap-2">
+                                  {/* Même zone multiligne qu'à la rédaction :
+                                      un long message resterait autrement
+                                      inéditable dans un champ d'une ligne. */}
+                                  <textarea
                                     autoFocus
+                                    rows={2}
                                     value={editDraft}
-                                    onChange={(event) => setEditDraft(event.target.value)}
-                                    className="min-w-0 flex-1 rounded-xl border border-emerald-400/25 bg-black/25 px-3 py-2 text-sm text-white outline-none"
+                                    maxLength={MAX_MESSAGE_LENGTH}
+                                    onChange={(event) =>
+                                      setEditDraft(event.target.value.slice(0, MAX_MESSAGE_LENGTH))
+                                    }
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Escape") {
+                                        setEditingMessage(null);
+                                        setEditDraft("");
+                                        return;
+                                      }
+                                      if (
+                                        event.key !== "Enter" ||
+                                        event.shiftKey ||
+                                        event.nativeEvent.isComposing ||
+                                        isTouchKeyboard()
+                                      ) {
+                                        return;
+                                      }
+                                      event.preventDefault();
+                                      void editMessage(message);
+                                    }}
+                                    className="max-h-40 min-w-0 flex-1 resize-none rounded-xl border border-emerald-400/25 bg-black/25 px-3 py-2 text-sm leading-relaxed text-white outline-none"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => void editMessage(message)}
-                                    className="rounded-xl bg-emerald-400 px-3 text-xs font-bold text-slate-950"
+                                    className="rounded-xl bg-emerald-400 px-3 py-2 text-xs font-bold text-slate-950"
                                   >
                                     OK
                                   </button>
@@ -2216,7 +2351,7 @@ function VestiairePage() {
                                       setEditingMessage(null);
                                       setEditDraft("");
                                     }}
-                                    className="rounded-xl border border-white/10 px-3 text-xs text-slate-400"
+                                    className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-400"
                                   >
                                     Annuler
                                   </button>
@@ -2397,7 +2532,10 @@ function VestiairePage() {
                         <div className="mb-2 grid grid-cols-3 gap-2 px-1 sm:grid-cols-6">
                           {pendingFiles.map((file, index) => (
                             <div key={`${file.name}-${index}`} className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/30">
-                              {file.type.startsWith("video/") ? (
+                              {/* mediaKind plutôt que file.type : un fichier
+                                  sans type MIME déclaré (cas mobile) serait
+                                  sinon prévisualisé comme une image. */}
+                              {mediaKind(file) === "video" ? (
                                 <video
                                   src={URL.createObjectURL(file)}
                                   className="size-full object-cover"
@@ -2411,7 +2549,7 @@ function VestiairePage() {
                                   className="size-full object-cover"
                                 />
                               )}
-                              {file.type.startsWith("video/") && (
+                              {mediaKind(file) === "video" && (
                                 <span className="absolute bottom-1 left-1 rounded-full bg-black/70 p-1 text-white">
                                   <Film size={10} />
                                 </span>
@@ -2434,7 +2572,7 @@ function VestiairePage() {
                           event.preventDefault();
                           void sendMessage();
                         }}
-                        className="flex items-center gap-1.5"
+                        className="flex items-end gap-1.5"
                       >
                         <div className="relative shrink-0">
                           <button
@@ -2472,7 +2610,17 @@ function VestiairePage() {
                                 }}
                                 className="flex w-full items-center gap-2.5 px-3.5 py-3 text-left text-xs font-bold text-slate-200 transition hover:bg-white/[.06]"
                               >
-                                <span className="text-base leading-none">📷</span> Photo / vidéo
+                                <span className="text-base leading-none">🖼️</span> Photo / vidéo
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAttachMenuOpen(false);
+                                  cameraInputRef.current?.click();
+                                }}
+                                className="flex w-full items-center gap-2.5 border-t border-white/[.06] px-3.5 py-3 text-left text-xs font-bold text-slate-200 transition hover:bg-white/[.06]"
+                              >
+                                <span className="text-base leading-none">📷</span> Prendre une photo
                               </button>
                               <button
                                 type="button"
@@ -2499,7 +2647,7 @@ function VestiairePage() {
 
                         <button
                           type="button"
-                          onClick={() => fileInputRef.current?.click()}
+                          onClick={() => cameraInputRef.current?.click()}
                           className="hidden size-9 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-white/[.06] hover:text-white sm:grid"
                           aria-label="Appareil photo"
                         >
@@ -2538,7 +2686,7 @@ function VestiairePage() {
                         <input
                           ref={fileInputRef}
                           type="file"
-                          accept={[...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES].join(",")}
+                          accept={FILE_INPUT_ACCEPT}
                           multiple
                           className="hidden"
                           onChange={(event) => {
@@ -2547,17 +2695,58 @@ function VestiairePage() {
                           }}
                         />
 
+                        {/* Entrée séparée pour l'appareil photo : `capture`
+                            ouvre directement la caméra sur mobile, là où le
+                            champ ci-dessus ouvre la galerie. */}
                         <input
-                          value={draft}
-                          onChange={(event) => setDraft(event.target.value)}
-                          onPaste={handlePaste}
-                          maxLength={1000}
-                          disabled={!currentUserId || sending}
-                          placeholder={
-                            currentUserId ? "Écris ton message..." : "Connecte-toi pour écrire..."
-                          }
-                          className="min-w-0 flex-1 bg-transparent px-1 text-sm text-white outline-none placeholder:text-slate-600"
+                          ref={cameraInputRef}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          onChange={(event) => {
+                            addFiles(Array.from(event.target.files || []));
+                            event.currentTarget.value = "";
+                          }}
                         />
+
+                        {/* Zone de saisie sur plusieurs lignes : un message
+                            peut aller jusqu'à MAX_MESSAGE_LENGTH caractères, ce
+                            qu'un champ d'une seule ligne rendrait illisible.
+                            Elle grandit avec le texte puis défile, pour ne pas
+                            manger tout l'écran sur mobile. */}
+                        <div className="relative flex min-w-0 flex-1 flex-col">
+                          <textarea
+                            ref={draftInputRef}
+                            value={draft}
+                            onChange={(event) => {
+                              setDraft(event.target.value.slice(0, MAX_MESSAGE_LENGTH));
+                            }}
+                            onPaste={handlePaste}
+                            onKeyDown={handleDraftKeyDown}
+                            rows={1}
+                            maxLength={MAX_MESSAGE_LENGTH}
+                            disabled={!currentUserId || sending}
+                            placeholder={
+                              currentUserId ? "Écris ton message..." : "Connecte-toi pour écrire..."
+                            }
+                            className="max-h-32 min-h-[24px] w-full resize-none bg-transparent px-1 py-1 text-sm leading-relaxed text-white outline-none placeholder:text-slate-600"
+                          />
+                          {/* Compteur discret : il n'apparaît qu'à l'approche de
+                              la limite, pour ne pas encombrer la barre le reste
+                              du temps. */}
+                          {draft.length >= MAX_MESSAGE_LENGTH - 200 && (
+                            <span
+                              className={`self-end pr-1 text-[9px] font-bold tabular-nums ${
+                                draft.length >= MAX_MESSAGE_LENGTH
+                                  ? "text-amber-300"
+                                  : "text-slate-500"
+                              }`}
+                            >
+                              {draft.length}/{MAX_MESSAGE_LENGTH}
+                            </span>
+                          )}
+                        </div>
 
                         <button
                           type="submit"
