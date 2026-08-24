@@ -95,7 +95,14 @@ import {
   Share2,
   Newspaper,
   Trophy,
+  KeyRound,
+  Copy,
 } from "lucide-react";
+import {
+  genererCodeInvitation,
+  lireCodeInvitation,
+  enregistrerCodeInvitation,
+} from "@/services/inviteCodeService";
 
 /** Onglets de l'espace admin, adressables via le search param `tab`
  * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
@@ -4944,6 +4951,53 @@ function SettingsTab({
   const [syncing, setSyncing] = useState(false);
   const [testingApi, setTestingApi] = useState(false);
 
+  // Code d'invitation exige a l'inscription (table app_invite). Regenerable
+  // a volonte : l'ancien code cesse aussitot de fonctionner.
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteUpdatedAt, setInviteUpdatedAt] = useState<string | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(true);
+  const [inviteSaving, setInviteSaving] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const courant = await lireCodeInvitation();
+        if (cancelled) return;
+        setInviteCode(courant?.code ?? "");
+        setInviteUpdatedAt(courant?.updatedAt ?? null);
+        setInviteError(courant ? null : "Aucun code enregistre : genere-en un.");
+      } catch (e) {
+        if (!cancelled) {
+          setInviteError(
+            "Table app_invite introuvable. Execute supabase/migrations/20260824090000_invite_code.sql.",
+          );
+        }
+      } finally {
+        if (!cancelled) setInviteLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSaveInvite(code: string) {
+    setInviteSaving(true);
+    try {
+      await enregistrerCodeInvitation(code);
+      setInviteCode(code);
+      setInviteUpdatedAt(new Date().toISOString());
+      setInviteError(null);
+      notify("Nouveau code d'invitation actif. L'ancien ne fonctionne plus.");
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement du code."));
+    } finally {
+      setInviteSaving(false);
+    }
+  }
+
   useEffect(() => {
     if (!settings) return;
     setSeason(settings.season);
@@ -5009,6 +5063,71 @@ function SettingsTab({
   return (
     <div className="space-y-4">
       {error && <ErrorBanner message={error} />}
+
+      {/* ================= CODE D'INVITATION ================= */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <KeyRound size={18} className="text-amber-400" />
+          Code d'invitation
+        </h2>
+        <p className="mb-4 text-xs text-slate-400">
+          Exigé pour créer un compte. Les joueurs déjà inscrits ne sont pas concernés : ils se
+          connectent comme avant. Régénère-le dès qu'il a trop circulé — l'ancien cesse aussitôt
+          de fonctionner.
+        </p>
+
+        {inviteError && (
+          <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300">
+            {inviteError}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex min-w-[190px] items-center gap-3 rounded-xl border border-slate-700 bg-[#0d1322] px-4 py-3">
+            <span className="font-mono text-xl font-black tracking-[0.28em] text-amber-200">
+              {inviteLoading ? "…" : inviteCode || "—"}
+            </span>
+          </div>
+
+          <GhostButton
+            onClick={() => {
+              navigator.clipboard?.writeText(inviteCode).then(
+                () => notify("Code copié."),
+                () => notify("Copie impossible : note-le à la main."),
+              );
+            }}
+            disabled={!inviteCode || inviteLoading}
+            ariaLabel="Copier le code d'invitation"
+          >
+            <Copy size={12} />
+            Copier
+          </GhostButton>
+
+          <PrimaryButton
+            onClick={() => {
+              if (
+                inviteCode &&
+                !window.confirm(
+                  "Générer un nouveau code ? L'ancien ne permettra plus aucune inscription.",
+                )
+              ) {
+                return;
+              }
+              void handleSaveInvite(genererCodeInvitation());
+            }}
+            disabled={inviteSaving || inviteLoading}
+          >
+            {inviteSaving ? <RefreshCw size={14} className="animate-spin" /> : <KeyRound size={14} />}
+            Générer un nouveau code
+          </PrimaryButton>
+        </div>
+
+        {inviteUpdatedAt && (
+          <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+            Modifié le {new Date(inviteUpdatedAt).toLocaleString("fr-FR")}
+          </p>
+        )}
+      </Card>
 
       {/* ================= SAISON & PARAMÈTRES GÉNÉRAUX ================= */}
       <Card className="p-5">
