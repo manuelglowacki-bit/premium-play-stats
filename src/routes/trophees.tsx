@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
 import { supabase } from "@/lib/supabase";
+import { EMOJI_CATEGORIES, chercherEmojis, type EmojiEntry } from "@/lib/emojis";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
 import {
   VESTIAIRE_UNREAD_KEY,
@@ -332,12 +333,19 @@ function messagePreview(content: string) {
   return "Message";
 }
 
-const VESTIAIRE_EMOJIS = [
+// Les emoticones vivent maintenant dans src/lib/emojis.ts : 605 entrees
+// rangees par categorie, avec des mots-cles francais pour la recherche.
+// Les 32 qui etaient ecrites ici servent encore de selection par defaut,
+// affichee tant que le joueur n'a rien utilise.
+const EMOJIS_PAR_DEFAUT = [
   "😀", "😂", "🤣", "😍", "🥰", "😎", "🤔", "😅",
   "🔥", "❤️", "💚", "💙", "💜", "👏", "🙌", "💪",
   "⚽", "🏆", "🥳", "🎉", "😱", "😭", "🤯", "👀",
   "👍", "👎", "🙏", "🤝", "💯", "🚀", "🍻", "🫶",
 ];
+
+const RECENTS_EMOJIS_KEY = "vestiaire-emojis-recents";
+const RECENTS_EMOJIS_MAX = 24;
 
 // Repère de dernière lecture : désormais partagé avec la barre de
 // navigation (src/lib/vestiaireUnread.ts), qui affiche le badge.
@@ -399,6 +407,22 @@ function VestiairePage() {
   // deleteMessage, banUser), seul le déclencheur change (tap sur "...").
   const [actionsMenuFor, setActionsMenuFor] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState("");
+  // Le panneau « toutes les emoticones » des reactions, replie par defaut.
+  const [reactionsCompletes, setReactionsCompletes] = useState(false);
+  const [emojiCategorie, setEmojiCategorie] = useState(EMOJI_CATEGORIES[0].id);
+  // Les dernieres utilisees, gardees sur l'appareil du joueur : avec 605
+  // emoticones, retrouver celle qu'on met tout le temps devient la vraie
+  // difficulte.
+  const [emojisRecents, setEmojisRecents] = useState<string[]>(() => {
+    try {
+      const brut = localStorage.getItem(RECENTS_EMOJIS_KEY);
+      const liste = brut ? (JSON.parse(brut) as unknown) : null;
+      return Array.isArray(liste) ? liste.filter((valeur): valeur is string => typeof valeur === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -1473,6 +1497,17 @@ function VestiairePage() {
 
   function addEmoji(emoji: string) {
     setDraft((current) => `${current}${emoji}`);
+
+    setEmojisRecents((actuels) => {
+      const suivants = [emoji, ...actuels.filter((valeur) => valeur !== emoji)].slice(0, RECENTS_EMOJIS_MAX);
+      try {
+        localStorage.setItem(RECENTS_EMOJIS_KEY, JSON.stringify(suivants));
+      } catch {
+        // Navigation privee ou stockage refuse : la liste reste en memoire
+        // pour la session, ce n'est pas une raison d'empecher l'envoi.
+      }
+      return suivants;
+    });
   }
 
   function addFiles(files: File[]) {
@@ -2418,17 +2453,68 @@ function VestiairePage() {
                                 </button>
 
                                 {openReactionFor === message.id && (
-                                  <div className="absolute bottom-8 left-0 z-30 flex items-center gap-1 rounded-xl border border-white/10 bg-[#08111d]/95 p-1.5 shadow-2xl backdrop-blur-xl">
-                                    {REACTIONS.map((emoji) => (
+                                  <div className="absolute bottom-8 left-0 z-30 w-[min(300px,calc(100vw-2.5rem))] rounded-xl border border-white/10 bg-[#08111d]/95 p-1.5 shadow-2xl backdrop-blur-xl">
+                                    {/* Les cinq habituelles restent a portee
+                                        immediate : c'est ce qu'on clique dans
+                                        95% des cas. */}
+                                    <div className="flex items-center gap-1">
+                                      {REACTIONS.map((emoji) => (
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          onClick={() => void toggleReaction(message, emoji)}
+                                          className="grid size-7 place-items-center rounded-lg text-sm transition hover:bg-white/[.07]"
+                                        >
+                                          {emoji}
+                                        </button>
+                                      ))}
+
+                                      {/* ...et tout le reste derriere ce bouton,
+                                          plutot que d'etre limite a cinq. */}
                                       <button
-                                        key={emoji}
                                         type="button"
-                                        onClick={() => void toggleReaction(message, emoji)}
-                                        className="grid size-7 place-items-center rounded-lg text-sm transition hover:bg-white/[.07]"
+                                        onClick={() =>
+                                          setReactionsCompletes((ouvert) => !ouvert)
+                                        }
+                                        className={`ml-0.5 grid size-7 place-items-center rounded-lg text-[10px] font-black transition ${
+                                          reactionsCompletes
+                                            ? "bg-emerald-400/15 text-emerald-300"
+                                            : "text-slate-500 hover:bg-white/[.07] hover:text-white"
+                                        }`}
+                                        aria-label="Toutes les émoticônes"
+                                        title="Toutes les émoticônes"
                                       >
-                                        {emoji}
+                                        {reactionsCompletes ? <X size={12} /> : "+"}
                                       </button>
-                                    ))}
+                                    </div>
+
+                                    {reactionsCompletes && (
+                                      <div className="mt-1.5 max-h-[190px] overflow-y-auto border-t border-white/[.07] pt-1.5">
+                                        {EMOJI_CATEGORIES.map((categorie) => (
+                                          <div key={categorie.id} className="mb-1.5">
+                                            <div className="mb-1 px-0.5 font-mono text-[7px] font-bold uppercase tracking-widest text-slate-600">
+                                              {categorie.label}
+                                            </div>
+                                            <div className="grid grid-cols-8 gap-0.5">
+                                              {categorie.emojis.map((entree) => (
+                                                <button
+                                                  key={entree.c}
+                                                  type="button"
+                                                  onClick={() => {
+                                                    void toggleReaction(message, entree.c);
+                                                    setReactionsCompletes(false);
+                                                    setOpenReactionFor(null);
+                                                  }}
+                                                  className="grid size-7 place-items-center rounded-lg text-sm transition hover:scale-110 hover:bg-white/[.07]"
+                                                >
+                                                  {entree.c}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
@@ -2741,34 +2827,128 @@ function VestiairePage() {
                         </div>
                       )}
 
-                      {emojiOpen && (
-                        <div className="absolute bottom-[calc(100%+10px)] left-2 z-50 w-[320px] rounded-2xl border border-white/10 bg-[#07121e]/98 p-3 shadow-[0_25px_70px_rgba(0,0,0,.65)] backdrop-blur-2xl sm:w-[360px]">
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                              Émotions
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setEmojiOpen(false)}
-                              className="text-slate-600 hover:text-white"
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-8 gap-1">
-                            {VESTIAIRE_EMOJIS.map((emoji) => (
+                      {emojiOpen && (() => {
+                        // Trois affichages possibles, dans cet ordre de
+                        // priorite : le resultat d'une recherche, sinon les
+                        // recemment utilisees si le joueur est sur cet onglet,
+                        // sinon la categorie choisie.
+                        const resultats = chercherEmojis(emojiQuery);
+                        const enRecherche = emojiQuery.trim().length > 0;
+
+                        const recents: EmojiEntry[] = (emojisRecents.length ? emojisRecents : EMOJIS_PAR_DEFAUT).map(
+                          (caractere) => ({ c: caractere, k: "" }),
+                        );
+
+                        const categorieActive =
+                          EMOJI_CATEGORIES.find((categorie) => categorie.id === emojiCategorie) ?? EMOJI_CATEGORIES[0];
+
+                        const affiches: EmojiEntry[] = enRecherche
+                          ? resultats
+                          : emojiCategorie === "recents"
+                            ? recents
+                            : categorieActive.emojis;
+
+                        return (
+                          <div className="absolute bottom-[calc(100%+10px)] left-2 z-50 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-white/10 bg-[#07121e]/98 shadow-[0_25px_70px_rgba(0,0,0,.65)] backdrop-blur-2xl sm:w-[380px]">
+                            <div className="flex items-center justify-between px-3 pt-3">
+                              <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                                Émoticônes
+                              </span>
                               <button
-                                key={emoji}
                                 type="button"
-                                onClick={() => addEmoji(emoji)}
-                                className="grid size-8 place-items-center rounded-lg text-lg transition hover:bg-white/[.07] hover:scale-110"
+                                onClick={() => {
+                                  setEmojiOpen(false);
+                                  setEmojiQuery("");
+                                }}
+                                className="text-slate-600 transition hover:text-white"
+                                aria-label="Fermer"
                               >
-                                {emoji}
+                                <X size={14} />
                               </button>
-                            ))}
+                            </div>
+
+                            {/* Recherche en francais, sans accent obligatoire :
+                                avec 605 emoticones, taper « biere » ou « lion »
+                                va plus vite que de faire defiler. */}
+                            <div className="px-3 pt-2">
+                              <div className="relative">
+                                <SearchIcon size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-600" />
+                                <input
+                                  value={emojiQuery}
+                                  onChange={(event) => setEmojiQuery(event.target.value)}
+                                  placeholder="Chercher : rire, foot, bière..."
+                                  className="w-full rounded-lg border border-white/10 bg-black/30 py-1.5 pl-7 pr-2 text-xs text-white outline-none placeholder:text-slate-600 focus:border-emerald-400/40"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Onglets : masques pendant une recherche, qui
+                                porte de toute facon sur toutes les categories. */}
+                            {!enRecherche && (
+                              <div className="mt-2 flex gap-0.5 overflow-x-auto border-b border-white/[.07] px-2 pb-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setEmojiCategorie("recents")}
+                                  title="Récemment utilisées"
+                                  className={`grid size-8 shrink-0 place-items-center rounded-lg text-base transition ${
+                                    emojiCategorie === "recents"
+                                      ? "bg-emerald-400/15 ring-1 ring-emerald-400/40"
+                                      : "hover:bg-white/[.07]"
+                                  }`}
+                                >
+                                  🕘
+                                </button>
+                                {EMOJI_CATEGORIES.map((categorie) => (
+                                  <button
+                                    key={categorie.id}
+                                    type="button"
+                                    onClick={() => setEmojiCategorie(categorie.id)}
+                                    title={categorie.label}
+                                    className={`grid size-8 shrink-0 place-items-center rounded-lg text-base transition ${
+                                      emojiCategorie === categorie.id
+                                        ? "bg-emerald-400/15 ring-1 ring-emerald-400/40"
+                                        : "hover:bg-white/[.07]"
+                                    }`}
+                                  >
+                                    {categorie.icon}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="max-h-[240px] overflow-y-auto px-3 py-2">
+                              {!enRecherche && (
+                                <div className="mb-1.5 font-mono text-[8px] font-bold uppercase tracking-widest text-slate-600">
+                                  {emojiCategorie === "recents"
+                                    ? emojisRecents.length
+                                      ? "Récemment utilisées"
+                                      : "Pour commencer"
+                                    : categorieActive.label}
+                                </div>
+                              )}
+
+                              {affiches.length === 0 ? (
+                                <p className="py-6 text-center text-xs text-slate-600">
+                                  Aucune émoticône pour « {emojiQuery.trim()} ».
+                                </p>
+                              ) : (
+                                <div className="grid grid-cols-8 gap-1">
+                                  {affiches.map((entree, index) => (
+                                    <button
+                                      key={`${entree.c}-${index}`}
+                                      type="button"
+                                      onClick={() => addEmoji(entree.c)}
+                                      className="grid size-8 place-items-center rounded-lg text-lg transition hover:scale-110 hover:bg-white/[.07]"
+                                    >
+                                      {entree.c}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
 
                       <div className="mt-1.5 flex items-center justify-between px-2">
                         <div className="flex items-center gap-2 text-[9px] text-slate-600">
