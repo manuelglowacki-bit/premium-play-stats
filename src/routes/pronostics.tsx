@@ -367,6 +367,41 @@ function PronosticsPage() {
   // matchs du club de cœur sur la même journée).
   const [coeurScores, setCoeurScores] = useState<Record<string, Score>>({});
   const [bonusOptions, setBonusOptions] = useState<BonusOptionRow[]>([]);
+  // MODE MAINTENANCE. Le reglage existait dans l'Admin mais n'etait lu nulle
+  // part : cocher "Geler les pronostics" ne gelait rien du tout. Tant que
+  // l'admin ne coche pas, rien ne change ici.
+  const [maintenance, setMaintenance] = useState<{ actif: boolean; message: string | null }>({
+    actif: false,
+    message: null,
+  });
+
+  useEffect(() => {
+    let annule = false;
+
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("app_settings")
+          .select("maintenance_mode, maintenance_message")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (!annule && data) {
+          setMaintenance({
+            actif: Boolean((data as any).maintenance_mode),
+            message: ((data as any).maintenance_message as string | null) ?? null,
+          });
+        }
+      } catch {
+        // Reglage illisible : on n'invente pas une maintenance, on laisse
+        // jouer. Bloquer par erreur serait pire que ne pas bloquer.
+      }
+    })();
+
+    return () => {
+      annule = true;
+    };
+  }, []);
   const [bonusSelection, setBonusSelection] = useState<string | null>(null);
   const [bonusScores, setBonusScores] = useState<Record<string, BonusScore>>({});
     const [bonusChoiceCounts, setBonusChoiceCounts] = useState<Record<string, number>>({});
@@ -1495,6 +1530,17 @@ function PronosticsPage() {
    * pendant qu'une sauvegarde est déjà en cours, elle est rejouée juste
    * après plutôt que de partir en parallèle. */
   const runAutosave = async () => {
+    // Frein d'urgence de l'admin : aucune saisie ne part en base tant qu'il
+    // n'a pas decoche la case.
+    if (maintenance.actif) {
+      setAutosaveStatus("error");
+      setAutosaveErrorMessage(
+        maintenance.message?.trim() ||
+          "Les pronostics sont momentanément gelés par l'organisateur.",
+      );
+      return;
+    }
+
     if (isSavingRef.current) {
       pendingResaveRef.current = true;
       return;
@@ -1671,6 +1717,16 @@ function PronosticsPage() {
             page ou l'oubli se paie : sur 23 joueurs, 15 ne recevaient aucun
             rappel avant la cloture, faute d'avoir accepte les notifications
             au moment de leur inscription. */}
+        {maintenance.actif && (
+          <div className="mx-3 rounded-2xl border border-amber-400/40 bg-amber-400/[0.08] p-4">
+            <div className="text-sm font-black text-amber-200">⏸️ Pronostics gelés</div>
+            <p className="mt-1 text-xs leading-relaxed text-amber-100/80">
+              {maintenance.message?.trim() ||
+                "L'organisateur a momentanément suspendu les saisies. Reviens dans un moment."}
+            </p>
+          </div>
+        )}
+
         <PushNotificationsButton hideWhenEnabled />
 
         {/* ================= EN-TÊTE PREMIUM ================= */}
