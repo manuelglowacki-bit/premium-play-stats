@@ -739,9 +739,13 @@ function StatsPage() {
     [stats.dayStats, selectedRange],
   );
 
+  // L'echelle etait bloquee a 50 minimum : avec un record a 6 points, la
+  // courbe rampait sur le bas du cadre et les quatre cinquiemes du graphique
+  // restaient vides. Elle s'ajuste desormais aux points reels, arrondie au
+  // multiple de 4 superieur pour garder des graduations entieres.
   const maxPoints = Math.max(
-    50,
-    Math.ceil(Math.max(...visibleDays.map((item) => item.points), 0) / 10) * 10,
+    8,
+    Math.ceil(Math.max(...visibleDays.map((item) => item.points), 0) / 4) * 4,
   );
 
   const totalPointsForDistribution =
@@ -854,7 +858,7 @@ function StatsPage() {
           "faire semblant" — la vraie cause était cette règle. */}
       <div className="relative min-h-full">
 
-        <main className="relative z-10 mx-auto max-w-[1400px] space-y-4 px-3 pb-14 sm:space-y-5 sm:px-5 lg:px-7">
+        <main className="relative z-10 mx-auto max-w-[1400px] space-y-4 px-3 pb-28 sm:space-y-5 sm:px-5 lg:px-7">
           {/* HERO — compact : plus de badges saison/J1 dupliqués depuis le
               header d'AppShell (déjà là, voir logo/Saison 2026-2027/J1•2026
               en haut de toutes les pages), juste titre + sous-titre + fond
@@ -944,7 +948,9 @@ function StatsPage() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <SectionHeader icon={BarChart3} eyebrow="Évolution" title="Progression" />
               <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/20 p-1">
-                {RANGE_OPTIONS.map((opt) => (
+                {RANGE_OPTIONS.filter(
+                  (opt, index) => index === 0 || opt.value <= stats.dayStats.length,
+                ).map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
@@ -978,7 +984,7 @@ function StatsPage() {
                       Math.round((maxPoints / 4) * (4 - index)),
                     ).map((value) => (
                       <div key={value} className="flex items-center gap-2.5">
-                        <span className="w-5 text-right text-[8px] text-slate-600">
+                        <span className="w-5 text-right text-[9px] text-slate-500">
                           {value}
                         </span>
                         <div className="h-px flex-1 bg-white/[0.045]" />
@@ -1099,8 +1105,8 @@ function StatsPage() {
                     <span className="text-lg font-black text-white md:text-xl">
                       {successRatePct}%
                     </span>
-                    <span className="mt-0.5 font-mono text-[6px] uppercase tracking-[.16em] text-slate-500">
-                      réussite
+                    <span className="mt-0.5 font-mono text-[7px] uppercase tracking-[.16em] text-slate-400">
+                      joués
                     </span>
                   </div>
                 </div>
