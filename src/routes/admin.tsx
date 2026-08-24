@@ -5753,8 +5753,9 @@ function SettingsTab({
           </label>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          Réglage sauvegardé — à brancher côté page Pronostics si tu veux qu'il bloque réellement les saisies (pas
-          encore lu par le code aujourd'hui).
+          Coché, il bloque réellement l'enregistrement des pronostics et affiche ton message aux
+          joueurs sur la page Pronos. À n'utiliser que le temps d'une correction : personne ne peut
+          plus jouer pendant ce temps.
         </p>
         <TextInput
           value={maintenanceMessage}
@@ -5763,30 +5764,13 @@ function SettingsTab({
         />
       </Card>
 
-      {/* ================= GAZETTE — MERCATO ================= */}
-      <Card className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-            <Newspaper size={18} className="text-emerald-400" />
-            Gazette — Mercato
-          </h2>
-          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-[#060b16] px-3 py-2 transition-colors hover:border-slate-700">
-            <input
-              type="checkbox"
-              checked={mercatoActive}
-              onChange={(e) => setMercatoActive(e.target.checked)}
-              className="size-4 rounded border-slate-800 bg-slate-900 text-emerald-500 focus:ring-0"
-            />
-            <span className="text-sm font-medium text-white">Période de mercato active</span>
-          </label>
-        </div>
-        <p className="mt-3 text-xs text-slate-500">
-          Aucune date de fenêtre de mercato n'est calculée automatiquement (les dates officielles sont fixées chaque
-          saison par la LFP/FFF, jamais stockées ni devinées ici). Active ce réglage manuellement pendant le mercato
-          — la Gazette affiche alors la rubrique "Mercato" ; sinon, elle affiche automatiquement une "Rubrique du
-          moment" basée sur les données réelles de la saison en cours.
-        </p>
-      </Card>
+      {/* Le bloc "Gazette — Mercato" a ete retire de l'Admin a la demande de
+          l'organisateur : la bascule ne servait qu'a forcer une rubrique de la
+          Gazette pendant le mercato, ce qu'il ne fait pas. La Gazette continue
+          d'afficher sa "Rubrique du moment", calculee sur les donnees reelles
+          de la saison. La colonne app_settings.mercato_active reste en base et
+          continue d'etre enregistree : rien n'est perdu si la bascule revient
+          un jour. */}
 
       {/* ================= FOOTBALL-DATA.ORG ================= */}
       <Card className="p-5">
