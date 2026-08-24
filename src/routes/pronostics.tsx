@@ -16,6 +16,7 @@ import {
   Trophy,
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
+import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
@@ -1664,6 +1665,14 @@ function PronosticsPage() {
   return (
     <AppShell>
       <div className="mx-auto max-w-5xl space-y-6 pb-32">
+        {/* Proposition d'activer les rappels — affichee UNIQUEMENT aux
+            joueurs qui ne les ont pas encore actives (hideWhenEnabled), et
+            seulement une fois l'etat verifie. Elle est ici parce que c'est la
+            page ou l'oubli se paie : sur 23 joueurs, 15 ne recevaient aucun
+            rappel avant la cloture, faute d'avoir accepte les notifications
+            au moment de leur inscription. */}
+        <PushNotificationsButton hideWhenEnabled />
+
         {/* ================= EN-TÊTE PREMIUM ================= */}
         <section
           className="relative overflow-hidden rounded-3xl border border-emerald-500/20 bg-[#060b16] p-6 shadow-[0_0_60px_rgba(0,0,0,0.6)] sm:p-9"

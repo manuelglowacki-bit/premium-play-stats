@@ -10,15 +10,29 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
 }
 
-export default function PushNotificationsButton() {
+/**
+ * `hideWhenEnabled` : n'affiche rien tant que l'etat n'est pas connu, puis
+ * rien non plus si les notifications sont deja actives. Sert a proposer
+ * l'activation sur la page Pronos UNIQUEMENT aux joueurs concernes, sans
+ * encombrer ceux qui ont deja accepte.
+ */
+export default function PushNotificationsButton({
+  hideWhenEnabled = false,
+}: {
+  hideWhenEnabled?: boolean;
+} = {}) {
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // Sans cet etat, le bloc apparaitrait une fraction de seconde chez ceux
+  // qui ont deja active, le temps de la verification.
+  const [verifie, setVerifie] = useState(false);
 
   useEffect(() => {
     void (async () => {
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
         setEnabled(false);
+        setVerifie(true);
         return;
       }
 
@@ -45,12 +59,14 @@ export default function PushNotificationsButton() {
           !subscription
         ) {
           setEnabled(false);
+          setVerifie(true);
           return;
         }
 
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           setEnabled(false);
+          setVerifie(true);
           return;
         }
 
@@ -79,6 +95,8 @@ export default function PushNotificationsButton() {
       } catch (error) {
         console.error("Push init:", error);
         setEnabled(false);
+      } finally {
+        setVerifie(true);
       }
     })();
   }, []);
@@ -187,6 +205,8 @@ export default function PushNotificationsButton() {
       setBusy(false);
     }
   }
+
+  if (hideWhenEnabled && (!verifie || enabled)) return null;
 
   return (
     <div className="mx-3 my-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] p-4">
