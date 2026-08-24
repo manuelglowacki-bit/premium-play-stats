@@ -922,6 +922,11 @@ function VestiairePage() {
     setSending(true);
     setErrorMessage("");
 
+    // Declaree ici, en dehors du try, pour rester lisible depuis le catch :
+    // savoir combien de caracteres sont REELLEMENT partis est la premiere
+    // chose a verifier quand la base parle de longueur.
+    let payloadEnvoye = content;
+
     try {
       const imageUrls = pendingFiles.length
         ? await uploadChatImages(pendingFiles)
@@ -941,6 +946,8 @@ function VestiairePage() {
                 : undefined,
             })
           : content;
+
+      payloadEnvoye = payload;
 
       const tempId = `temp-${Date.now()}`;
 
@@ -995,23 +1002,34 @@ function VestiairePage() {
       );
 
       // Deux echecs tres differents arrivaient ici avec le meme message :
-      // l'envoi de la photo, et l'enregistrement du texte. On affiche
-      // maintenant ce que le serveur a REELLEMENT repondu.
-      const brut =
-        (error as { message?: string })?.message ||
-        (error as { error_description?: string })?.error_description ||
-        "";
+      // l'envoi de la photo, et l'enregistrement du texte.
+      //
+      // Et traduire l'erreur en francais s'est revele pire que le silence :
+      // "check constraint" ne veut PAS dire "trop long", et la traduction
+      // cachait les mots du serveur, les seuls qui permettent de corriger.
+      // On montre donc toujours la reponse brute, telle quelle.
+      const detail = error as {
+        message?: string;
+        code?: string;
+        details?: string;
+        hint?: string;
+      } | null;
 
-      // Sur un texte trop long, Postgres repond "value too long for type
-      // character varying(N)" : autant le dire en francais.
-      const tropLong = /too long|character varying|check constraint/i.test(brut);
+      const morceaux = [
+        detail?.message,
+        detail?.details,
+        detail?.hint,
+        detail?.code ? `code ${detail.code}` : "",
+      ].filter((morceau): morceau is string => Boolean(morceau && morceau.trim()));
+
+      // La longueur reellement envoyee : si la base parle de longueur, on
+      // saura tout de suite si le compte correspond.
+      const taille = `${payloadEnvoye.length} caractères envoyés`;
 
       setErrorMessage(
-        tropLong
-          ? "Message refusé par la base : il est trop long. Raccourcis-le et réessaie."
-          : brut
-            ? `Envoi impossible — ${brut}`
-            : "Le message n'a pas pu être envoyé. Vérifie ta connexion.",
+        morceaux.length
+          ? `Envoi refusé — ${morceaux.join(" · ")} (${taille})`
+          : `Le message n'a pas pu être envoyé (${taille}). Vérifie ta connexion.`,
       );
     } finally {
       setSending(false);
