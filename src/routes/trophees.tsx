@@ -266,7 +266,20 @@ function parseChatContent(content: string): ParsedChatContent {
 // Supabase Storage lui-même (voir migration chat-images) — deux niveaux de
 // vérification plutôt qu'un seul, la limite client évite surtout un upload
 // pour rien (échec côté serveur après avoir attendu inutilement).
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  // HEIC/HEIF : le format par defaut des photos iPhone. Sans lui, un joueur
+  // sur iPhone voyait son fichier refuse sans comprendre pourquoi.
+  "image/heic",
+  "image/heif",
+  "image/avif",
+  "image/bmp",
+  // Volontairement PAS de image/svg+xml : un SVG peut contenir du code
+  // execute par le navigateur de celui qui l'ouvre.
+];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 Mo
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024; // 25 Mo
@@ -2551,7 +2564,7 @@ function VestiairePage() {
                           value={draft}
                           onChange={(event) => setDraft(event.target.value)}
                           onPaste={handlePaste}
-                          maxLength={1000}
+                          maxLength={2000}
                           disabled={!currentUserId || sending}
                           placeholder={
                             currentUserId ? "Écris ton message..." : "Connecte-toi pour écrire..."
@@ -2654,7 +2667,7 @@ function VestiairePage() {
                           <span>Photos · emojis · glisser-déposer · Ctrl+V</span>
                         </div>
                         <span className="text-[9px] text-slate-700">
-                          {draft.length}/1000
+                          {draft.length}/2000
                         </span>
                       </div>
                     </div>
