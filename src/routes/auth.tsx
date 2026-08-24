@@ -8,6 +8,37 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+// Supabase renvoie ses erreurs en anglais technique ("Invalid login
+// credentials", "User already registered"...). Elles etaient affichees
+// telles quelles aux joueurs. On les traduit, et on garde un repli lisible
+// pour les cas non prevus.
+function messageErreur(brut: string): string {
+  const texte = (brut || "").toLowerCase();
+
+  if (texte.includes("invalid login credentials")) {
+    return "E-mail ou mot de passe incorrect.";
+  }
+  if (texte.includes("email not confirmed")) {
+    return "Ton adresse e-mail n'est pas encore confirmée : ouvre le message reçu à l'inscription.";
+  }
+  if (texte.includes("user already registered") || texte.includes("already been registered")) {
+    return "Un compte existe déjà avec cette adresse. Connecte-toi plutôt.";
+  }
+  if (texte.includes("password should be at least")) {
+    return "Le mot de passe doit contenir au moins 6 caractères.";
+  }
+  if (texte.includes("unable to validate email") || texte.includes("invalid email")) {
+    return "Cette adresse e-mail n'est pas valide.";
+  }
+  if (texte.includes("rate limit") || texte.includes("too many requests")) {
+    return "Trop de tentatives. Patiente une minute avant de réessayer.";
+  }
+  if (texte.includes("failed to fetch") || texte.includes("network")) {
+    return "Connexion au serveur impossible. Vérifie ta connexion Internet.";
+  }
+  return brut || "Une erreur est survenue. Réessaie dans un instant.";
+}
+
 // Exportée (et pas seulement passée à `component`) pour être réutilisée
 // directement par src/routes/__root.tsx comme écran de connexion affiché
 // entre l'intro et l'application — même formulaire, même logique Supabase.
@@ -28,13 +59,19 @@ export function AuthPage() {
     setError(null);
     setMessage(null);
 
+    // Sur telephone, le clavier met souvent une majuscule au premier
+    // caractere et ajoute un espace : "  Manuel@Gmail.com " ne correspond
+    // alors a aucun compte. On normalise avant d'envoyer.
+    const emailPropre = email.trim().toLowerCase();
+    const pseudoPropre = pseudo.trim();
+
     try {
       if (isSignUp) {
         const { data, error: signUpError } = await supabase.auth.signUp({
-          email,
+          email: emailPropre,
           password,
           options: {
-            data: { pseudo },
+            data: { pseudo: pseudoPropre },
           },
         });
 
@@ -45,7 +82,7 @@ export function AuthPage() {
             .from("profiles")
             .upsert({
               id: data.user.id,
-              pseudo,
+              pseudo: pseudoPropre,
               avatar_url: null,
               favorite_team: null,
               is_admin: false,
@@ -56,12 +93,23 @@ export function AuthPage() {
           }
         }
 
-        setMessage("Compte créé avec succès ! Tu peux maintenant te connecter.");
+        // Si la confirmation par e-mail est activée côté Supabase, aucune
+        // session n'est ouverte : dire "tu peux te connecter" serait faux,
+        // le joueur essaierait et se ferait refuser.
+        if (data.session) {
+          navigate({ to: "/" });
+          return;
+        }
+        setMessage(
+          data.user
+            ? "Compte créé. Ouvre le message envoyé à ton adresse pour le confirmer, puis connecte-toi."
+            : "Compte créé. Tu peux maintenant te connecter.",
+        );
         setIsSignUp(false);
       } else {
         const { data, error: signInError } =
           await supabase.auth.signInWithPassword({
-            email,
+            email: emailPropre,
             password,
           });
 
@@ -78,7 +126,7 @@ export function AuthPage() {
         }
       }
     } catch (err: any) {
-      setError(err.message || "Une erreur est survenue lors de l'authentification.");
+      setError(messageErreur(err?.message ?? ""));
     } finally {
       setLoading(false);
     }
@@ -219,6 +267,7 @@ export function AuthPage() {
                     onChange={(e) => setPseudo(e.target.value)}
                     placeholder="Ton pseudo"
                     autoComplete="nickname"
+                    maxLength={20}
                     className="w-full rounded-xl border border-slate-800/80 bg-[#050b16]/80 px-4 py-3.5 pl-10 text-sm text-white placeholder-slate-600 shadow-[inset_0_1px_3px_rgba(0,0,0,.4)] transition-all duration-200 focus:border-emerald-500/60 focus:bg-[#050b16] focus:shadow-[0_0_0_3px_rgba(16,185,129,.15),inset_0_1px_3px_rgba(0,0,0,.4)] focus:outline-none"
                   />
                 </div>
@@ -239,6 +288,10 @@ export function AuthPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="exemple@email.com"
                   autoComplete="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   className="w-full rounded-xl border border-slate-800/80 bg-[#050b16]/80 px-4 py-3.5 pl-10 text-sm text-white placeholder-slate-600 shadow-[inset_0_1px_3px_rgba(0,0,0,.4)] transition-all duration-200 focus:border-emerald-500/60 focus:bg-[#050b16] focus:shadow-[0_0_0_3px_rgba(16,185,129,.15),inset_0_1px_3px_rgba(0,0,0,.4)] focus:outline-none"
                 />
               </div>
@@ -268,6 +321,7 @@ export function AuthPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   autoComplete={isSignUp ? "new-password" : "current-password"}
+                  minLength={isSignUp ? 6 : undefined}
                   className="w-full rounded-xl border border-slate-800/80 bg-[#050b16]/80 px-4 py-3.5 pl-10 pr-12 text-sm text-white placeholder-slate-600 shadow-[inset_0_1px_3px_rgba(0,0,0,.4)] transition-all duration-200 focus:border-emerald-500/60 focus:bg-[#050b16] focus:shadow-[0_0_0_3px_rgba(16,185,129,.15),inset_0_1px_3px_rgba(0,0,0,.4)] focus:outline-none"
                 />
                 <button
