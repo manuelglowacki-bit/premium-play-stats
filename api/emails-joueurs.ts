@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-// Adresses e-mail des joueurs, pour l'onglet Admin → Joueurs.
+// Adresses e-mail et derniere connexion des joueurs, pour Admin → Joueurs.
 //
 // Les e-mails vivent dans auth.users, une table que le navigateur ne peut pas
 // lire : seule la clé de service y accède. D'où cette route.
@@ -56,18 +56,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 3) Les adresses. 1000 par page : largement au-dessus d'une ligue entre
     //    amis, mais on pagine quand même plutôt que de tronquer en silence.
     const emails: Record<string, string> = {};
+    // Derniere connexion : auth.users.last_sign_in_at. Utile pour reperer un
+    // joueur qui n'est jamais revenu depuis son inscription.
+    const dernieresConnexions: Record<string, string> = {};
     let page = 1;
     for (;;) {
       const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 });
       if (error) break;
       (data?.users ?? []).forEach((utilisateur) => {
-        if (utilisateur.id && utilisateur.email) emails[utilisateur.id] = utilisateur.email;
+        if (!utilisateur.id) return;
+        if (utilisateur.email) emails[utilisateur.id] = utilisateur.email;
+        if (utilisateur.last_sign_in_at) {
+          dernieresConnexions[utilisateur.id] = utilisateur.last_sign_in_at;
+        }
       });
       if (!data?.users || data.users.length < 1000) break;
       page += 1;
     }
 
-    return reponse(res, 200, { emails });
+    return reponse(res, 200, { emails, dernieresConnexions });
   } catch {
     return reponse(res, 500, { erreur: "erreur-serveur" });
   }

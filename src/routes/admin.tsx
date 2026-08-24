@@ -1600,6 +1600,7 @@ function PlayersTab({
   // Les e-mails vivent dans auth.users, illisible depuis le navigateur :
   // ils passent par api/emails-joueurs.ts, reserve aux admins.
   const [emailsById, setEmailsById] = useState<Record<string, string>>({});
+  const [lastSeenById, setLastSeenById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let annule = false;
@@ -1617,7 +1618,9 @@ function PlayersTab({
         if (!reponse.ok) return;
 
         const corps = await reponse.json().catch(() => ({}));
-        if (!annule && corps?.emails) setEmailsById(corps.emails);
+        if (annule) return;
+        if (corps?.emails) setEmailsById(corps.emails);
+        if (corps?.dernieresConnexions) setLastSeenById(corps.dernieresConnexions);
       } catch {
         // Sans e-mails, on retombe sur l'identifiant : jamais bloquant.
       }
@@ -1742,6 +1745,11 @@ function PlayersTab({
                         >
                           {emailsById[player.id] ?? player.id}
                         </div>
+                        {lastSeenById[player.id] && (
+                          <div className="truncate font-mono text-[10px] text-slate-600">
+                            Vu le {formatDerniereConnexion(lastSeenById[player.id])}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </td>
@@ -2842,6 +2850,28 @@ function MatchesTab({
       )}
     </Card>
   );
+}
+
+/** Derniere connexion : "24/08 a 14:32", ou "aujourd'hui a 14:32" / "hier a
+ *  14:32" pour les deux cas ou la date exacte n'apporte rien. */
+function formatDerniereConnexion(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const heure = date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const jour = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const maintenant = new Date();
+  const aujourdhui = new Date(
+    maintenant.getFullYear(),
+    maintenant.getMonth(),
+    maintenant.getDate(),
+  ).getTime();
+  const ecartJours = Math.round((aujourdhui - jour) / 86_400_000);
+
+  if (ecartJours === 0) return `aujourd'hui à ${heure}`;
+  if (ecartJours === 1) return `hier à ${heure}`;
+
+  return `${date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} à ${heure}`;
 }
 
 function StatusBadge({ status }: { status: string }) {
