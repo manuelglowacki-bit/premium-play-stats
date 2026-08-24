@@ -11,6 +11,8 @@ import { createClient } from "@supabase/supabase-js";
 //   - met à jour home_score, away_score et finished
 //   - uniquement sur des matchs DÉJÀ PRÉSENTS en base, retrouvés par leur
 //     identifiant football-data (api_fixture_id)
+//   - sur les CINQ championnats : la Ligue 1 et les quatre championnats
+//     bonus, dont le score doit se fixer tout seul lui aussi
 //
 // Ce qu'elle ne fait pas : créer un match, créer une journée, toucher aux
 // équipes, aux pronostics ou aux points. Une tâche automatique qui tourne
@@ -58,12 +60,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // 1) Les matchs Ligue 1 vus par football-data, via le proxy existant
     //    (le jeton reste côté serveur, on ne le manipule pas ici).
-    // On demande explicitement la Ligue 1 : le proxy renvoie "ALL" par
-    // defaut, et sa cle `matchs` ne contient alors que la Ligue 1 — mais
-    // dependre d'un comportement par defaut est le genre de detail qui casse
-    // en silence six mois plus tard, sur une tache que personne ne regarde.
+    // TOUS les championnats : la Ligue 1 pour le classement, et les quatre
+    // championnats bonus (Premier League, Liga, Serie A, Bundesliga), dont le
+    // score doit se fixer tout seul lui aussi. La cle `allMatches` du proxy
+    // les contient tous ; on ne depend d'aucun comportement par defaut.
     const base = `https://${req.headers.host}`;
-    const reponseApi = await fetch(`${base}/api/ligue1/matchs?competition=FL1`, {
+    const reponseApi = await fetch(`${base}/api/ligue1/matchs?competition=ALL`, {
       headers: { Accept: "application/json" },
     });
     if (!reponseApi.ok) {
@@ -75,10 +77,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return reponse(res, 502, { erreur: "reponse football-data invalide" });
     }
 
-    const brut = Array.isArray(corps.matchs)
-      ? corps.matchs
-      : Array.isArray(corps.allMatches)
-        ? corps.allMatches
+    const brut = Array.isArray(corps.allMatches)
+      ? corps.allMatches
+      : Array.isArray(corps.matchs)
+        ? corps.matchs
         : [];
     const matchsApi: MatchApi[] = brut;
 
