@@ -69,13 +69,19 @@ function IndexPage() {
     participation: 0,
     participationTotal: 0,
   });
-  const [currentMatchday, setCurrentMatchday] = useState("J1");
+  // Vide tant que la vraie journee n'est pas connue : afficher "J1" par
+  // defaut affichait une information fausse des la J2, et definitivement si
+  // le chargement echouait.
+  const [currentMatchday, setCurrentMatchday] = useState("");
   // Prochain coup d'envoi REEL, et journee en cours. Le compte a rebours
   // visait jusqu'ici une date figee dans Countdown.tsx (21 aout 2026) : une
   // fois passee, il affichait 00 00 00 00 indefiniment, sous un libelle
   // "Prochaine journee · J1 • 21 aout 2026" lui aussi ecrit en dur.
   const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string; day: string } | null>(null);
   const [potAmount, setPotAmount] = useState(0);
+  // Saison affichee dans le bandeau. Elle etait ecrite en dur
+  // ("SAISON 2026—2027") : elle serait restee identique l'an prochain.
+  const [seasonLabel, setSeasonLabel] = useState<string | null>(null);
   // Gains affiches a cote du classement : meme regle 50/30/20 que la page
   // Classement (src/lib/prizePool.ts), appliquee a la cagnotte reelle.
   const homePrizeByRank = useMemo(() => computePrizeByRank(potAmount), [potAmount]);
@@ -150,7 +156,7 @@ function IndexPage() {
           // table que src/routes/profil.tsx) — pas de nouvelle table/policy.
           supabase
             .from("app_settings")
-            .select("entry_fee, favorite_team_deadline, favorite_team_auto_lock")
+            .select("season, entry_fee, favorite_team_deadline, favorite_team_auto_lock")
             .eq("id", 1)
             .maybeSingle(),
           supabase
@@ -525,6 +531,7 @@ setLeaderboard(rankedRankings);
             parsedDeadline && !Number.isNaN(parsedDeadline.getTime()) ? parsedDeadline : null,
           );
           setFavoriteTeamAutoLock(settingsRow?.favorite_team_auto_lock ?? true);
+          if (settingsRow?.season) setSeasonLabel(String(settingsRow.season));
         }
 
         // -------- Cagnotte --------
@@ -709,7 +716,7 @@ setLeaderboard(rankedRankings);
             <div className="dash-fade-up max-w-full space-y-4 lg:max-w-[56%]">
               <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 font-mono text-[10px] font-bold text-emerald-400 tracking-wider">
                 <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                SAISON 2026—2027 • LIGUE 1 MCDONALD'S
+                {seasonLabel ? `SAISON ${seasonLabel} • ` : ""}LIGUE 1 MCDONALD'S
               </div>
               {/* Titre STABLE, qui nomme la competition entre amis.
                   Deux essais precedents ne tenaient pas : "Prédis les
@@ -1013,7 +1020,9 @@ setLeaderboard(rankedRankings);
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Sparkles size={14} className="text-amber-400 animate-pulse" />
-                  <span className="font-mono text-[11px] uppercase text-amber-400 font-bold tracking-widest">À l'issue de la {currentMatchday}</span>
+                  <span className="font-mono text-[11px] uppercase text-amber-400 font-bold tracking-widest">
+                    {currentMatchday ? `À l'issue de la ${currentMatchday}` : "Classement en direct"}
+                  </span>
                 </div>
                 <h3 className="font-display text-[26px] font-black md:text-3xl text-white tracking-tight">Classement général</h3>
               </div>
