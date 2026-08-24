@@ -84,6 +84,7 @@ function ProfilPage() {
     successRate: "0%",
     totalPronos: 0,
     bestDay: "-",
+    bestDayPoints: 0,
   });
 
   // Niveau de carrière — même système que l'Accueil (src/lib/careerLevel.ts,
@@ -641,6 +642,7 @@ function ProfilPage() {
               predictions.length,
             ) || 0,
           bestDay,
+          bestDayPoints: bestDayPoints > 0 ? bestDayPoints : 0,
         });
 
         // Live snapshot consumed by every performance block above.
@@ -1008,9 +1010,21 @@ function ProfilPage() {
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
                   <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Meilleure journée</span>
-                  <div className="mt-1 font-display text-3xl font-black text-white">
-                    {userStats.bestDay === "-" ? "—" : userStats.bestDay}
+                  <div className="mt-1 flex items-baseline gap-1.5 font-display text-3xl font-black text-white">
+                    {userStats.bestDay === "-" ? (
+                      "—"
+                    ) : (
+                      <>
+                        {userStats.bestDayPoints}
+                        <span className="text-sm font-bold text-slate-500">pts</span>
+                      </>
+                    )}
                   </div>
+                  {userStats.bestDay !== "-" && (
+                    <div className="mt-0.5 font-mono text-[9px] uppercase tracking-widest text-slate-500">
+                      {userStats.bestDay}
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
                   <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Équipe de cœur</span>
@@ -1280,66 +1294,64 @@ function ProfilPage() {
               </div>
             </div>
 
-            <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-center">
-              {/* Pseudo actuel */}
-              <div className="min-w-0">
-                <div className="text-[9px] font-mono font-bold uppercase tracking-[.2em] text-slate-500">
-                  Pseudo actuel
-                </div>
-                <div className="mt-1 truncate font-display text-3xl font-black tracking-tight text-white md:text-4xl">
-                  {username || "Ton pseudo"}
-                </div>
-                <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
-                  <span className="size-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.7)]" />
-                  Visible dans les classements et sur le site
-                </div>
-              </div>
+            {/* Le pseudo etait affiche en grand a gauche ET dans le champ de
+                saisie a droite : deux fois la meme information, pour un bloc
+                aussi haut que la carte de profil entiere. Une seule ligne
+                suffit — on modifie son pseudo, on enregistre. */}
+            <form onSubmit={handleUpdateProfile} className="mt-5">
+              <label
+                htmlFor="profil-pseudo"
+                className="text-[9px] font-mono font-bold uppercase tracking-[.2em] text-slate-500"
+              >
+                Mon pseudo
+              </label>
 
-              {/* Édition pseudo */}
-              <form onSubmit={handleUpdateProfile} className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-5">
-                <div className="mb-4">
-                  <label className="text-[9px] font-mono font-bold uppercase tracking-[.2em] text-slate-500">
-                    Modifier mon pseudo
-                  </label>
-                  <div className="relative mt-3">
-                    <User className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="text"
-                      value={username}
-                      maxLength={24}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="Ton pseudo"
-                      className="w-full rounded-xl border border-slate-700 bg-[#040a14]/90 py-3.5 pl-11 pr-14 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-500/50"
-                    />
-                    <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-mono text-slate-600">
-                      {username.length}/24
-                    </span>
-                  </div>
+              <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative min-w-0 flex-1">
+                  <User className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
+                  <input
+                    id="profil-pseudo"
+                    type="text"
+                    value={username}
+                    maxLength={24}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder="Ton pseudo"
+                    className="w-full rounded-xl border border-slate-700 bg-[#040a14]/90 py-3.5 pl-11 pr-14 font-display text-lg font-black text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-500/50"
+                  />
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-mono text-slate-600">
+                    {username.length}/24
+                  </span>
                 </div>
 
                 <button
                   type="submit"
-                  className="tap flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-5 py-3.5 font-display text-[11px] font-black uppercase tracking-[.14em] text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.3)] transition hover:bg-emerald-500"
+                  disabled={savingProfile}
+                  className="tap flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-400 px-6 py-3.5 font-display text-[11px] font-black uppercase tracking-[.14em] text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.3)] transition hover:bg-emerald-500 disabled:opacity-60"
                 >
                   {savingProfile ? (
-                    <span className="flex items-center gap-2">
+                    <>
                       <Loader2 className="size-4 animate-spin" />
-                      Enregistrement...
-                    </span>
+                      Enregistrement
+                    </>
                   ) : savedProfile ? (
-                    <span className="flex items-center gap-2">
+                    <>
                       <Check className="size-4" />
-                      Modifications enregistrées
-                    </span>
+                      Enregistré
+                    </>
                   ) : (
-                    <span className="flex items-center gap-2">
+                    <>
                       <Sparkles className="size-4" />
-                      Enregistrer les modifications
-                    </span>
+                      Enregistrer
+                    </>
                   )}
                 </button>
-              </form>
-            </div>
+              </div>
+
+              <div className="mt-2.5 flex items-center gap-2 text-xs text-slate-500">
+                <span className="size-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.7)]" />
+                Visible dans les classements et sur le site
+              </div>
+            </form>
           </div>
         </section>
       </div>
