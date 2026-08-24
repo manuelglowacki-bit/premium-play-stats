@@ -1600,7 +1600,6 @@ function PlayersTab({
   // Les e-mails vivent dans auth.users, illisible depuis le navigateur :
   // ils passent par api/emails-joueurs.ts, reserve aux admins.
   const [emailsById, setEmailsById] = useState<Record<string, string>>({});
-  const [lastSeenById, setLastSeenById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let annule = false;
@@ -1618,9 +1617,7 @@ function PlayersTab({
         if (!reponse.ok) return;
 
         const corps = await reponse.json().catch(() => ({}));
-        if (annule) return;
-        if (corps?.emails) setEmailsById(corps.emails);
-        if (corps?.dernieresConnexions) setLastSeenById(corps.dernieresConnexions);
+        if (!annule && corps?.emails) setEmailsById(corps.emails);
       } catch {
         // Sans e-mails, on retombe sur l'identifiant : jamais bloquant.
       }
@@ -1745,11 +1742,16 @@ function PlayersTab({
                         >
                           {emailsById[player.id] ?? player.id}
                         </div>
-                        {lastSeenById[player.id] && (
-                          <div className="truncate font-mono text-[10px] text-slate-600">
-                            Vu le {formatDerniereConnexion(lastSeenById[player.id])}
-                          </div>
-                        )}
+                        {/* VISITE REELLE uniquement (profiles.last_seen_at,
+                            ecrite a chaque ouverture du site). La date
+                            d'authentification de Supabase a ete retiree : elle
+                            ne bougeait qu'a la saisie du mot de passe et
+                            laissait croire qu'un joueur n'etait jamais revenu. */}
+                        <div className="mt-1 truncate font-mono text-[11px] font-semibold text-emerald-300/90">
+                          {player.last_seen_at
+                            ? `Vu ${formatDerniereConnexion(player.last_seen_at)}`
+                            : "Jamais venu depuis la mise en place"}
+                        </div>
                       </div>
                     </div>
                   </td>

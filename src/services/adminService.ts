@@ -12,6 +12,8 @@ export interface Player {
   favorite_team_id: string | null;
   favorite_team_override?: boolean;
   is_admin: boolean;
+  /** Derniere ouverture reelle du site (migration 20260824120000). */
+  last_seen_at?: string | null;
 }
 
 export interface Payment {

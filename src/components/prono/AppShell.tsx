@@ -107,6 +107,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [headerDay, setHeaderDay] = useState<{ number: number; kickoff: number | null } | null>(null);
   useMeasuredChromeHeights(headerRef, navRef);
 
+  // DERNIERE VISITE REELLE. auth.users.last_sign_in_at ne bouge qu'a la
+  // saisie du mot de passe : un joueur reste connecte des semaines et n'y
+  // apparait plus jamais. On note donc l'ouverture du site elle-meme, au
+  // plus une fois par heure et par joueur pour ne rien surcharger.
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const cle = `prono:last-seen:${user.id}`;
+    try {
+      const dernier = Number(window.localStorage.getItem(cle) ?? 0);
+      if (Date.now() - dernier < 60 * 60 * 1000) return;
+      window.localStorage.setItem(cle, String(Date.now()));
+    } catch {
+      // Stockage indisponible : on ecrit quand meme, sans limitation.
+    }
+
+    void supabase
+      .from("profiles")
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq("id", user.id)
+      .then(({ error }) => {
+        // Colonne absente (migration non appliquee) : sans consequence,
+        // l'Admin retombe sur la date d'authentification.
+        if (error) console.warn("Derniere visite non enregistree", error.message);
+      });
+  }, [user?.id]);
+
   // Saison et journee de l'en-tete, lues en base. Aucun point n'est calcule
   // ici : on cherche seulement le prochain match de Ligue 1 a jouer, pour
   // afficher sa journee, sa date et son heure.
