@@ -756,7 +756,7 @@ function StatsPage() {
   // multiple de 4 superieur pour garder des graduations entieres.
   const maxPoints = Math.max(
     8,
-    Math.ceil(Math.max(...visibleDays.map((item) => item.points), 0) / 4) * 4,
+    Math.ceil((Math.max(...visibleDays.map((item) => item.points), 0) * 1.15) / 4) * 4,
   );
 
   const totalPointsForDistribution =
@@ -1027,25 +1027,12 @@ function StatsPage() {
                     Reviens ici après ta première journée pronostiquée !
                   </span>
                 </div>
-              ) : visibleDays.length === 1 ? (
-                /* Avec un seul point, le trace partait de gauche et
-                   redescendait jusqu'a zero a droite : le graphique dessinait
-                   une chute qui n'a jamais eu lieu, et le point vert flottait
-                   seul au milieu. Tant qu'il n'y a qu'une journee, il n'y a
-                   pas de progression a montrer — on affiche la valeur. */
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[.22em] text-emerald-300">
-                    {visibleDays[0].day}
-                  </span>
-                  <span className="font-display text-5xl font-black leading-none text-white">
-                    {visibleDays[0].points}
-                    <span className="ml-1 font-mono text-sm font-bold text-slate-400">pts</span>
-                  </span>
-                  <span className="font-mono text-[9px] uppercase tracking-widest text-slate-500">
-                    La courbe apparaîtra à la 2e journée
-                  </span>
-                </div>
               ) : (
+                /* BARRES, ET NON UNE COURBE. Une courbe a besoin d'au moins
+                   deux points : avec une seule journee elle tracait une chute
+                   inventee, de la valeur vers zero. Une barre se lit des la
+                   premiere journee, et compare mieux des totaux qui sautent
+                   d'une journee a l'autre (6, 2, 8, 3...) qu'une ligne. */
                 <>
                   <div className="absolute inset-x-0 top-0 bottom-8 flex flex-col justify-between">
                     {Array.from({ length: 5 }, (_, index) =>
@@ -1060,93 +1047,44 @@ function StatsPage() {
                     ))}
                   </div>
 
-                  <div className="absolute left-9 right-2 top-0 bottom-8">
-                    <svg
-                      viewBox="0 0 500 180"
-                      className="absolute inset-0 size-full overflow-visible"
-                      preserveAspectRatio="none"
-                    >
-                      <defs>
-                        <linearGradient id="statsLineGreen" x1="0" x2="1">
-                          <stop offset="0%" stopColor="#34d399" />
-                          <stop offset="100%" stopColor="#a7f3d0" />
-                        </linearGradient>
-                        <linearGradient id="statsFillGreen" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#34d399" stopOpacity=".18" />
-                          <stop offset="100%" stopColor="#34d399" stopOpacity="0" />
-                        </linearGradient>
-                        <filter id="statsGlowGreen" x="-30%" y="-30%" width="160%" height="160%">
-                          <feGaussianBlur stdDeviation="2.4" result="blur" />
-                        </filter>
-                      </defs>
-
-                      {(() => {
-                        const width = 500;
-                        const height = 180;
-                        const step =
-                          visibleDays.length === 1 ? 0 : width / (visibleDays.length - 1);
-
-                        const points = visibleDays.map((item, index) => ({
-                          x: index * step,
-                          y: height - (item.points / Math.max(maxPoints, 1)) * height,
-                        }));
-
-                        const linePath = points
-                          .map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`)
-                          .join(" ");
-
-                        const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
-
-                        return (
-                          <>
-                            <path d={areaPath} fill="url(#statsFillGreen)" />
-                            <path
-                              d={linePath}
-                              fill="none"
-                              stroke="#34d399"
-                              strokeWidth="7"
-                              opacity=".22"
-                              filter="url(#statsGlowGreen)"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                            <path
-                              d={linePath}
-                              fill="none"
-                              stroke="url(#statsLineGreen)"
-                              strokeWidth="2.5"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                          </>
-                        );
-                      })()}
-                    </svg>
-
-                    {visibleDays.map((item, index) => {
-                      const left =
-                        visibleDays.length === 1 ? 50 : (index / (visibleDays.length - 1)) * 100;
-                      const top = 100 - (item.points / maxPoints) * 100;
+                  <div className="absolute bottom-8 left-9 right-2 top-0 flex items-end justify-center gap-2 sm:gap-3">
+                    {visibleDays.map((item) => {
+                      // Minimum visible : une journee a 0 point doit rester
+                      // reperable, sinon la barre disparait completement.
+                      const hauteur = Math.max(
+                        2,
+                        (item.points / Math.max(maxPoints, 1)) * 100,
+                      );
 
                       return (
                         <div
                           key={item.day}
-                          className="absolute"
-                          style={{ left: `${left}%`, top: `${top}%`, transform: "translate(-50%, -50%)" }}
+                          className="flex h-full min-w-0 flex-1 items-end"
+                          style={{ maxWidth: 84 }}
                         >
-                          <div className="mb-1.5 -translate-y-4 text-center text-[11px] font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.85)]">
-                            {item.points}
+                          <div
+                            className="relative w-full rounded-t-lg bg-gradient-to-t from-emerald-500/35 to-emerald-300 shadow-[0_0_18px_rgba(52,211,153,.28)] transition-[height] duration-500"
+                            style={{ height: `${hauteur}%` }}
+                          >
+                            <span className="absolute -top-5 inset-x-0 text-center text-[11px] font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.85)]">
+                              {item.points}
+                            </span>
                           </div>
-                          <div className="size-2.5 rounded-full border-2 border-[#07111c] bg-emerald-300 shadow-[0_0_15px_rgba(52,211,153,.85)]" />
                         </div>
                       );
                     })}
+                  </div>
 
-                    <div className="absolute -bottom-6 inset-x-0 flex justify-between">
-                      {visibleDays.map((item) => (
-                        <span key={item.day} className="text-[9px] font-semibold text-slate-400">
-                          {item.day}
-                        </span>
-                      ))}
-                    </div>
+                  <div className="absolute bottom-0 left-9 right-2 flex justify-center gap-2 sm:gap-3">
+                    {visibleDays.map((item) => (
+                      <span
+                        key={item.day}
+                        className="min-w-0 flex-1 truncate text-center text-[9px] font-semibold text-slate-400"
+                        style={{ maxWidth: 84 }}
+                      >
+                        {item.day}
+                      </span>
+                    ))}
                   </div>
                 </>
               )}
