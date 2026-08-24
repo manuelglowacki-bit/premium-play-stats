@@ -78,6 +78,7 @@ function ProfilPage() {
   // Statistiques personnelles — alimentées par Supabase.
   const [userStats, setUserStats] = useState({
     rank: 0,
+    totalPlayers: 0,
     points: 0,
     exactScores: 0,
     successRate: "0%",
@@ -509,6 +510,9 @@ function ProfilPage() {
         );
 
         const rank = Number(fallbackMe?.rank ?? 0);
+        // Un rang seul ne dit rien : 12e sur 12 ou 12e sur 23, ce n'est pas
+        // la meme histoire.
+        const totalPlayers = fallbackRanked.length;
         // BUG CORRIGÉ : le snapshot localStorage publié par le Classement
         // passait EN PREMIER. `??` ne bascule que sur null/undefined, donc un
         // snapshot périmé (ex. points: 1, écrit lors d'une visite précédente)
@@ -565,6 +569,7 @@ function ProfilPage() {
 
         setUserStats({
           rank,
+          totalPlayers,
           points: totalPoints,
           exactScores,
           successRate,
@@ -891,7 +896,7 @@ function ProfilPage() {
                     className="tap flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[10px] font-semibold text-slate-400 transition hover:border-red-400/30 hover:text-red-300 disabled:opacity-50"
                   >
                     <Trash2 className="size-3" />
-                    Supprimer
+                    Retirer la photo
                   </button>
                 )}
               </div>
@@ -912,10 +917,6 @@ function ProfilPage() {
               >
                 {username}
               </h1>
-              <p className="mt-2 text-sm text-slate-400">
-                Joueur actif de la Prono Ligue 1
-              </p>
-
               <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">
                 <Activity className="size-3.5" />
                 Saison {seasonLabel ?? "—"}
@@ -925,8 +926,17 @@ function ProfilPage() {
               <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
                   <span className="font-mono text-[9px] font-semibold uppercase tracking-widest text-slate-400">Classement</span>
-                  <div className="mt-1 font-display text-3xl font-black text-white">
-                    {userStats.rank > 0 ? userStats.rank : "—"}
+                  <div className="mt-1 flex items-baseline gap-1.5 font-display text-3xl font-black text-white">
+                    {userStats.rank > 0 ? (
+                      <>
+                        {userStats.rank}
+                        <span className="text-sm font-bold text-slate-500">
+                          e{userStats.totalPlayers > 0 ? ` / ${userStats.totalPlayers}` : ""}
+                        </span>
+                      </>
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4">
