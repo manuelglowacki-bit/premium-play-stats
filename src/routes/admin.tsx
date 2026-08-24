@@ -4745,6 +4745,30 @@ function MatchdayLockTab({
     return map;
   }, [matches]);
 
+  // L'onglet listait les 182 journees des CINQ championnats. Or seules
+  // celles de Ligue 1 se verrouillent : un match bonus suit le reglage de la
+  // journee de Ligue 1 en cours, pas celui de sa propre competition. Les 148
+  // autres lignes ne servaient donc a rien — et noyaient les seules qui
+  // comptent.
+  const ligue1Matchdays = useMemo(() => {
+    const ligue1Ids = new Set(
+      competitions
+        .filter((c) => c.code === "FL1" || c.external_code === "FL1")
+        .map((c) => String(c.id)),
+    );
+    const liste = ligue1Ids.size
+      ? matchdays.filter((md) => md.competition_id && ligue1Ids.has(String(md.competition_id)))
+      : matchdays;
+    return [...liste].sort((a, b) => a.number - b.number);
+  }, [matchdays, competitions]);
+
+  // Journees sans aucun blocage : deadline_mode "manual" SANS date limite
+  // laisse les pronostics ouverts apres le coup d'envoi.
+  const nonProtegees = useMemo(
+    () => ligue1Matchdays.filter((md) => md.deadline_mode !== "auto_minus_1" && !md.deadline),
+    [ligue1Matchdays],
+  );
+
   function openEdit(md: Matchday) {
     setEditing(md);
     setEditForm({
@@ -4868,10 +4892,29 @@ function MatchdayLockTab({
   return (
     <div className="space-y-4">
       <Card className="p-5">
-        <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Calendar size={18} className="text-emerald-400" />
-          Journées ({matchdays.length})
-        </h2>
+        <div className="mb-4">
+          <h2 className="flex flex-wrap items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+            <Calendar size={18} className="text-emerald-400" />
+            Journées Ligue 1
+            <span className="rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-0.5 font-mono text-[11px] font-bold text-slate-300">
+              {ligue1Matchdays.length}
+            </span>
+          </h2>
+
+          {nonProtegees.length === 0 ? (
+            <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300">
+              <Lock size={12} />
+              Toutes verrouillées 1 minute avant le coup d'envoi. Rien à faire.
+            </p>
+          ) : (
+            <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-red-300">
+              <Unlock size={12} />
+              {nonProtegees.length} journée{nonProtegees.length > 1 ? "s" : ""} sans verrouillage
+              {" "}(J{nonProtegees.map((md) => md.number).join(", J")}) — les pronostics y restent
+              ouverts après le coup d'envoi.
+            </p>
+          )}
+        </div>
 
         {error && (
           <div className="mb-4">
@@ -4879,11 +4922,11 @@ function MatchdayLockTab({
           </div>
         )}
 
-        {!error && matchdays.length === 0 ? (
+        {!error && ligue1Matchdays.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500">Aucune journée créée pour le moment.</p>
         ) : (
           <div className="space-y-2">
-            {matchdays.map((md) => (
+            {ligue1Matchdays.map((md) => (
               <div
                 key={md.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#0d1322] px-4 py-3"
@@ -4902,9 +4945,9 @@ function MatchdayLockTab({
                         {(md.season_id ? seasonsById.get(md.season_id) : undefined)?.name ?? "?"}
                       </span>
                       {md.deadline_mode === "auto_minus_1" ? (
-                        <span className="inline-flex items-center gap-1 text-cyan-300">
-                          <Timer size={11} />
-                          Auto -1 min
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 font-bold text-emerald-300">
+                          <Lock size={11} />
+                          Verrouillée
                         </span>
                       ) : md.deadline ? (
                         <span className="inline-flex items-center gap-1 text-amber-400/80">
@@ -4912,7 +4955,7 @@ function MatchdayLockTab({
                           Limite : {new Date(md.deadline).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-slate-600">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-red-400/40 bg-red-500/15 px-2 py-0.5 font-bold text-red-300">
                           <Unlock size={11} />
                           Sans verrouillage
                         </span>
