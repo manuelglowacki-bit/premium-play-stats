@@ -952,6 +952,41 @@ function StatsPage() {
                 );
               })}
             </div>
+
+            {/* Dernière tendance et Moyenne : deux indicateurs de synthèse,
+                remontés ici. Tout en bas de page, ils passaient sous le menu
+                de navigation et personne ne les voyait. */}
+            <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
+              <article className="rounded-2xl border border-emerald-400/10 bg-emerald-400/[0.035] px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  <TrendingUp size={15} className="text-emerald-300" />
+                  <div>
+                    <div className="font-mono text-[9px] uppercase tracking-[.18em] text-emerald-300/70">
+                      Dernière tendance
+                    </div>
+                    <div className="mt-0.5 text-sm font-semibold text-white">
+                      {stats.playedDays
+                        ? `${stats.dayStats[stats.dayStats.length - 1]?.day || "—"} : ${stats.dayStats[stats.dayStats.length - 1]?.points || 0} points`
+                        : "Pas encore de données"}
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  <Crosshair size={15} className="text-emerald-300" />
+                  <div>
+                    <div className="font-mono text-[9px] uppercase tracking-[.18em] text-slate-400">
+                      Moyenne / journée
+                    </div>
+                    <div className="mt-0.5 text-sm font-semibold text-white">
+                      {stats.average.toFixed(2)} points
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </div>
           </section>
 
           {/* PROGRESSION */}
@@ -1292,38 +1327,6 @@ function StatsPage() {
             </div>
           </section>
 
-          {/* INDICATEURS FINAUX — uniquement basés sur les données existantes */}
-          <section className="grid gap-2.5 sm:grid-cols-2">
-            <article className="rounded-2xl border border-emerald-400/10 bg-emerald-400/[0.035] px-4 py-3">
-              <div className="flex items-center gap-2.5">
-                <TrendingUp size={15} className="text-emerald-300" />
-                <div>
-                  <div className="font-mono text-[8px] uppercase tracking-[.18em] text-emerald-300/70">
-                    Dernière tendance
-                  </div>
-                  <div className="mt-0.5 text-sm font-semibold text-white">
-                    {stats.playedDays
-                      ? `${stats.dayStats[stats.dayStats.length - 1]?.day || "—"} : ${stats.dayStats[stats.dayStats.length - 1]?.points || 0} points`
-                      : "Pas encore de données"}
-                  </div>
-                </div>
-              </div>
-            </article>
-
-            <article className="rounded-2xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-              <div className="flex items-center gap-2.5">
-                <Crosshair size={15} className="text-emerald-300" />
-                <div>
-                  <div className="font-mono text-[8px] uppercase tracking-[.18em] text-slate-600">
-                    Moyenne / journée
-                  </div>
-                  <div className="mt-0.5 text-sm font-semibold text-white">
-                    {stats.average.toFixed(2)} points
-                  </div>
-                </div>
-              </div>
-            </article>
-          </section>
         </main>
       </div>
     </AppShell>
