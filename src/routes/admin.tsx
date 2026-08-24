@@ -5588,11 +5588,29 @@ function SettingsTab({
           </PrimaryButton>
         </div>
 
-        {inviteCode && !inviteLoading && (
-          <p className="mt-3 break-all rounded-xl border border-slate-800 bg-[#0b1120] px-3 py-2 font-mono text-[11px] text-slate-400">
-            {`${typeof window === "undefined" ? "" : window.location.origin}/auth?code=${inviteCode}`}
-          </p>
-        )}
+        {inviteCode && !inviteLoading && (() => {
+          const origine = typeof window === "undefined" ? "" : window.location.origin;
+          // Vercel donne une adresse unique a chaque deploiement et a chaque
+          // branche (…-git-…, …-projects.vercel.app). Un lien construit
+          // depuis une de ces adresses meurt au deploiement suivant : le
+          // joueur invite tomberait sur une page introuvable.
+          const previsualisation = /-git-|-[a-z0-9]{9,}-.*\.vercel\.app$/i.test(origine);
+
+          return (
+            <>
+              <p className="mt-3 break-all rounded-xl border border-slate-800 bg-[#0b1120] px-3 py-2 font-mono text-[11px] text-slate-400">
+                {`${origine}/auth?code=${inviteCode}`}
+              </p>
+              {previsualisation && (
+                <p className="mt-2 rounded-xl border border-red-400/40 bg-red-500/10 px-3 py-2 text-[11px] font-semibold text-red-300">
+                  ⚠️ Cette adresse est celle d'une prévisualisation, pas celle de ton site.
+                  Le lien cessera de fonctionner au prochain déploiement. Ouvre ton site depuis
+                  son adresse habituelle avant de copier le lien.
+                </p>
+              )}
+            </>
+          );
+        })()}
 
         {inviteUpdatedAt && (
           <p className="mt-2 font-mono text-[10px] uppercase tracking-widest text-slate-500">
@@ -5616,15 +5634,13 @@ function SettingsTab({
             <TextInput value={season} onChange={(e) => setSeason(e.target.value)} placeholder="2026-2027" />
           </div>
           <NumberField label="Droit d'entrée (€ / joueur)" value={entryFee} onChange={setEntryFee} />
-          <div>
-            <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              Fuseau horaire d'affichage
-            </label>
-            <TextInput value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="Europe/Paris" />
-            <p className="mt-1 text-[10px] text-slate-500">
-              Sauvegardé, non encore branché dans le formatage des heures ci-dessous (toujours navigateur local).
-            </p>
-          </div>
+          {/* Le champ "Fuseau horaire d'affichage" a ete retire : il etait
+              enregistre mais n'etait branche nulle part, et son propre texte
+              d'aide l'avouait. Un reglage qui ne regle rien est pire que pas
+              de reglage — il fait croire qu'on maitrise quelque chose. Les
+              heures suivent le fuseau du navigateur de chaque joueur, ce qui
+              est le bon comportement pour une ligue entre amis en France.
+              La colonne app_settings.timezone reste en base, intacte. */}
           <div>
             <label className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-slate-500">
               Date limite d'inscription / modification du profil
