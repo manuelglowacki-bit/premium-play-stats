@@ -4123,69 +4123,11 @@ function BonusTab({
       </Card>
 
       {/* =====================================================
-          SÉLECTION BONUS ACTUELLE — sa propre carte, en tête (avant les
-          contrôles de génération) : c'est l'info que l'admin vient
-          vérifier en premier. Une ligne premium par championnat (zone
-          championnat / zone match / zone gestion), desktop en ligne
-          horizontale, mobile en carte verticale empilée. Rendu délégué à
-          BonusCompetitionRow (composants de présentation purs définis
-          juste au-dessus de BonusTab) — la donnée et les handlers
-          restent inchangés, seul l'emplacement dans la page bouge.
-         ===================================================== */}
-      <Card className="p-5 border-sky-500/20">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="mb-1 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
-              <Gift size={13} />
-              Sélection bonus actuelle
-            </div>
-            <p className="text-xs text-slate-500">
-              Les 4 bonus sélectionnés sont affichés aux joueurs sur la page Pronos.
-            </p>
-          </div>
-          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-emerald-300">
-            <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.7)]" />
-            Actif · Affiché aux joueurs
-          </span>
-        </div>
-
-        {/* En-têtes de colonnes — desktop uniquement, alignés sur la même
-            grille que chaque ligne. */}
-        <div className="mb-2 mt-5 hidden px-1 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-sky-400/60 lg:grid lg:grid-cols-[260px_minmax(0,1fr)_230px]">
-          <span>Championnat</span>
-          <span className="text-center">Match sélectionné</span>
-          <span>Gestion</span>
-        </div>
-
-        <div className="mt-3 space-y-3.5 lg:mt-0">
-          {(["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).map((code) => {
-            const candidate = selectedBonusSelection[code];
-            const discovered = availableCompetitions.find((d) => d.code === code);
-            const kickoff = formatBonusKickoff(candidate?.match.kickoff);
-            const lastModified = formatLastModified(selectedBonusMeta[code]?.updatedAt);
-            const homeLogoUrl = candidate ? resolveBonusTeamLogo(candidate.match, "home", code, teams) : null;
-            const awayLogoUrl = candidate ? resolveBonusTeamLogo(candidate.match, "away", code, teams) : null;
-
-            return (
-              <BonusCompetitionRow
-                key={code}
-                code={code}
-                candidate={candidate}
-                discovered={discovered}
-                homeLogoUrl={homeLogoUrl}
-                awayLogoUrl={awayLogoUrl}
-                kickoff={kickoff}
-                lastModified={lastModified}
-                onEdit={() => openBonusEditor(code)}
-              />
-            );
-          })}
-        </div>
-      </Card>
-
-      {/* =====================================================
-          GÉNÉRER LA SÉLECTION PREMIUM — contrôles de génération, en
-          dessous de la sélection actuelle. Même donnée/handlers
+          GÉNÉRER LA SÉLECTION PREMIUM — remonté AVANT la sélection
+          actuelle : on choisit la journée et la période, on génère, puis on
+          regarde le résultat en dessous. L'inverse obligeait à faire défiler
+          la page vers le bas pour agir, puis à remonter pour vérifier.
+          Même donnée/handlers
           qu'avant (selectedBonusMatchdayId, periodStart/End,
           generateBonusForDay, removeBonusDraw...), seule la mise en
           page change : 3 colonnes dédiées (Générer / Journée / Période)
@@ -4475,6 +4417,66 @@ function BonusTab({
           </Modal>
         );
       })()}
+
+      {/* =====================================================
+          SÉLECTION BONUS ACTUELLE — le résultat, affiché sous les
+          contrôles qui le produisent. Une ligne premium par championnat (zone
+          championnat / zone match / zone gestion), desktop en ligne
+          horizontale, mobile en carte verticale empilée. Rendu délégué à
+          BonusCompetitionRow (composants de présentation purs définis
+          juste au-dessus de BonusTab) — la donnée et les handlers
+          restent inchangés, seul l'emplacement dans la page bouge.
+         ===================================================== */}
+      <Card className="p-5 border-sky-500/20">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="mb-1 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-widest text-sky-400">
+              <Gift size={13} />
+              Sélection bonus actuelle
+            </div>
+            <p className="text-xs text-slate-500">
+              Les 4 bonus sélectionnés sont affichés aux joueurs sur la page Pronos.
+            </p>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+            <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.7)]" />
+            Actif · Affiché aux joueurs
+          </span>
+        </div>
+
+        {/* En-têtes de colonnes — desktop uniquement, alignés sur la même
+            grille que chaque ligne. */}
+        <div className="mb-2 mt-5 hidden px-1 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-sky-400/60 lg:grid lg:grid-cols-[260px_minmax(0,1fr)_230px]">
+          <span>Championnat</span>
+          <span className="text-center">Match sélectionné</span>
+          <span>Gestion</span>
+        </div>
+
+        <div className="mt-3 space-y-3.5 lg:mt-0">
+          {(["PL", "PD", "SA", "BL1"] as BonusCompetitionCode[]).map((code) => {
+            const candidate = selectedBonusSelection[code];
+            const discovered = availableCompetitions.find((d) => d.code === code);
+            const kickoff = formatBonusKickoff(candidate?.match.kickoff);
+            const lastModified = formatLastModified(selectedBonusMeta[code]?.updatedAt);
+            const homeLogoUrl = candidate ? resolveBonusTeamLogo(candidate.match, "home", code, teams) : null;
+            const awayLogoUrl = candidate ? resolveBonusTeamLogo(candidate.match, "away", code, teams) : null;
+
+            return (
+              <BonusCompetitionRow
+                key={code}
+                code={code}
+                candidate={candidate}
+                discovered={discovered}
+                homeLogoUrl={homeLogoUrl}
+                awayLogoUrl={awayLogoUrl}
+                kickoff={kickoff}
+                lastModified={lastModified}
+                onEdit={() => openBonusEditor(code)}
+              />
+            );
+          })}
+        </div>
+      </Card>
 
     </div>
   );
