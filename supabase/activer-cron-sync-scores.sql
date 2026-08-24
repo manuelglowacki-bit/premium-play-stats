@@ -40,7 +40,7 @@ select cron.schedule(
       url := 'https://TON-SITE.vercel.app/api/sync-scores',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'x-cron-secret', 'TON-SECRET'
+        'x-cron-secret', '5c0c6120-1e6d-4c24-8b04-fc0dbe582f2f'
       ),
       body := jsonb_build_object('source', 'supabase-cron')
     );
