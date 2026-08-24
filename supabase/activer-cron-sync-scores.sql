@@ -56,7 +56,7 @@ select cron.schedule(
       url := 'https://premium-play-stats.vercel.app/api/sync-scores',
       headers := jsonb_build_object(
         'Content-Type', 'application/json',
-        'x-cron-secret', 'TON-SECRET'
+        'x-cron-secret', '6be62fd2-ef96-4496-a300-29b5acaa2b11'
       ),
       body := jsonb_build_object('source', 'supabase-cron')
     );
