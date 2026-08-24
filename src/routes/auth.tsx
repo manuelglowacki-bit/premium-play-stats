@@ -1,6 +1,6 @@
 ﻿import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Lock, Mail, User, ArrowRight, Trophy, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { Lock, Mail, User, ArrowRight, Trophy, Eye, EyeOff, ShieldCheck, KeyRound } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { supabase } from "@/lib/supabase";
 
@@ -52,6 +52,9 @@ export function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  // Code d'invitation : demande UNIQUEMENT a l'inscription. Les joueurs deja
+  // inscrits se connectent comme avant, sans rien de nouveau a saisir.
+  const [inviteCode, setInviteCode] = useState("");
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +70,52 @@ export function AuthPage() {
 
     try {
       if (isSignUp) {
+        // 1) Code d'invitation, verifie cote serveur (api/verifier-invitation).
+        //    Le code n'est jamais present dans le site telecharge par le
+        //    navigateur : il vit dans une variable d'environnement Vercel.
+        let invitationOk = false;
+        try {
+          const reponse = await fetch("/api/verifier-invitation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: inviteCode }),
+          });
+          const corps = await reponse.json().catch(() => ({}));
+          invitationOk = reponse.ok && corps?.ok === true;
+
+          if (!invitationOk) {
+            setError(
+              corps?.raison === "non-configure"
+                ? "Les inscriptions sont momentanément fermées. Contacte l'organisateur."
+                : "Code d'invitation invalide. Demande-le à l'organisateur de la ligue.",
+            );
+            setLoading(false);
+            return;
+          }
+        } catch {
+          // En cas d'echec reseau on REFUSE : mieux vaut une inscription
+          // impossible qu'une inscription ouverte a tout le monde.
+          setError("Vérification du code impossible. Réessaie dans un instant.");
+          setLoading(false);
+          return;
+        }
+
+        // 2) Pseudo deja pris ? Deux joueurs portant le meme nom rendraient le
+        //    classement illisible. La contrainte d'unicite en base reste le
+        //    garde-fou final ; ce test evite simplement de creer un compte
+        //    pour rien. Si la lecture est refusee, on laisse la base trancher.
+        const { data: homonymes } = await supabase
+          .from("profiles")
+          .select("id")
+          .ilike("pseudo", pseudo.trim())
+          .limit(1);
+
+        if (homonymes && homonymes.length > 0) {
+          setError("Ce pseudo est déjà utilisé. Choisis-en un autre.");
+          setLoading(false);
+          return;
+        }
+
         const { data, error: signUpError } = await supabase.auth.signUp({
           email: emailPropre,
           password,
@@ -90,6 +139,14 @@ export function AuthPage() {
 
           if (profileError) {
             console.error(profileError);
+            // 23505 = contrainte d'unicite : le pseudo vient d'etre pris.
+            if (String((profileError as any).code) === "23505") {
+              setError(
+                "Ce pseudo vient d'être pris. Ton compte est créé : connecte-toi et choisis un autre pseudo dans Profil.",
+              );
+              setLoading(false);
+              return;
+            }
           }
         }
 
@@ -252,6 +309,32 @@ export function AuthPage() {
 
           {/* ---- FORMULAIRE ---- */}
           <form onSubmit={handleAuth} className="mt-5 space-y-4">
+            {isSignUp && (
+              <div className="space-y-1.5">
+                <label htmlFor="auth-invite" className="text-xs font-semibold text-slate-300">
+                  Code d'invitation
+                </label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-slate-500" />
+                  <input
+                    id="auth-invite"
+                    type="text"
+                    required
+                    value={inviteCode}
+                    onChange={(e) => setInviteCode(e.target.value)}
+                    placeholder="Code fourni par l'organisateur"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="w-full rounded-xl border border-slate-800/80 bg-[#050b16]/80 px-4 py-3.5 pl-10 text-sm text-white placeholder-slate-600 shadow-[inset_0_1px_3px_rgba(0,0,0,.4)] transition-all duration-200 focus:border-emerald-500/60 focus:bg-[#050b16] focus:shadow-[0_0_0_3px_rgba(16,185,129,.15),inset_0_1px_3px_rgba(0,0,0,.4)] focus:outline-none"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Ligue privée : seuls les joueurs invités peuvent s'inscrire.
+                </p>
+              </div>
+            )}
+
             {isSignUp && (
               <div className="space-y-1.5">
                 <label htmlFor="auth-pseudo" className="text-xs font-semibold text-slate-300">
