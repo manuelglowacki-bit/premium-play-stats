@@ -990,6 +990,13 @@ function PronoFollowUpTab({
   const bonusExpected = bonusMatchIds.size > 0;
 
   const rows = useMemo(() => {
+    // Ordre d'affichage : ceux qui n'ont RIEN fait d'abord, puis les
+    // incomplets, puis les complets — et par pseudo a l'interieur de chaque
+    // groupe. La page s'appelle "Qui a oublie ses pronos ?" : la reponse
+    // doit etre la premiere chose lue, pas quelque part au milieu d'une
+    // liste alphabetique.
+    const rang = { none: 0, incomplete: 1, complete: 2 } as const;
+
     return players.map((player) => {
       const uid = String(player.id);
       const l1CompletedIds = new Set<string>();
@@ -1033,7 +1040,12 @@ function PronoFollowUpTab({
         bonusSelected,
         status: complete ? "complete" : none ? "none" : "incomplete",
       } as const;
-    });
+    })
+      .sort(
+        (a, b) =>
+          rang[a.status] - rang[b.status] ||
+          (a.player.pseudo ?? "").localeCompare(b.player.pseudo ?? "", "fr"),
+      );
   }, [players, predictions, selectedMatchIds, bonusMatchIds, l1Expected, bonusExpected]);
 
   const summary = useMemo(() => {
@@ -1195,6 +1207,20 @@ function PronoFollowUpTab({
     const pending = pendingRows;
     if (pending.length === 0) {
       notify("Aucun joueur à rappeler pour cette journée.");
+      return;
+    }
+
+    // Une notification part sur le telephone de chacun : on demande avant.
+    const noms = pending
+      .slice(0, 5)
+      .map((row) => row.player.pseudo || "Joueur")
+      .join(", ");
+    const reste = pending.length > 5 ? `, et ${pending.length - 5} autre(s)` : "";
+    if (
+      !window.confirm(
+        `Envoyer une notification à ${pending.length} joueur(s) ?\n\n${noms}${reste}`,
+      )
+    ) {
       return;
     }
 
@@ -1368,7 +1394,7 @@ function PronoFollowUpTab({
               d'utile à filtrer par "moyenne de complétion" par joueur). */}
           <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-3 text-left sm:p-4">
             <div className="font-display text-xl font-black text-sky-300 sm:text-2xl">{summary.average}%</div>
-            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Moyenne</div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-slate-500">Pronos déposés</div>
           </div>
         </div>
 
