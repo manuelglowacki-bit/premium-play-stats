@@ -989,6 +989,42 @@ function PronoFollowUpTab({
   // jamais un joueur sur un bonus qu'il ne peut pas sélectionner.
   const bonusExpected = bonusMatchIds.size > 0;
 
+  // Joueurs ayant reellement active les notifications. Sans cette
+  // information, "Rappeler tous (20)" laissait croire que vingt personnes
+  // seraient prevenues, alors que seules celles qui ont accepte les
+  // notifications le sont — les autres ne recevaient rien, et on ne
+  // l'apprenait qu'apres l'envoi, dans le bilan.
+  const [joignables, setJoignables] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    let annule = false;
+
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const jeton = data.session?.access_token;
+        if (!jeton) return;
+
+        const reponse = await fetch("/api/emails-joueurs", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${jeton}` },
+        });
+        if (!reponse.ok) return;
+
+        const corps = await reponse.json().catch(() => ({}));
+        if (!annule && Array.isArray(corps?.avecNotifications)) {
+          setJoignables(new Set(corps.avecNotifications.map(String)));
+        }
+      } catch {
+        // Information indisponible : on n'affiche rien de particulier.
+      }
+    })();
+
+    return () => {
+      annule = true;
+    };
+  }, []);
+
   const rows = useMemo(() => {
     // Ordre d'affichage : ceux qui n'ont RIEN fait d'abord, puis les
     // incomplets, puis les complets — et par pseudo a l'interieur de chaque
@@ -1075,6 +1111,12 @@ function PronoFollowUpTab({
   // jamais les complets (même logique que remindAll ci-dessous, calculée
   // ici séparément pour pouvoir afficher le compte (X) dans le libellé).
   const pendingRows = useMemo(() => rows.filter((row) => row.status !== "complete"), [rows]);
+
+  // Combien, parmi ceux a relancer, recevront reellement la notification.
+  const pendingJoignables = useMemo(
+    () => (joignables ? pendingRows.filter((row) => joignables.has(String(row.player.id))).length : null),
+    [pendingRows, joignables],
+  );
 
   const filteredRows = useMemo(
     () => rows.filter((row) => filter === "all" || row.status === filter),
@@ -1211,14 +1253,30 @@ function PronoFollowUpTab({
     }
 
     // Une notification part sur le telephone de chacun : on demande avant.
-    const noms = pending
+    const cibles = joignables
+      ? pending.filter((row) => joignables.has(String(row.player.id)))
+      : pending;
+
+    if (joignables && cibles.length === 0) {
+      notify(
+        "Aucun de ces joueurs n'a activé les notifications. Utilise « Partager un rappel » pour le groupe.",
+      );
+      return;
+    }
+
+    const noms = cibles
       .slice(0, 5)
       .map((row) => row.player.pseudo || "Joueur")
       .join(", ");
-    const reste = pending.length > 5 ? `, et ${pending.length - 5} autre(s)` : "";
+    const reste = cibles.length > 5 ? `, et ${cibles.length - 5} autre(s)` : "";
+    const nonJoints =
+      joignables && pending.length > cibles.length
+        ? `\n\n${pending.length - cibles.length} joueur(s) ne recevront rien : ils n'ont pas activé les notifications.`
+        : "";
+
     if (
       !window.confirm(
-        `Envoyer une notification à ${pending.length} joueur(s) ?\n\n${noms}${reste}`,
+        `Envoyer une notification à ${cibles.length} joueur(s) ?\n\n${noms}${reste}${nonJoints}`,
       )
     ) {
       return;
@@ -1333,7 +1391,11 @@ function PronoFollowUpTab({
                 className="!px-3 !py-2 text-[11px] sm:!px-4 sm:!py-2 sm:text-xs"
               >
                 <Bell size={13} className={remindingAll ? "animate-pulse" : ""} />
-                {remindingAll ? "Envoi en cours…" : `Rappeler tous (${pendingRows.length})`}
+                {remindingAll
+                  ? "Envoi en cours…"
+                  : pendingJoignables === null
+                    ? `Rappeler tous (${pendingRows.length})`
+                    : `Rappeler (${pendingJoignables} sur ${pendingRows.length})`}
               </PrimaryButton>
             </div>
           </div>

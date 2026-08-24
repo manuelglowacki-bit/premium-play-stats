@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-// Adresses e-mail des joueurs, pour l'onglet Admin → Joueurs.
+// Adresses e-mail des joueurs et liste de ceux qui ont active les
+// notifications, pour les onglets Admin → Joueurs et Admin → Suivi pronos.
 //
 // Les e-mails vivent dans auth.users, une table que le navigateur ne peut pas
 // lire : seule la clé de service y accède. D'où cette route.
@@ -68,7 +69,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       page += 1;
     }
 
-    return reponse(res, 200, { emails });
+    // Qui peut REELLEMENT recevoir une notification. La table
+    // push_subscriptions n'est lisible que par son proprietaire (politique
+    // RLS existante) : sans cette route, l'admin ne pouvait pas le savoir
+    // avant d'avoir clique et lu le bilan d'envoi.
+    const avecNotifications: string[] = [];
+    try {
+      const { data: abonnements } = await admin.from("push_subscriptions").select("user_id");
+      const vus = new Set<string>();
+      (abonnements ?? []).forEach((ligne: any) => {
+        const id = String(ligne?.user_id ?? "");
+        if (id && !vus.has(id)) {
+          vus.add(id);
+          avecNotifications.push(id);
+        }
+      });
+    } catch {
+      // Table absente ou illisible : on renvoie une liste vide, l'appelant
+      // se contente alors de ne rien afficher de particulier.
+    }
+
+    return reponse(res, 200, { emails, avecNotifications });
   } catch {
     return reponse(res, 500, { erreur: "erreur-serveur" });
   }
