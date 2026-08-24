@@ -545,7 +545,13 @@ function StatsPage() {
         const matchdayId = bonusMatchdayByMatchId.get(String(match.id)) ?? match.matchday_id;
         if (!matchdayId || dayLabelById.has(String(matchdayId))) return;
         if (match.matchday == null) return;
-        dayLabelById.set(String(matchdayId), `J${match.matchday}`);
+        // Selon les lignes, `matchday` vaut "1" ou deja "J1" : prefixer sans
+        // regarder donnait "JJ1" sous Meilleure journee.
+        const brut = String(match.matchday).trim();
+        dayLabelById.set(
+          String(matchdayId),
+          /^j/i.test(brut) ? `J${brut.slice(1)}` : `J${brut}`,
+        );
       });
 
       const byDay = new Map<string, DayStat>();
@@ -824,7 +830,7 @@ function StatsPage() {
     {
       label: "Meilleure journée",
       value: stats.bestDay,
-      sub: stats.bestDayLabel !== "—" ? stats.bestDayLabel : "Aucune donnée",
+      sub: stats.bestDayLabel !== "—" ? `Journée ${stats.bestDayLabel.replace(/^J/i, "")}` : "Aucune donnée",
       icon: TrendingUp,
     },
   ];
@@ -878,7 +884,7 @@ function StatsPage() {
                 Mes statistiques
               </h1>
               <p className="max-w-lg text-xs text-slate-300/80 md:text-sm">
-                Vos performances, vos tendances, vos records.
+                Tes performances, tes tendances, tes records.
               </p>
             </div>
           </section>
@@ -893,14 +899,11 @@ function StatsPage() {
           <section>
             <div className="mb-3 flex items-end justify-between gap-3">
               <div>
-                <div className="font-mono text-[9px] font-semibold uppercase tracking-[.2em] text-emerald-300/80">
-                  Dashboard
-                </div>
-                <h2 className="mt-0.5 text-base font-bold uppercase tracking-[.08em] text-white">
+                <h2 className="text-base font-bold uppercase tracking-[.08em] text-white">
                   Vue d'ensemble
                 </h2>
               </div>
-              <span className="font-mono text-[9px] uppercase tracking-widest text-slate-600">
+              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-slate-300">
                 {stats.playedDays}/{stats.seasonDays} journées
               </span>
             </div>
@@ -916,7 +919,7 @@ function StatsPage() {
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_85%_10%,rgba(52,211,153,.10),transparent_38%)]" />
                     <div className="relative flex h-full flex-col">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-[8px] font-semibold uppercase tracking-[.14em] text-slate-500">
+                        <span className="font-mono text-[9px] font-semibold uppercase tracking-[.14em] text-slate-400">
                           {kpi.label}
                         </span>
                         <span className="flex size-6 shrink-0 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300">
@@ -926,7 +929,7 @@ function StatsPage() {
                       <div className="mt-1.5">
                         <StatValue value={kpi.value} size="text-3xl md:text-[32px]" />
                       </div>
-                      <div className="mt-auto pt-1.5 text-[9px] text-slate-500">
+                      <div className="mt-auto pt-1.5 text-[10px] text-slate-400">
                         {kpi.sub}
                       </div>
                     </div>
@@ -1138,7 +1141,7 @@ function StatsPage() {
           {/* VOS DERNIÈRES JOURNÉES */}
           <section className="overflow-hidden rounded-[20px] border border-white/[0.08] bg-white/[0.025] shadow-[0_14px_40px_rgba(0,0,0,.26)] backdrop-blur-xl">
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4 md:px-5 md:pt-5">
-              <SectionHeader icon={CalendarDays} eyebrow="Historique" title="Vos dernières journées" />
+              <SectionHeader icon={CalendarDays} eyebrow="Historique" title="Tes dernières journées" />
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.025] px-2.5 py-1.5 font-mono text-[8px] font-bold uppercase tracking-widest text-slate-400 transition hover:border-emerald-400/20 hover:text-emerald-300"
