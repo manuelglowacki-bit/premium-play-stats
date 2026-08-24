@@ -5686,6 +5686,8 @@ function SettingsTab({
             <h2 className="font-display text-lg font-bold uppercase tracking-wide text-white">Équipe de cœur</h2>
             <p className="text-xs text-slate-400">
               Date limite et verrouillage automatique du choix d'équipe favorite (onglet Joueurs).
+          Rappel : les pronostics, eux, se verrouillent automatiquement 1 minute avant chaque
+          coup d'envoi — voir l'onglet Verrouillage.
             </p>
           </div>
         </div>
@@ -5718,61 +5720,20 @@ function SettingsTab({
         </div>
       </Card>
 
-      {/* ================= BLOCAGE DES PRONOSTICS ================= */}
-      <Card className="p-5">
-        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Timer size={18} className="text-emerald-400" />
-          Blocage des pronostics
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">
-          Valeur par défaut utilisée par le verrouillage automatique « Auto −1 min » des journées (onglet Bonus) —
-          règle réelle du site : 1 minute avant le coup d'envoi.
-        </p>
-        <div className="max-w-xs">
-          <NumberField
-            label="Minutes avant le coup d'envoi"
-            value={closingDelay}
-            onChange={setClosingDelay}
-            icon={Lock}
-          />
-        </div>
-      </Card>
+      {/* Le bloc "Blocage des pronostics" a ete retire. Son champ "minutes
+          avant le coup d'envoi" affichait 5 alors que le site verrouille a
+          1 minute, en dur (voir getMatchLockDate dans pronostics.tsx) : la
+          valeur n'etait branchee nulle part. Un reglage qui annonce une regle
+          du jeu differente de la vraie est pire qu'absent — surtout dans une
+          ligue avec une cagnotte. La regle est rappelee ci-dessous, la ou
+          l'admin la cherche vraiment (onglet Verrouillage).
+          La colonne app_settings.closing_delay_minutes reste en base. */}
 
-      {/* ================= BONUS ================= */}
-      <Card className="p-5">
-        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
-          <Gift size={18} className="text-emerald-400" />
-          Bonus
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">
-          Période de disponibilité des bonus — mêmes dates que celles utilisées par l'onglet Bonus pour générer et
-          filtrer la sélection premium (une seule et même source, modifiable ici ou là-bas).
-        </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              <Calendar size={11} className="text-emerald-400" /> Début de période
-            </label>
-            <input
-              type="datetime-local"
-              value={periodStart}
-              onChange={(e) => setPeriodStart(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
-            />
-          </div>
-          <div>
-            <label className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              <Calendar size={11} className="text-emerald-400" /> Fin de période
-            </label>
-            <input
-              type="datetime-local"
-              value={periodEnd}
-              onChange={(e) => setPeriodEnd(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-[#060b16] px-3 py-2 text-sm text-white outline-none focus:border-emerald-500/60"
-            />
-          </div>
-        </div>
-      </Card>
+      {/* Le bloc "Bonus" (periode de disponibilite) a ete retire d'ici : ce
+          sont exactement les memes dates que dans l'onglet Bonus, ou elles se
+          modifient a cote du tirage qu'elles commandent. Deux endroits pour
+          un meme reglage, c'est deux occasions de se contredire. */}
+
 
       {/* ================= MODE MAINTENANCE ================= */}
       <Card className={`p-5 ${maintenanceMode ? "border-red-500/40 bg-red-500/[0.03]" : ""}`}>
