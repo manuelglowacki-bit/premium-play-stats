@@ -281,12 +281,35 @@ const ALLOWED_IMAGE_TYPES = [
   // execute par le navigateur de celui qui l'ouvre.
 ];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 Mo
+
+// Meme plafond que le bucket Supabase (25 Mo) : tout ce que le serveur
+// accepte doit passer le controle du navigateur, sinon on refuse une photo
+// que le site aurait tres bien su stocker.
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25 Mo
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024; // 25 Mo
 
-function mediaKind(type: string): "image" | "video" | null {
+// Certains telephones (et certaines applis de partage) transmettent un
+// fichier SANS type : file.type vaut alors "". La photo etait refusee comme
+// "format non supporte" alors qu'elle etait parfaitement valable. On retombe
+// donc sur l'extension du nom de fichier.
+const IMAGE_EXTENSIONS = [
+  ".jpg", ".jpeg", ".png", ".webp", ".gif",
+  ".heic", ".heif", ".avif", ".bmp",
+];
+
+function extensionDe(nom: string): string {
+  const point = nom.lastIndexOf(".");
+  return point === -1 ? "" : nom.slice(point).toLowerCase();
+}
+
+function mediaKind(file: File): "image" | "video" | null {
+  const type = (file.type || "").toLowerCase();
   if (ALLOWED_IMAGE_TYPES.includes(type)) return "image";
   if (ALLOWED_VIDEO_TYPES.includes(type)) return "video";
+
+  const extension = extensionDe(file.name || "");
+  if (IMAGE_EXTENSIONS.includes(extension)) return "image";
+  if (VIDEO_EXTENSIONS.includes(extension)) return "video";
   return null;
 }
 
@@ -414,9 +437,19 @@ function VestiairePage() {
   const voiceUserIdRef = useRef<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Le champ de saisie grandit avec le texte. On remet la hauteur a zero avant
+  // de lire scrollHeight, sinon le champ ne redescend jamais quand on efface.
+  useEffect(() => {
+    const champ = draftRef.current;
+    if (!champ) return;
+    champ.style.height = "auto";
+    champ.style.height = `${Math.min(champ.scrollHeight, 132)}px`;
+  }, [draft]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   // Seul usage restant : recaler le scroll de la page au changement de
@@ -1413,7 +1446,7 @@ function VestiairePage() {
     let rejectedSize = false;
 
     for (const file of files) {
-      const kind = mediaKind(file.type);
+      const kind = mediaKind(file);
       if (!kind) {
         rejectedType = true;
         continue;
@@ -1427,9 +1460,9 @@ function VestiairePage() {
     }
 
     if (rejectedType) {
-      setErrorMessage("Format non supporté (photos JPEG/PNG/WebP/GIF ou vidéos MP4/WebM/MOV uniquement).");
+      setErrorMessage("Format non supporté (photos JPEG, PNG, WebP, GIF, HEIC, AVIF, BMP ou vidéos MP4, WebM, MOV).");
     } else if (rejectedSize) {
-      setErrorMessage("Fichier trop volumineux (max 8 Mo par photo, 25 Mo par vidéo).");
+      setErrorMessage("Fichier trop volumineux (max 25 Mo).");
     } else if (accepted.length) {
       setErrorMessage("");
     }
@@ -1446,8 +1479,8 @@ function VestiairePage() {
     setPendingFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
 
-  function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
-    const pastedMedia = Array.from(event.clipboardData.files).filter((file) => mediaKind(file.type));
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pastedMedia = Array.from(event.clipboardData.files).filter((file) => mediaKind(file));
     if (pastedMedia.length) {
       event.preventDefault();
       addFiles(pastedMedia);
@@ -2447,7 +2480,7 @@ function VestiairePage() {
                           event.preventDefault();
                           void sendMessage();
                         }}
-                        className="flex items-center gap-1.5"
+                        className="flex items-end gap-1.5"
                       >
                         <div className="relative shrink-0">
                           <button
@@ -2551,7 +2584,15 @@ function VestiairePage() {
                         <input
                           ref={fileInputRef}
                           type="file"
-                          accept={[...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES].join(",")}
+                          // Les extensions en plus des types MIME : sur iPhone,
+                          // le selecteur de fichiers ne reconnait pas toujours
+                          // "image/heic" seul.
+                          accept={[
+                            ...ALLOWED_IMAGE_TYPES,
+                            ...ALLOWED_VIDEO_TYPES,
+                            ...IMAGE_EXTENSIONS,
+                            ...VIDEO_EXTENSIONS,
+                          ].join(",")}
                           multiple
                           className="hidden"
                           onChange={(event) => {
@@ -2560,16 +2601,31 @@ function VestiairePage() {
                           }}
                         />
 
-                        <input
+                        {/* Un textarea, pas un input : un champ d'une seule ligne
+                            AVALE les retours a la ligne d'un copier-coller. Un
+                            classement colle depuis ailleurs arrivait donc en un
+                            seul bloc illisible. Il grandit tout seul jusqu'a 6
+                            lignes, puis defile. */}
+                        <textarea
+                          ref={draftRef}
                           value={draft}
                           onChange={(event) => setDraft(event.target.value)}
                           onPaste={handlePaste}
+                          onKeyDown={(event) => {
+                            // Entree envoie (reflexe de messagerie),
+                            // Maj+Entree passe a la ligne.
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              if (draft.trim() || pendingFiles.length) void sendMessage();
+                            }
+                          }}
+                          rows={1}
                           maxLength={2000}
                           disabled={!currentUserId || sending}
                           placeholder={
                             currentUserId ? "Écris ton message..." : "Connecte-toi pour écrire..."
                           }
-                          className="min-w-0 flex-1 bg-transparent px-1 text-sm text-white outline-none placeholder:text-slate-600"
+                          className="min-h-[24px] max-h-[132px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-0.5 text-sm leading-6 text-white outline-none placeholder:text-slate-600"
                         />
 
                         <button
