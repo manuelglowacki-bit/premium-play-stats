@@ -106,7 +106,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Journee et saison affichees dans l'en-tete. Elles etaient ecrites en dur
   // ("J1 • 2026", "Saison 2026-2027") et ne bougeaient donc jamais.
   const [headerSeason, setHeaderSeason] = useState<string | null>(null);
-  const [headerDay, setHeaderDay] = useState<{ number: number; kickoff: number | null } | null>(null);
+  const [headerDay, setHeaderDay] = useState<{ number: number } | null>(null);
+
+  // L'heure qu'il est, dans l'en-tete. Elle remplace la date du prochain match,
+  // que l'accueil affiche deja avec son compte a rebours — la repeter ici ne
+  // renseignait sur rien de plus.
+  //
+  // Reglee a la MINUTE, et non a la seconde : un chiffre qui bouge sans arret
+  // dans un en-tete fixe attire l'oeil pour rien, et forcerait un rendu par
+  // seconde sur toutes les pages. Le premier battement est cale sur le
+  // changement de minute reel, pour que l'affichage ne traine jamais.
+  const [maintenant, setMaintenant] = useState(() => new Date());
+
+  useEffect(() => {
+    let intervalle: ReturnType<typeof setInterval> | undefined;
+
+    const prochaineMinute = 60_000 - (Date.now() % 60_000);
+    const amorce = setTimeout(() => {
+      setMaintenant(new Date());
+      intervalle = setInterval(() => setMaintenant(new Date()), 60_000);
+    }, prochaineMinute);
+
+    return () => {
+      clearTimeout(amorce);
+      if (intervalle) clearInterval(intervalle);
+    };
+  }, []);
   useMeasuredChromeHeights(headerRef, navRef);
 
   // DERNIERE VISITE REELLE. auth.users.last_sign_in_at ne bouge qu'a la
@@ -188,7 +213,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         const now = Date.now();
         const next = playable.find((m) => m.at > now);
         const reference = next ?? playable[playable.length - 1];
-        setHeaderDay({ number: reference.number, kickoff: next ? reference.at : null });
+        setHeaderDay({ number: reference.number });
       } catch (error) {
         console.warn("En-tete : journee non chargee", error);
       }
@@ -415,24 +440,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="font-mono text-xs font-bold text-slate-200">
                 {headerDay ? `J${headerDay.number}` : "—"}
               </span>
-              {headerDay && (
-                <>
-                  <span className="h-3 w-px bg-slate-700" />
-                  <span className="font-mono text-[11px] text-slate-400">
-                    {headerDay.kickoff
-                      ? new Date(headerDay.kickoff)
-                          .toLocaleString("fr-FR", {
-                            weekday: "short",
-                            day: "numeric",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                          .replace(",", " ·")
-                      : "journée terminée"}
-                  </span>
-                </>
-              )}
+              <span className="h-3 w-px bg-slate-700" />
+              <span className="font-mono text-[11px] text-slate-400">
+                {maintenant
+                  .toLocaleString("fr-FR", {
+                    weekday: "short",
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                  .replace(",", " ·")}
+              </span>
             </div>
 
             {user ? (
