@@ -2327,12 +2327,30 @@ function BonusTab({
               const candidate = scoreCandidateForMatch(rawMatch, row.competition_code);
               if (!candidate) continue;
 
+              // Correspondance colonne -> critere. Elle n'est pas evidente et
+              // c'est pourquoi elle etait fausse : la colonne historique
+              // `balance_score` porte l'ECART AU CLASSEMENT, renomme
+              // `levelGap` en interne, tandis que l'EQUILIBRE vit dans
+              // `standings_balance_score`, ajoutee plus tard.
+              //
+              // Le code ecrivait un champ `balance` qui n'existe pas dans
+              // BonusSelectionScore : les trois criteres reellement attendus
+              // (standingsBalance, levelGap, form) etaient donc ABSENTS de
+              // l'objet reconstruit, et le detail du score affiche dans
+              // l'Admin etait faux au rechargement.
+              //
+              // `standings_balance_score` et `form_score` peuvent manquer si
+              // la migration 20260815120000 n'a pas ete appliquee : on retombe
+              // alors sur le score fraichement calcule plutot que sur zero,
+              // qui afficherait un critere a plat sans raison.
               hydrated[row.competition_code] = {
                 ...candidate,
                 score: {
                   total: row.selection_score,
+                  standingsBalance: row.standings_balance_score ?? candidate.score.standingsBalance,
+                  levelGap: row.balance_score,
+                  form: row.form_score ?? candidate.score.form,
                   prestige: row.prestige_score,
-                  balance: row.balance_score,
                   rivalry: row.rivalry_score,
                   schedule: row.schedule_score,
                 },
