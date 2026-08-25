@@ -5,6 +5,7 @@ import { InstallerApplication } from "@/components/prono/InstallerApplication";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { numeroDeJournee } from "@/lib/numeroJournee";
 import { resizeImageToDataUrl } from "@/lib/resizeImage";
 import {
   Trophy,
@@ -281,7 +282,7 @@ function IndexPage() {
           (reconciledMatches || []).forEach((m: any) => {
             if (m?.is_bonus === true) return;
             const at = kickoffOf(m);
-            const journee = Number(m?.matchday ?? m?.match_day ?? 0);
+            const journee = numeroDeJournee(m);
             if (at === null || !Number.isFinite(journee) || journee <= 0) return;
             const known = firstKickoffByDay.get(journee);
             if (known === undefined || at < known) firstKickoffByDay.set(journee, at);
@@ -324,7 +325,10 @@ function IndexPage() {
               .filter(
                 (m: any) =>
                   m?.is_bonus !== true &&
-                  Number(m?.matchday ?? m?.match_day ?? 0) === journeeVisee,
+                  // `matchday_code` D'ABORD : c'est la colonne reellement
+                  // renseignee sur les matchs importes, et l'ignorer faisait
+                  // disparaitre ce bloc de la page sans le moindre message.
+                  numeroDeJournee(m) === journeeVisee,
               )
               .map((m: any) => String(m.id)),
           );
@@ -531,17 +535,12 @@ setLeaderboard(rankedRankings);
           String(m.status || "").toLowerCase() === "finished" ||
           String(m.status || "").toLowerCase() === "ft"
         );
-        const dayNumber = (value: any) => {
-          const match = String(value ?? "").match(/\d+/);
-          return match ? Number(match[0]) : 0;
-        };
         const latest = [...finished].sort((a: any, b: any) =>
-          dayNumber(b.matchday_code || b.matchday || b.match_day) -
-          dayNumber(a.matchday_code || a.matchday || a.match_day)
+          numeroDeJournee(b) - numeroDeJournee(a)
         )[0];
         if (latest) {
-          const raw = latest.matchday_code || latest.matchday || latest.match_day;
-          setCurrentMatchday(String(raw).toUpperCase().startsWith("J") ? String(raw).toUpperCase() : `J${raw}`);
+          const numero = numeroDeJournee(latest);
+          if (numero > 0) setCurrentMatchday(`J${numero}`);
         }
 
         // -------- Stats personnelles --------
