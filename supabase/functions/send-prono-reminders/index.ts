@@ -1,6 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import webpush from "npm:web-push@3.6.7";
-import { targetWindow } from "../_shared/fenetreRappel.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -68,9 +67,17 @@ function matchTeam(match: MatchRow, side: "home" | "away") {
     : match.away_team ?? "Équipe extérieure";
 }
 
-// La règle vit dans _shared/fenetreRappel.ts : elle doit rester cohérente avec
-// la fréquence de la tâche planifiée, et cette cohérence est vérifiée par
-// npm run verif-rappels.
+function targetWindow(now: Date) {
+  // Fonction appelée toutes les minutes.
+  // On accepte une fenêtre de ±5 minutes autour de T-1h
+  // pour éviter de rater le rappel si le cron prend quelques minutes de retard.
+  const target = new Date(now.getTime() + 60 * 60 * 1000);
+
+  return {
+    from: new Date(target.getTime() - 5 * 60 * 1000),
+    to: new Date(target.getTime() + 5 * 60 * 1000),
+  };
+}
 
 // ============================================================
 // MODE AUTOMATIQUE (cron) — inchangé fonctionnellement par rapport à

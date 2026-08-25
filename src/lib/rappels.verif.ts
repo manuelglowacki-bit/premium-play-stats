@@ -13,6 +13,7 @@
  * tombe dans la fenêtre d'au moins un réveil.
  */
 
+import { readFileSync } from "node:fs";
 import {
   DEMI_FENETRE_MINUTES,
   INTERVALLE_CRON_MINUTES,
@@ -30,6 +31,26 @@ function verifier(nom: string, condition: boolean, detail = "") {
 }
 
 const MINUTE = 60_000;
+
+// ---------- 0. La constante correspond-elle AU VRAI CODE DÉPLOYÉ ? ----------
+// La fenêtre est écrite en dur dans la fonction Edge (qui tourne sous Deno et
+// ne peut pas être importée ici). Elle est donc recopiée dans fenetreRappel.ts
+// — et deux copies d'une même valeur finissent toujours par diverger. On lit
+// le fichier de la fonction et on compare : si quelqu'un change l'une sans
+// l'autre, ce test tombe.
+{
+  const source = readFileSync(
+    new URL("../../supabase/functions/send-prono-reminders/index.ts", import.meta.url),
+    "utf8",
+  );
+  const trouve = source.match(/target\.getTime\(\)\s*-\s*(\d+)\s*\*\s*60\s*\*\s*1000/);
+  const minutesReelles = trouve ? Number(trouve[1]) : null;
+  verifier(
+    "la constante correspond à la fenêtre écrite dans la fonction déployée",
+    minutesReelles === DEMI_FENETRE_MINUTES,
+    `fonction : ${minutesReelles} min, constante : ${DEMI_FENETRE_MINUTES} min`,
+  );
+}
 
 // ---------- 1. La règle de base ----------
 verifier(
