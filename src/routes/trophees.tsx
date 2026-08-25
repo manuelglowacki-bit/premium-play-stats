@@ -1935,32 +1935,32 @@ function VestiairePage() {
                 au-dessus, dit deja ou l'on est, et ces pixels vont aux
                 messages, qu'on veut justement relire en repondant. */}
             <header
-              className={`flex items-center justify-between gap-3 border-b border-white/[.07] px-3 py-3 sm:px-5 ${
+              className={`flex items-center justify-between gap-2 border-b border-white/[.07] px-3 py-3 sm:gap-3 sm:px-5 ${
                 keyboardOpen ? "hidden sm:flex" : ""
               }`}
             >
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="grid size-10 shrink-0 place-items-center rounded-2xl border border-emerald-300/30 bg-gradient-to-br from-emerald-400/20 to-purple-500/15 text-emerald-300 shadow-[0_0_25px_rgba(16,185,129,.10)]">
-                  <MessageCircle size={20} />
+              <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-2xl border border-emerald-300/30 bg-gradient-to-br from-emerald-400/20 to-purple-500/15 text-emerald-300 shadow-[0_0_25px_rgba(16,185,129,.10)] sm:size-10">
+                  <MessageCircle size={18} />
                 </div>
                 <div className="min-w-0">
-                  <div className="font-display text-lg font-black uppercase tracking-tight text-white sm:text-xl">
+                  <div className="truncate font-display text-base font-black uppercase tracking-tighter text-white sm:text-xl sm:tracking-tight">
                     Le Vestiaire
                   </div>
-                  <div className="text-[10px] text-slate-500">
+                  <div className="truncate text-[10px] text-slate-500">
                     Le chat privé du groupe
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
                 <button
                   type="button"
                   onClick={async () => {
                     const permission = await requestVestiaireNotificationPermission();
                     setNotificationPermission(permission);
                   }}
-                  className={`relative grid size-9 place-items-center rounded-xl border transition ${
+                  className={`relative grid size-8 shrink-0 place-items-center rounded-xl border transition sm:size-9 ${
                     notificationPermission === "granted"
                       ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
                       : notificationPermission === "denied"
@@ -1991,7 +1991,7 @@ function VestiairePage() {
                 <button
                   type="button"
                   onClick={() => setSearchOpen((value) => !value)}
-                  className={`grid size-9 place-items-center rounded-xl border transition ${
+                  className={`grid size-8 shrink-0 place-items-center rounded-xl border transition sm:size-9 ${
                     searchOpen
                       ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
                       : "border-white/10 bg-white/[.03] text-slate-400 hover:text-white"
@@ -2004,11 +2004,14 @@ function VestiairePage() {
                 <button
                   type="button"
                   onClick={() => setShowPlayers((value) => !value)}
-                  className="flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[.08] px-3 py-1.5 transition hover:bg-emerald-400/[.14]"
+                  className="flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/[.08] px-2 py-1.5 transition hover:bg-emerald-400/[.14] sm:gap-2 sm:px-3"
                 >
                   <span className="vestiaire-online-dot size-2 rounded-full bg-emerald-400" />
+                  {/* Sur telephone, seul le nombre : « en ligne » se coupait en
+                      deux lignes et volait au titre la place qui lui manquait. */}
                   <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-emerald-300">
-                    {onlineCount} en ligne
+                    {onlineCount}
+                    <span className="hidden sm:inline"> en ligne</span>
                   </span>
                   <ChevronDown
                     size={12}
