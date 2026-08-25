@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
 import { MessagesPrives } from "@/components/prono/MessagesPrives";
+import { Isoler } from "@/components/prono/Isoler";
 import { abonnerMessagesRecus, compterNonLusEnBase } from "@/lib/messagesPrives";
 import { supabase } from "@/lib/supabase";
 import { EMOJI_CATEGORIES, chercherEmojis, type EmojiEntry } from "@/lib/emojis";
@@ -1984,16 +1985,28 @@ function VestiairePage() {
                 `currentUserId` conditionne le montage : sans identite, il n'y a
                 ni conversation a charger ni expediteur a inscrire. */}
             {privesOuverts && currentUserId && (
-              <MessagesPrives
-                moi={currentUserId}
-                joueurs={joueursJoignables}
-                ouvrirAvec={ouvrirPriveAvec}
+              // `Isoler` : si les messages prives echouent, ils echouent SEULS.
+              // Sans cette barriere, la moindre erreur a l'interieur emportait
+              // tout le Vestiaire — salon commun compris — sur un ecran
+              // « Something went wrong ». C'est arrive.
+              <Isoler
+                nom="Les messages privés"
                 onFermer={() => {
                   setPrivesOuverts(false);
                   setOuvrirPriveAvec(null);
                 }}
-                onNonLus={setPrivesNonLus}
-              />
+              >
+                <MessagesPrives
+                  moi={currentUserId}
+                  joueurs={joueursJoignables}
+                  ouvrirAvec={ouvrirPriveAvec}
+                  onFermer={() => {
+                    setPrivesOuverts(false);
+                    setOuvrirPriveAvec(null);
+                  }}
+                  onNonLus={setPrivesNonLus}
+                />
+              </Isoler>
             )}
 
             {/* 111px mesures : le plus gros poste de decor de la page. Pendant
