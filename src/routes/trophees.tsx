@@ -373,9 +373,17 @@ function notifyVestiaireMessage(profile: Profile | null, content: string) {
   try {
     const notification = new Notification(`Nouveau message de ${name}`, {
       body: preview,
+      icon: "/pwa-192.png",
+      // Android ne garde que la FORME du badge : d'ou un ballon plein
+      // plutot que l'icone couleur, qui y devenait une tache informe.
+      badge: "/notification-badge.png",
       tag: "vestiaire-message",
+      // `renotify` existe bien dans les navigateurs (il fait resonner une
+      // nouvelle alerte quand un message remplace le precedent sous le meme
+      // `tag`) mais manque encore au type fourni par TypeScript. D'ou ce
+      // cast, plutot que de perdre le comportement.
       renotify: true,
-    });
+    } as NotificationOptions & { renotify: boolean });
 
     notification.onclick = () => {
       window.focus();

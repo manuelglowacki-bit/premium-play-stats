@@ -72,7 +72,11 @@ self.addEventListener("push", (event) => {
   const options = {
     body: data.body || "Tu as une nouvelle notification.",
     icon: data.icon || "/pwa-192.png",
-    badge: data.badge || "/pwa-192.png",
+    // Le BADGE est la petite icone de la barre d'etat Android. Android n'en
+    // garde QUE la forme : il ignore les couleurs et remplit la silhouette.
+    // L'icone couleur de l'application y devenait donc une tache blanche
+    // informe. notification-badge.png est un ballon plein, lisible a 24px.
+    badge: data.badge || "/notification-badge.png",
     tag: data.tag || "prono-ligue1",
     data: data.data || { url: "/pronostics" },
     vibrate: [100, 50, 100],
