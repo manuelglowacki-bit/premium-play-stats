@@ -284,7 +284,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div
-      className="min-h-screen bg-[#030712] text-slate-100 relative flex flex-col font-sans"
+      // PAS de `min-h-screen` ici : `min-height: 100vh` l'emporterait sur la
+      // hauteur ci-dessous des que la hauteur reellement visible est plus
+      // petite que 100vh — c'est-a-dire presque toujours sur Android, ou la
+      // barre d'URL la rogne, et massivement des que le clavier s'ouvre.
+      // L'application restait alors plus haute que l'ecran, et tout ce qui se
+      // trouve en bas (le champ de saisie du Vestiaire, son bouton Envoyer)
+      // passait sous le bord de l'ecran, hors d'atteinte : le corps de page
+      // ne defile pas, il n'y avait aucun moyen d'y acceder.
+      //
+      // `--app-vh` (voir useAppViewportHeight) est deja la hauteur visible
+      // mesuree, et `100dvh` sert de repli tant que le script n'a pas tourne.
+      // Les deux suffisent : un minimum en plus ne peut que les contredire.
+      className="bg-[#030712] text-slate-100 relative flex flex-col font-sans"
       style={{ height: "var(--app-vh, 100dvh)" }}
     >
 
