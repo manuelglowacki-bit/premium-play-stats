@@ -507,8 +507,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ni de remonter le fil.
 
             `flex-1 min-h-0 flex-col` le remet dans la chaine ; `min-w-0`
-            reste, il corrigeait un vrai debordement horizontal. */}
-        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">{children}</div>
+            reste, il corrigeait un vrai debordement horizontal.
+
+            `[&>*]:w-full` repare une consequence imprevue de ce passage en
+            flex. Presque toutes les pages ont pour racine `mx-auto max-w-5xl`.
+            Tant que ce wrapper etait un bloc, `mx-auto` centrait une boite qui
+            faisait 100% de la largeur. En flex-colonne, une marge laterale
+            `auto` ANNULE l'etirement (align-items: stretch ne s'applique plus)
+            et l'element se dimensionne alors sur son contenu.
+
+            Mesure sur 393x780 avec la journee 2 chargee : <main> faisait 393px
+            de large, mais la page 439px — et 455px de bord droit. Comme <main>
+            porte `overflow-y-auto`, que le navigateur calcule en
+            `overflow-x: auto`, rien ne debordait visiblement : tout ce qui
+            depassait etait simplement COUPE a droite. D'ou, sur telephone, le
+            compteur de bonus tronque, le texte des rappels sans retour a la
+            ligne et la deuxieme colonne du compte a rebours absente.
+
+            `w-full` sur les enfants directs leur rend la largeur qu'ils
+            avaient en bloc ; `max-w-5xl` et `mx-auto` continuent de jouer leur
+            role sur grand ecran. */}
+
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col [&>*]:w-full">{children}</div>
 </main>
 
       {/* ================= NAVIGATION â€” un seul bloc, sur tous les Ã©crans ================= */}
