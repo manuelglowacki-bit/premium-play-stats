@@ -1888,7 +1888,7 @@ function PronosticsPage() {
               </h1>
             </div>
 
-            <div className="flex shrink-0 items-start gap-5 text-right">
+            <div className="flex shrink-0 items-start gap-3 text-right sm:gap-5">
               {/* ANNEAU DES POINTS — meme forme que celui des pronostics, a
                   cote de lui : l'un dit ce qui est rempli, l'autre ce que ça
                   rapporte. Le maximum n'est pas ecrit en dur, il se deduit du
@@ -1896,7 +1896,7 @@ function PronosticsPage() {
                   Le chiffre vient du MEME moteur que le classement
                   (useMesPoints) : les deux ne peuvent pas se contredire. */}
               <div>
-                <div className="relative inline-flex size-20 items-center justify-center">
+                <div className="relative inline-flex size-14 items-center justify-center sm:size-20">
                   <svg className="absolute inset-0 -rotate-90" viewBox="0 0 80 80">
                     <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
                     <circle
@@ -1923,24 +1923,24 @@ function PronosticsPage() {
                       <span className="font-display text-xl font-black text-slate-600">—</span>
                     ) : (
                       <>
-                        <span className="font-display text-xl font-black leading-none text-white">
+                        <span className="font-display text-base font-black leading-none text-white sm:text-xl">
                           {pointsJournee}
                           <span className="text-slate-500">/{pointsMax}</span>
                         </span>
-                        <span className="mt-0.5 font-mono text-[8px] uppercase tracking-widest text-slate-500">
+                        <span className="mt-0.5 font-mono text-[7px] uppercase tracking-widest text-slate-500 sm:text-[8px]">
                           pts
                         </span>
                       </>
                     )}
                   </div>
                 </div>
-                <p className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#E7B542]">
-                  {mesPoints.chargement ? "Calcul…" : `${mesPoints.saison} pts saison`}
+                <p className="mt-1 text-center font-mono text-[8px] font-semibold uppercase tracking-wider text-[#E7B542] sm:mt-1.5 sm:text-[10px]">
+                  {mesPoints.chargement ? "…" : `${mesPoints.saison} pts saison`}
                 </p>
               </div>
 
               <div>
-              <div className="relative inline-flex size-20 items-center justify-center">
+              <div className="relative inline-flex size-14 items-center justify-center sm:size-20">
                 <svg className="absolute inset-0 -rotate-90" viewBox="0 0 80 80">
                   <circle
                     cx="40"
@@ -1970,7 +1970,7 @@ function PronosticsPage() {
                   </defs>
                 </svg>
                 <div className="flex flex-col items-center">
-                  <span className="font-display text-xl font-black text-white leading-none">
+                  <span className="font-display text-base font-black leading-none text-white sm:text-xl">
                     {filled}/{total}
                   </span>
                 </div>
@@ -1980,7 +1980,7 @@ function PronosticsPage() {
                   rapproche l'anneau du message d'avancement qui vivait tout
                   en bas du bandeau. */}
               <p
-                className={`mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
+                className={`mt-1 text-center font-mono text-[8px] font-semibold uppercase tracking-wider sm:mt-1.5 sm:text-[10px] ${
                   allDone ? "text-emerald-400" : "text-slate-400"
                 }`}
               >

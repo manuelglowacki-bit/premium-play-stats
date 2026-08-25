@@ -13,6 +13,27 @@ const router = createRouter({ routeTree })
 // exige un service worker actif comme critère d'installabilité. Même
 // fichier réutilisé (pas de second service worker) — voir push-sw.js pour
 // la portée stricte de son cache (assets statiques /assets/ uniquement).
+// INSTALLATION SUR L'ECRAN D'ACCUEIL — capter l'invite du navigateur des le
+// demarrage. Chrome emet `beforeinstallprompt` tres tot, bien avant que le
+// composant qui propose l'installation ne soit monte : l'intro du site dure
+// environ quatre secondes, l'evenement serait deja passe. On le retient donc
+// ici, au premier instant, et le composant vient le chercher.
+//
+// preventDefault empeche le navigateur d'afficher SA banniere quand il le
+// decide : l'installation est proposee dans le site, au moment choisi.
+declare global {
+  interface Window {
+    inviteInstallation?: Event & { prompt: () => Promise<void> };
+  }
+}
+
+window.addEventListener('beforeinstallprompt', (evenement) => {
+  evenement.preventDefault();
+  window.inviteInstallation = evenement as Window['inviteInstallation'];
+  // Previent le composant s'il est deja monte.
+  window.dispatchEvent(new CustomEvent('invite-installation-prete'));
+});
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/push-sw.js').catch(() => {

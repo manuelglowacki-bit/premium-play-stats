@@ -24,6 +24,18 @@
  *   * aucun badge ne dépend de l'ordre dans lequel les données arrivent.
  */
 
+/**
+ * Le catalogue, pour la legende affichee sur le classement. Ecrit ici, a cote
+ * des regles : une legende rangee ailleurs finit toujours par decrire des
+ * badges qui n'existent plus.
+ */
+export const CATALOGUE_BADGES = [
+  { icone: "🎯", libelle: "Meilleur au 1N2", explication: "le plus de bons résultats" },
+  { icone: "💎", libelle: "Roi du score exact", explication: "le plus de scores exacts" },
+  { icone: "📈", libelle: "Meilleure journée", explication: "le meilleur total sur une journée" },
+  { icone: "🏅", libelle: "Vainqueur du jour", explication: "le plus de points sur la dernière journée" },
+] as const;
+
 export type Badge = {
   id: string;
   icone: string;

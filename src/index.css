@@ -101,8 +101,15 @@ body{
        l'emporte et laisse le champ sous 16px. C'est exactement ce qui s'est
        produit sur le champ du Vestiaire : la regle etait ecrite, mais
        perdait, et le telephone zoomait a chaque fois qu'on touchait le
-       champ. */
-    :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]){
+       champ.
+
+       EXCEPTION : les champs `inputmode="numeric"`. Ce sont les petites cases
+       de score de la page Pronos, dimensionnees pour tenir a neuf par ligne.
+       Les passer a 16px faisait gonfler toute la grille sur telephone. Le
+       compromis est assume : sur iPhone, toucher une case de score peut
+       provoquer un leger zoom, ce qui derange bien moins qu'une page dont la
+       mise en page ne tient plus. */
+    :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not([inputmode="numeric"]){
         font-size:16px;
     }
 }

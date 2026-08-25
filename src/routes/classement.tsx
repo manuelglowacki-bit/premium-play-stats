@@ -14,7 +14,7 @@ import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLe
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
-import { calculerBadges, type Badge } from "@/lib/classementBadges";
+import { calculerBadges, CATALOGUE_BADGES, type Badge } from "@/lib/classementBadges";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/classement")({
@@ -957,6 +957,23 @@ function ClassementPage() {
                   })}
                 </div>
               </div>
+            </div>
+
+            {/* LEGENDE DES BADGES — sans elle, les pastilles a cote des
+                pseudos restent une devinette. Elle vit sous le bandeau des
+                gains, la ou le regard passe avant d'attaquer le classement. */}
+            <div className="mb-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+              {CATALOGUE_BADGES.map((badge) => (
+                <span key={badge.libelle} className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="text-sm leading-none">{badge.icone}</span>
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-slate-400">
+                    {badge.libelle}
+                  </span>
+                  <span className="hidden text-[10px] text-slate-600 sm:inline">
+                    · {badge.explication}
+                  </span>
+                </span>
+              ))}
             </div>
 
             <div className="mb-3 flex items-center gap-3 px-1">

@@ -1,6 +1,7 @@
 ﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
+import { InstallerApplication } from "@/components/prono/InstallerApplication";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -687,6 +688,12 @@ setLeaderboard(rankedRankings);
           clairement séparées, cohérent avec la demande de blocs "qui
           respirent" plutôt que compressés. */}
       <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
+
+        {/* Installation sur l'ecran d'accueil. Le bloc ne s'affiche que s'il
+            y a quelque chose a proposer : ni sur une application deja
+            installee, ni sur un navigateur qui ne sait pas installer, ni si le
+            joueur a ferme la proposition. */}
+        <InstallerApplication />
 
         {/* HERO SECTION avec Effet Verre */}
         {/* Rembourrage reduit (p-12 -> p-8 sur grand ecran) : c'est lui qui

@@ -17,6 +17,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
+import { InstallerApplication } from "@/components/prono/InstallerApplication";
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { supabase } from "@/lib/supabase";
 import { resizeImageToDataUrl } from "@/lib/resizeImage";
@@ -875,6 +876,9 @@ function ProfilPage() {
   return (
     <AppShell>
       <div className="relative z-10 mx-auto max-w-6xl space-y-8 pb-28 md:space-y-10 md:pb-20">
+        {/* Second emplacement, volontaire : un joueur qui a ferme la
+            proposition sur l'Accueil doit pouvoir la retrouver quelque part. */}
+        <InstallerApplication compact />
         <input
           type="file"
           ref={fileInputRef}
