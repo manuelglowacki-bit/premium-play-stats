@@ -18,6 +18,7 @@ import { computePrizeByRank } from "@/lib/prizePool";
 import { calculerBadges, CATALOGUE_BADGES, type Badge } from "@/lib/classementBadges";
 import { dessinerAffiche, afficheEnFichier } from "@/lib/afficheClassement";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
+import { fetchAllRows } from "@/lib/supabaseFetchAll";
 
 export const Route = createFileRoute("/classement")({
   head: () => ({
@@ -430,10 +431,31 @@ function ClassementPage() {
           ]),
         ];
 
-        const { data: predictionsData, error: predictionsError } = await supabase
-          .from("predictions")
-          .select("user_id, match_id, home_prediction, away_prediction, created_at")
-          .in("match_id", allScoredMatchIds);
+        // PAGINE. Cette requete ne l'etait pas, et PostgREST tronque en
+        // silence a 1000 lignes : passe la journee 4, a 23 joueurs, le
+        // classement perdait des pronostics et affichait des totaux faux pour
+        // TOUT LE MONDE (mesure : 1265 pronostics attendus, 1000 recus, 23
+        // joueurs sur 23 avec un total errone — 45 points affiches 36).
+        //
+        // Le filtre `.in(match_id, ...)` disparait avec elle, et c'est tant
+        // mieux : a 34 journees il produisait une adresse de plus de 17 000
+        // caracteres, que bien des serveurs refusent. On filtre desormais
+        // apres reception, comme le font deja l'Accueil et les Stats.
+        const scoredIds = new Set(allScoredMatchIds);
+        const { data: toutesPredictions, error: predictionsError } = await fetchAllRows<{
+          user_id: string;
+          match_id: string;
+          home_prediction: number | null;
+          away_prediction: number | null;
+          created_at?: string | null;
+        }>(
+          "predictions",
+          "user_id,match_id,home_prediction,away_prediction,created_at",
+          ["user_id", "match_id"],
+        );
+        const predictionsData = (toutesPredictions ?? []).filter((ligne) =>
+          scoredIds.has(String(ligne.match_id)),
+        );
 
         if (isStale()) return;
         if (predictionsError) throw predictionsError;
