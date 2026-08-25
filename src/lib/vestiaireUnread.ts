@@ -19,9 +19,22 @@ export async function getVestiaireUnreadCount(userId: string | null): Promise<nu
   if (!userId || typeof window === "undefined") return 0;
 
   const lastRead = window.localStorage.getItem(VESTIAIRE_UNREAD_KEY);
+
   // Aucun repère : le joueur n'a jamais ouvert le Vestiaire sur cet appareil.
-  // On ne lui annonce pas tout l'historique comme "non lu".
-  if (!lastRead) return 0;
+  //
+  // On ne lui annonce pas tout l'historique comme "non lu" — ce serait un
+  // badge à 200 dès la première ouverture, que personne ne lirait. Mais on ne
+  // peut pas non plus se contenter de renvoyer 0 sans rien faire : le repère
+  // resterait absent indéfiniment, et ce joueur ne verrait JAMAIS de pastille,
+  // même pour des messages écrits après son arrivée. Or c'est précisément lui
+  // qu'il faut attirer dans le salon.
+  //
+  // On pose donc le repère à maintenant : rien n'est signalé cette fois, et
+  // tout ce qui arrive ensuite est compté normalement.
+  if (!lastRead) {
+    window.localStorage.setItem(VESTIAIRE_UNREAD_KEY, new Date().toISOString());
+    return 0;
+  }
 
   const { count, error } = await supabase
     .from("chat_messages")
