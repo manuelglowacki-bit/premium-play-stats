@@ -93,7 +93,7 @@ select
   mt.home_team || ' – ' || mt.away_team as match,
   mt.finished,
   mt.home_score || ' - ' || mt.away_score as score_reel,
-  p.home_score  || ' - ' || p.away_score  as ton_prono,
+  p.home_prediction || ' - ' || p.away_prediction as ton_prono,
   (bo.match_id is not null)             as est_un_match_bonus
 from predictions p
 join matches   mt on mt.id = p.match_id
