@@ -418,6 +418,8 @@ function VestiairePage() {
   const [emojiQuery, setEmojiQuery] = useState("");
   // Le panneau « toutes les emoticones » des reactions, replie par defaut.
   const [reactionsCompletes, setReactionsCompletes] = useState(false);
+  // Les messages longs replies que le joueur a choisi d'ouvrir.
+  const [messagesDeplies, setMessagesDeplies] = useState<Set<string>>(() => new Set());
   const [emojiCategorie, setEmojiCategorie] = useState(EMOJI_CATEGORIES[0].id);
   // Les dernieres utilisees, gardees sur l'appareil du joueur : avec 605
   // emoticones, retrouver celle qu'on met tout le temps devient la vraie
@@ -2353,14 +2355,59 @@ function VestiairePage() {
                                 </div>
                               ) : (
                                 <>
-                                  {parsed.text && (
-                                    <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-300">
-                                      {parsed.text}
-                                      {message.id.startsWith("temp-") ? (
-                                        <span className="ml-2 text-[9px] text-slate-600">Envoi…</span>
-                                      ) : null}
-                                    </p>
-                                  )}
+                                  {parsed.text && (() => {
+                                    // Un message de 2000 caracteres remplit tout
+                                    // l'ecran d'un telephone et enterre la
+                                    // conversation : impossible de voir ce qui
+                                    // precede ou de retrouver le champ de saisie
+                                    // sans faire defiler longuement. On le replie
+                                    // au-dela d'une douzaine de lignes, comme le
+                                    // font les messageries.
+                                    const lignes = parsed.text.split("\n").length;
+                                    const longMessage = parsed.text.length > 420 || lignes > 12;
+                                    const deplie = messagesDeplies.has(message.id);
+                                    const replie = longMessage && !deplie;
+
+                                    return (
+                                      <div className="mt-1.5">
+                                        <div className="relative">
+                                          <p
+                                            className={`whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-300 ${
+                                              replie ? "max-h-[15rem] overflow-hidden" : ""
+                                            }`}
+                                          >
+                                            {parsed.text}
+                                            {message.id.startsWith("temp-") ? (
+                                              <span className="ml-2 text-[9px] text-slate-600">Envoi…</span>
+                                            ) : null}
+                                          </p>
+
+                                          {/* Le fondu dit que le texte continue —
+                                              sans lui, on croit le message fini. */}
+                                          {replie && (
+                                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#06101a] to-transparent" />
+                                          )}
+                                        </div>
+
+                                        {longMessage && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setMessagesDeplies((actuels) => {
+                                                const suivants = new Set(actuels);
+                                                if (suivants.has(message.id)) suivants.delete(message.id);
+                                                else suivants.add(message.id);
+                                                return suivants;
+                                              })
+                                            }
+                                            className="mt-1 font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-400 transition hover:text-emerald-300"
+                                          >
+                                            {replie ? "Voir tout le message" : "Réduire"}
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
 
                                   {parsed.images.length > 0 && (
                                     <div
