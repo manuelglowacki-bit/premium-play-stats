@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "verif-points": "tsx src/lib/leaderboardStats.verif.ts"
+    "verif-points": "tsx src/lib/leaderboardStats.verif.ts",
+    "verif-badges": "tsx src/lib/classementBadges.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -14,6 +14,7 @@ import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLe
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
+import { calculerBadges, type Badge } from "@/lib/classementBadges";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/classement")({
@@ -57,6 +58,31 @@ type RankedPlayer = PlayerProfile & {
   careerLevel: number;
   careerTitle: string;
 };
+
+/**
+ * Les distinctions d'un joueur, en petites pastilles a cote de son pseudo.
+ * `title` porte l'explication : sur telephone il n'y a pas de survol, mais un
+ * appui long l'affiche, et le lecteur d'ecran la lit.
+ *
+ * Ecrit une fois pour les deux affichages (ordinateur et telephone) : deux
+ * rendus separes finiraient par ne plus montrer les memes badges.
+ */
+function BadgesJoueur({ badges, taille = "normal" }: { badges?: Badge[]; taille?: "normal" | "petit" }) {
+  if (!badges?.length) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-0.5">
+      {badges.map((badge) => (
+        <span
+          key={badge.id}
+          title={`${badge.libelle} — ${badge.detail}`}
+          className={`leading-none ${taille === "petit" ? "text-[11px]" : "text-sm"}`}
+        >
+          {badge.icone}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 /**
  * Réduit progressivement la taille d'un nom de joueur trop long au lieu de le
@@ -146,6 +172,10 @@ function ClassementPage() {
   const [participationTotalByUser, setParticipationTotalByUser] = useState<Record<string, number>>({});
   const [playedMatchdaysByUser, setPlayedMatchdaysByUser] = useState<Record<string, number>>({});
   const [finishedMatchdayCount, setFinishedMatchdayCount] = useState(0);
+  // Distinctions affichees a cote des pseudos. Purement decoratives : elles ne
+  // rapportent aucun point et n'entrent dans aucun calcul (voir
+  // src/lib/classementBadges.ts et ses verifications).
+  const [badgesByUser, setBadgesByUser] = useState<Record<string, Badge[]>>({});
   const [latestMatchdayNumber, setLatestMatchdayNumber] = useState<number | null>(null);
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
   const [previousRankByUser, setPreviousRankByUser] = useState<Record<string, number>>({});
@@ -447,7 +477,7 @@ function ClassementPage() {
         const scorableLigue1Matches = markLiveMatchesScorable(liveMatches);
         const scorableBonusMatches = markLiveMatchesScorable(bonusMatches);
 
-        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, participationByUser: participationCounts, participationTotalByUser: participationTotals, pointsByMatchday, pointsByPredictionKey } =
+        const { pointsByUser: points, predictionsCountByUser: predictionsCount, exactScoresByUser: exactScores, regularitySuccessByUser: regularitySuccess, participationByUser: participationCounts, participationTotalByUser: participationTotals, pointsByMatchday, pointsByUserAndMatchday, pointsByPredictionKey } =
           computeLeagueStats(scorableLigue1Matches, scorableBonusMatches, bonusOptions, predictionsData ?? [], profiles, teamNameById, {
             seasonByMatchdayId: seasonByMatchdayIdObj,
             favoriteTeamBySeason,
@@ -460,6 +490,25 @@ function ClassementPage() {
             if (md) topMatchday = { number: Number(md.number ?? 0), points: total };
           }
         });
+
+        // BADGES — calcules sur les journees TERMINEES uniquement, dans
+        // l'ordre chronologique : « le plus longtemps dans le top 3 » n'a de
+        // sens que si l'on rejoue le classement journee apres journee, et une
+        // journee en cours fausserait le compte a chaque rafraichissement.
+        const journeesTerminees = [...ligue1Matchdays]
+          .filter((md: any) => Object.prototype.hasOwnProperty.call(pointsByMatchday, String(md.id)))
+          .sort((a: any, b: any) => Number(a.number ?? 0) - Number(b.number ?? 0))
+          .map((md: any) => String(md.id));
+
+        setBadgesByUser(
+          calculerBadges({
+            joueurs: (profiles ?? []).map((profil: any) => ({ id: String(profil.id) })),
+            pointsParJourneeParJoueur: pointsByUserAndMatchday ?? {},
+            journeesOrdonnees: journeesTerminees,
+            bonsResultatsParJoueur: regularitySuccess,
+            scoresExactsParJoueur: exactScores,
+          }),
+        );
 
         // CARRIÈRE — même source unique que index.tsx/profil.tsx
         // (aggregateCareerStatsByUser, src/lib/careerLevel.ts), plus de
@@ -1047,6 +1096,7 @@ function ClassementPage() {
                             <div className="min-w-0">
                               <div className="flex min-w-0 items-center gap-2">
                                 <span className="truncate font-display text-base font-black text-white">{p.pseudo ?? "Joueur"}</span>
+                                <BadgesJoueur badges={badgesByUser[p.id]} />
                                 {isMe && <span className="shrink-0 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-1.5 py-0.5 font-mono text-[7px] font-bold uppercase tracking-wider text-emerald-200">Vous</span>}
                               </div>
                               <span className="mt-1 inline-flex items-center rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 font-mono text-[7px] uppercase tracking-wider text-slate-400">
@@ -1269,6 +1319,7 @@ function ClassementPage() {
                             <span className="block min-w-0 break-words font-display text-[15px] font-black leading-[1.05] text-white">
                               {p.pseudo ?? "Joueur"}
                             </span>
+                            <BadgesJoueur badges={badgesByUser[p.id]} taille="petit" />
                             {isMe && (
                               <span className="shrink-0 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-1.5 py-0.5 font-mono text-[6px] font-bold uppercase tracking-wider text-emerald-200">
                                 Vous
