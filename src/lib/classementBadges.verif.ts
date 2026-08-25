@@ -50,7 +50,6 @@ console.log("\nBADGES DU CLASSEMENT\n");
   // Sur la derniere journee (j3), c'est « c » qui marque le plus : 4 points.
   verifier("le vainqueur de la derniere journee", idsDe(r, "c").includes("vainqueur_journee"), true);
   verifier("...et pas le leader du classement general", idsDe(r, "a").includes("vainqueur_journee"), false);
-  verifier("serie en cours pour qui marque a chaque journee", idsDe(r, "d").includes("serie"), true);
 }
 
 {
@@ -77,7 +76,6 @@ console.log("\nBADGES DU CLASSEMENT\n");
     scoresExactsParJoueur: {},
   });
   verifier("une seule journee : le vainqueur du jour est bien designe", idsDe(r, "a").includes("vainqueur_journee"), true);
-  verifier("une seule journee : pas de serie", idsDe(r, "a").includes("serie"), false);
 }
 
 {
@@ -90,18 +88,6 @@ console.log("\nBADGES DU CLASSEMENT\n");
     scoresExactsParJoueur: {},
   });
   verifier("aucun match joue : aucun badge", Object.keys(r).length, 0);
-}
-
-{
-  // La serie s'interrompt des qu'une journee est blanche.
-  const r = calculerBadges({
-    joueurs: [{ id: "a" }],
-    journeesOrdonnees: J,
-    pointsParJourneeParJoueur: { a: { j1: 3, j2: 0, j3: 2 } },
-    bonsResultatsParJoueur: { a: 4 },
-    scoresExactsParJoueur: {},
-  });
-  verifier("une journee blanche coupe la serie", idsDe(r, "a").includes("serie"), false);
 }
 
 {

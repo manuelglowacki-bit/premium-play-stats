@@ -4,18 +4,17 @@
  * Petites distinctions affichées à côté du pseudo. Elles ne rapportent aucun
  * point et n'entrent dans aucun calcul : c'est de la lecture, pas du jeu.
  *
- * Les cinq distinctions :
+ * Les quatre distinctions :
  *   🎯 le plus de bons résultats en 1N2
  *   💎 le plus de scores exacts
  *   📈 le meilleur total sur une seule journée, depuis le début
  *   🏅 le vainqueur de la dernière journée terminée — il change de mains à
  *      chaque journée, c'est tout son intérêt
- *   🔥 les journées consécutives avec des points
  *
- * Tout évolue au fil des matchs : 🎯 💎 📈 🔥 sont recalculés à chaque
- * affichage sur les scores en direct, et bougent donc pendant les matchs.
- * 🏅 est le seul à attendre la fin complète d'une journée — sinon il
- * changerait de propriétaire à chaque but marqué.
+ * Tout évolue au fil des matchs : 🎯 💎 📈 sont recalculés à chaque affichage
+ * sur les scores en direct, et bougent donc pendant les matchs. 🏅 est le seul
+ * à attendre la fin complète d'une journée — sinon il changerait de
+ * propriétaire à chaque but marqué.
  *
  * Règles communes à tous :
  *   * un badge n'est attribué que s'il a un SENS — un « meilleur au 1N2 »
@@ -131,26 +130,6 @@ export function calculerBadges(entree: EntreeBadges): Record<string, Badge[]> {
       }),
     );
   }
-
-  // ---------- Série en cours ----------
-  // Journées consécutives, en partant de la plus récente, avec au moins un
-  // point. Affichée à partir de deux : une seule journée n'est pas une série.
-  ids.forEach((id) => {
-    const parJournee = entree.pointsParJourneeParJoueur[id] ?? {};
-    let serie = 0;
-    for (let i = entree.journeesOrdonnees.length - 1; i >= 0; i -= 1) {
-      if ((parJournee[entree.journeesOrdonnees[i]] ?? 0) > 0) serie += 1;
-      else break;
-    }
-    if (serie >= 2) {
-      ajouter(id, {
-        id: "serie",
-        icone: "🔥",
-        libelle: "Série en cours",
-        detail: `${serie} journées de suite avec des points`,
-      });
-    }
-  });
 
   return badges;
 }
