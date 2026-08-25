@@ -10,6 +10,7 @@ import {
   Edit3,
   Hash,
   Image as ImageIcon,
+  Lock,
   MessageCircle,
   Mic,
   MicOff,
@@ -33,6 +34,8 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
+import { MessagesPrives } from "@/components/prono/MessagesPrives";
+import { abonnerMessagesRecus, compterNonLusEnBase } from "@/lib/messagesPrives";
 import { supabase } from "@/lib/supabase";
 import { EMOJI_CATEGORIES, chercherEmojis, type EmojiEntry } from "@/lib/emojis";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
@@ -518,6 +521,11 @@ function VestiairePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isBanned, setIsBanned] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
+  // Messages prives. `ouvrirPriveAvec` sert a sauter directement au fil d'une
+  // personne depuis sa fiche, sans repasser par la liste.
+  const [privesOuverts, setPrivesOuverts] = useState(false);
+  const [ouvrirPriveAvec, setOuvrirPriveAvec] = useState<string | null>(null);
+  const [privesNonLus, setPrivesNonLus] = useState(0);
   const [openReactionFor, setOpenReactionFor] = useState<string | null>(null);
   // Menu "..." par message (Répondre/Épingler/Modifier/Supprimer/Bloquer) —
   // remplace l'ancienne rangée d'icônes révélée uniquement au survol
@@ -1590,6 +1598,46 @@ function VestiairePage() {
   // Le reste du groupe, en sourdine sous les joueurs connectes. Avec un seul
   // joueur en ligne, le panneau affichait une carte isolee dans le vide : il
   // montre desormais l'effectif complet, ce qui donne sa mesure au groupe.
+  useEffect(() => {
+    if (!currentUserId) return;
+    let annule = false;
+
+    const rafraichir = () => {
+      compterNonLusEnBase(currentUserId)
+        .then((nombre) => {
+          if (!annule) setPrivesNonLus(nombre);
+        })
+        .catch(() => {
+          // Table pas encore creee, ou reseau : la pastille reste a sa valeur.
+          // Ce n'est pas une raison d'alerter le joueur au milieu du chat.
+        });
+    };
+
+    rafraichir();
+    // Un message qui arrive pendant qu'on est sur le salon commun doit allumer
+    // la pastille tout de suite.
+    const desabonner = abonnerMessagesRecus(currentUserId, rafraichir);
+
+    return () => {
+      annule = true;
+      desabonner();
+    };
+  }, [currentUserId]);
+
+  // Tout l'effectif, pour les messages prives : meme source que le selecteur
+  // « @ », donc les memes personnes, qu'elles aient deja ecrit ou non.
+  const joueursJoignables = useMemo(
+    () =>
+      Object.values(profiles)
+        .filter((profil) => profil?.id && profil.id !== currentUserId)
+        .map((profil) => ({
+          id: profil.id,
+          pseudo: displayName(profil),
+          avatar_url: profil.avatar_url,
+        })),
+    [profiles, currentUserId],
+  );
+
   const offlinePlayers = useMemo(() => {
     const onlineIds = new Set(onlinePlayers.map((player) => player.user_id));
     return Object.values(profiles)
@@ -1928,7 +1976,25 @@ function VestiairePage() {
         >
 
           {/* TOP BAR */}
-          <section className="vestiaire-panel vestiaire-glow min-h-0 flex-1 overflow-hidden rounded-[26px]">
+          <section className="vestiaire-panel vestiaire-glow relative min-h-0 flex-1 overflow-hidden rounded-[26px]">
+
+            {/* MESSAGES PRIVES — recouvre la carte du Vestiaire plutot que de
+                s'ouvrir ailleurs : on reste dans le meme endroit du site, et
+                la conversation a deux se referme sur le salon commun.
+                `currentUserId` conditionne le montage : sans identite, il n'y a
+                ni conversation a charger ni expediteur a inscrire. */}
+            {privesOuverts && currentUserId && (
+              <MessagesPrives
+                moi={currentUserId}
+                joueurs={joueursJoignables}
+                ouvrirAvec={ouvrirPriveAvec}
+                onFermer={() => {
+                  setPrivesOuverts(false);
+                  setOuvrirPriveAvec(null);
+                }}
+                onNonLus={setPrivesNonLus}
+              />
+            )}
 
             {/* 111px mesures : le plus gros poste de decor de la page. Pendant
                 la saisie il s'efface — l'en-tete de l'application, juste
@@ -1954,6 +2020,30 @@ function VestiairePage() {
               </div>
 
               <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+                {/* MESSAGES PRIVES — l'entree principale. La fiche d'un joueur
+                    en propose une seconde, qui ouvre directement son fil. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOuvrirPriveAvec(null);
+                    setPrivesOuverts(true);
+                  }}
+                  className={`relative grid size-8 shrink-0 place-items-center rounded-xl border transition sm:size-9 ${
+                    privesNonLus > 0
+                      ? "border-purple-400/40 bg-purple-400/15 text-purple-200"
+                      : "border-white/10 bg-white/[.03] text-slate-400 hover:text-white"
+                  }`}
+                  aria-label="Messages privés"
+                  title="Messages privés"
+                >
+                  <Lock size={15} />
+                  {privesNonLus > 0 && (
+                    <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-purple-400 px-1 text-[9px] font-black text-slate-950 shadow-[0_0_12px_rgba(192,132,252,.55)]">
+                      {privesNonLus > 99 ? "99+" : privesNonLus}
+                    </span>
+                  )}
+                </button>
+
                 <button
                   type="button"
                   onClick={async () => {
@@ -3435,6 +3525,19 @@ function VestiairePage() {
                       className="mt-3 w-full rounded-xl border border-white/[.08] bg-white/[.03] px-3 py-2 text-[10px] font-semibold text-slate-300 transition hover:border-emerald-400/25 hover:text-white"
                     >
                       Voir ses messages
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOuvrirPriveAvec(selectedPlayer.user_id);
+                        setPrivesOuverts(true);
+                        setSelectedPlayer(null);
+                      }}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-purple-400/25 bg-purple-400/10 px-3 py-2 text-[10px] font-semibold text-purple-200 transition hover:border-purple-400/45 hover:text-white"
+                    >
+                      <Lock size={11} />
+                      Message privé
                     </button>
                   </div>
                 )}
