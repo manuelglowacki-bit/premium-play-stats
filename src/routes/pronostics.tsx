@@ -514,12 +514,19 @@ function PronosticsPage() {
             .from("matchdays")
             .select("id, number, code, label, deadline, deadline_mode, is_finished, competition_id")
             .order("number", { ascending: true }),
+          // `limit` explicite : sans lui, Supabase s'arrete a 1000 lignes. Avec
+          // cinq championnats (Ligue 1 + les quatre bonus), la table depasse
+          // ce seuil et des matchs disparaissent silencieusement de la liste.
+          // Or un match absent d'ici fait echouer isOpen(), et la sauvegarde
+          // du bonus est alors refusee SANS AUCUN MESSAGE — le joueur croit
+          // avoir valide, rien n'est enregistre.
           supabase
             .from("matches")
             .select(
               "id, matchday_id, home_team_id, away_team_id, home_team, away_team, api_fixture_id, kickoff, status, finished, home_score, away_score",
             )
-            .order("kickoff", { ascending: true }),
+            .order("kickoff", { ascending: true })
+            .limit(20000),
         ]);
 
         if (cancelled) return;
@@ -1445,6 +1452,13 @@ function PronosticsPage() {
     // Ne jamais relire `bonusScores[...]` directement ici sans passer par
     // cette variable déjà garantie non-undefined par `bonusComplete`.
     const bonusReady = !!selectedBonusCandidate && bonusComplete && isOpen(selectedBonusCandidate.match.id);
+
+    // Le joueur a choisi son bonus et saisi son score, mais isOpen() refuse :
+    // soit le match a ete verrouille entre-temps, soit il ne figure pas dans
+    // la liste chargee. Dans les deux cas il faut le DIRE. Jusqu'ici la
+    // sauvegarde etait simplement abandonnee sans un mot, et le joueur
+    // repartait persuade d'avoir valide son bonus.
+    const bonusIgnore = !!selectedBonusCandidate && bonusComplete && !bonusReady;
     const bonusRow =
       bonusReady && selectedBonusScore
         ? {
@@ -1551,6 +1565,19 @@ function PronosticsPage() {
     }
     if (l1Error) throw new Error(`Ligue 1 : ${l1Error}`);
     if (bonusError) throw new Error(`Bonus : ${bonusError}`);
+
+    // Un bonus choisi, un score saisi, et pourtant rien d'envoye : le joueur
+    // doit l'apprendre ici et non trois journees plus tard en comptant ses
+    // points. C'etait le pire des cas — un echec parfaitement silencieux, qui
+    // laissait en place l'ancien pronostic bonus.
+    if (bonusIgnore) {
+      const match = matches.find((item) => item.id === selectedBonusCandidate!.match.id);
+      throw new Error(
+        match
+          ? "Ton match bonus est verrouille : son coup d'envoi est passe, le choix n'a pas pu etre enregistre."
+          : "Ton match bonus n'a pas pu etre enregistre : il est introuvable dans les matchs charges. Recharge la page et reessaie.",
+      );
+    }
   };
 
   /** 1ère tentative → échec → retente après 1s → retente après 3s, puis abandonne
