@@ -789,7 +789,17 @@ function GazettePage() {
         supabase.from("profiles").select("*").order("pseudo", { ascending: true, nullsFirst: false }),
         // Paginee : sans cela PostgREST tronque a 1000 lignes en silence et
         // la Gazette raconte la journee sur des chiffres incomplets.
-        fetchAllRowsCache("predictions", "*", ["user_id", "match_id"]),
+        // Colonnes explicites plutot que « * ». Verifie une par une : la
+        // Gazette ne lit que user_id, match_id et les deux scores, et le
+        // moteur de points a besoin de created_at (il departage les pronostics
+        // bonus d'une meme journee : le plus recent gagne). Les colonnes `id`
+        // et `points` n'etaient lues nulle part — cette derniere n'est de toute
+        // facon jamais ecrite par le site.
+        fetchAllRowsCache(
+          "predictions",
+          "user_id,match_id,home_prediction,away_prediction,created_at",
+          ["user_id", "match_id"],
+        ),
         supabase.from("teams").select("id, name, short_name, logo_url"),
         supabase
           .from("user_season_favorite_teams")
