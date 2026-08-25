@@ -1696,16 +1696,6 @@ function VestiairePage() {
           backdrop-filter: blur(22px);
         }
 
-        .vestiaire-message {
-          background: linear-gradient(90deg, rgba(255,255,255,.018), rgba(255,255,255,.008));
-          border-bottom: 1px solid rgba(255,255,255,.055);
-          transition: background .2s ease, transform .2s ease;
-        }
-
-        .vestiaire-message:hover {
-          background: linear-gradient(90deg, rgba(16,185,129,.045), rgba(168,85,247,.025));
-        }
-
         .vestiaire-scroll {
           scrollbar-width: thin;
           scrollbar-color: rgba(16,185,129,.38) transparent;
@@ -2168,21 +2158,24 @@ function VestiairePage() {
                           )}
                         <article
                           ref={(element) => { messageRefs.current[message.id] = element; }}
-                          className={`vestiaire-message group relative rounded-xl px-1 transition-colors sm:px-2 ${
-                            grouped ? "py-1" : "py-4"
-                          } ${mine ? "bg-emerald-400/[.018]" : ""} hover:bg-white/[.025]`}
+                          className={`group relative px-1 sm:px-2 ${grouped ? "py-[2px]" : "pt-3"}`}
                         >
-                          <div className="flex items-start gap-3">
-                            {grouped ? (
-                              // Gouttiere de la largeur de l'avatar : l'heure n'y
-                              // apparait qu'au survol, pour garder le fil aere.
-                              <div className="w-10 shrink-0 pt-0.5 text-right">
-                                <span className="font-mono text-[9px] text-slate-600 opacity-0 transition group-hover:opacity-100">
-                                  {formatTime(message.created_at)}
-                                </span>
-                              </div>
+                          {/* Bulles de conversation : les siennes a droite,
+                              celles des autres a gauche. C'est ce qui permet de
+                              suivre un echange d'un coup d'oeil, sans lire les
+                              pseudos — le fil se lisait avant comme une liste
+                              administrative. */}
+                          <div className={`flex items-end gap-2 ${mine ? "flex-row-reverse" : ""}`}>
+                            {mine ? (
+                              // Son propre avatar n'apprend rien : on ne le montre
+                              // pas, la position a droite suffit a dire qui parle.
+                              null
+                            ) : grouped ? (
+                              // Gouttiere de la largeur de l'avatar, pour aligner
+                              // les messages suivants d'un meme joueur.
+                              <div className="w-8 shrink-0" />
                             ) : (
-                            <div className="relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-gradient-to-br from-emerald-400/25 via-purple-500/15 to-slate-900 transition group-hover:border-emerald-400/30">
+                            <div className="relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-gradient-to-br from-emerald-400/25 via-purple-500/15 to-slate-900 transition group-hover:border-emerald-400/30">
                               {profile?.avatar_url ? (
                                 <img
                                   src={profile.avatar_url}
@@ -2198,31 +2191,33 @@ function VestiairePage() {
                             </div>
                             )}
 
-                            <div className="min-w-0 flex-1">
+                            <div
+                              className={`relative min-w-0 max-w-[82%] rounded-2xl border px-3 py-2 shadow-[0_2px_8px_rgba(0,0,0,.25)] sm:max-w-[70%] ${
+                                mine
+                                  ? "border-emerald-400/25 bg-emerald-500/[.13] rounded-br-md"
+                                  : "border-white/[.08] bg-white/[.045] rounded-bl-md"
+                              }`}
+                            >
                               <div className={grouped ? "" : "flex items-center gap-2"}>
                                 {!grouped && (
                                   <>
-                                <span className="text-xs font-black text-emerald-300">
-                                  {name}
-                                </span>
+                                {/* Son propre pseudo ne sert a rien : la bulle est
+                                    deja de son cote. On ne le repete donc pas. */}
+                                {!mine && (
+                                  <span className="text-xs font-black text-emerald-300">
+                                    {name}
+                                  </span>
+                                )}
 
-                                <span
-                                  className={`rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase ${
-                                    profile?.is_admin
-                                      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                                      : "border-white/10 bg-white/[.04] text-slate-500"
-                                  }`}
-                                >
-                                  {profile?.is_admin ? "Admin" : "Membre"}
-                                </span>
+                                {profile?.is_admin && !mine && (
+                                  <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[8px] font-black uppercase text-emerald-300">
+                                    Admin
+                                  </span>
+                                )}
 
                                 {isPinned && (
                                   <Pin size={11} className="text-amber-300" />
                                 )}
-
-                                <span className="font-mono text-[9px] text-slate-600">
-                                  {formatTime(message.created_at)}
-                                </span>
                                   </>
                                 )}
 
@@ -2385,7 +2380,11 @@ function VestiairePage() {
                                           {/* Le fondu dit que le texte continue —
                                               sans lui, on croit le message fini. */}
                                           {replie && (
-                                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-[#06101a] to-transparent" />
+                                            <div
+                                              className={`pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t to-transparent ${
+                                                mine ? "from-[#0f2b26]" : "from-[#131c28]"
+                                              }`}
+                                            />
                                           )}
                                         </div>
 
@@ -2572,6 +2571,14 @@ function VestiairePage() {
                                     )}
                                   </div>
                                 )}
+
+                                {/* L'heure au pied de la bulle, discrete : c'est
+                                    la ou l'oeil la cherche dans une messagerie. */}
+                                <div className={`mt-0.5 flex items-center gap-1 ${mine ? "justify-end" : "justify-start"}`}>
+                                  <span className="font-mono text-[9px] leading-none text-slate-500">
+                                    {formatTime(message.created_at)}
+                                  </span>
+                                </div>
 
                               </div>
                             </div>
