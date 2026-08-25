@@ -896,7 +896,7 @@ function ClassementPage() {
     setAfficheErreur("");
 
     try {
-      const canvas = dessinerAffiche({
+      const canvas = await dessinerAffiche({
         saison: season,
         journee: latestMatchdayNumber,
         lignes: classementComplet,
