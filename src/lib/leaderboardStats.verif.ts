@@ -121,26 +121,66 @@ console.log("\nADDITION DES JOURNÉES — aucun point ne doit se perdre en route
 }
 
 {
-  // LE BUG D'AOÛT 2026, celui qui a coûté la moitié de ses points à un joueur.
-  // Les deux LIGNES D'OPTION pointaient sur la journée 1, alors que l'un des
-  // matchs appartient à la journée 2. La règle « un seul bonus par joueur et
-  // par journée » ne gardait que le plus récent : le bonus de la journée 1,
-  // déjà joué et déjà compté, était évincé en validant celui de la journée 2.
+  // LE BUG D'AOÛT 2026, reproduit à l'identique.
+  //
+  // Le modèle est correct : bonus_options.matchday_id porte la journée de
+  // LIGUE 1, matches.matchday_id celle du championnat étranger.
+  // Atlético–Villarreal est la 2e journée de Liga jouée pendant la 1re
+  // journée de Ligue 1.
+  //
+  // Le défaut : chaque tirage rejoué ajoutait une ligne d'option sans effacer
+  // les précédentes. Le même match se retrouvait rattaché à la journée 1 ET à
+  // la journée 2 de Ligue 1, et le calcul gardait « la dernière lue », dans un
+  // ordre arbitraire. Valider un bonus décalait donc l'attribution d'un autre,
+  // déjà joué et déjà compté.
+  const LIGA_J2 = "liga-jour-2";
+  const PL_J2 = "pl-jour-2";
+
   const s = calculer({
     ligue1: [matchL1("l1", J1, 5, 2)],
-    bonus: [matchBonus("bonus-j1", J1, 2, 1), matchBonus("bonus-j2", J2, 2, 2)],
+    bonus: [
+      // Atlético–Villarreal : Liga J2, joué 2-2, rattaché à la Ligue 1 J1
+      { ...matchBonus("atletico", LIGA_J2, 2, 2) },
+      // Liverpool–Nottingham : PL J2, pas encore joué, rattaché à la Ligue 1 J2
+      { ...matchBonus("liverpool", PL_J2, 0, 0), finished: false, home_score: null, away_score: null },
+    ],
     options: [
-      { matchday_id: J1, match_id: "bonus-j1" },
-      { matchday_id: J1, match_id: "bonus-j2" }, // <- rattachement faux
+      { matchday_id: J1, match_id: "atletico", is_active: false, created_at: "2026-08-10T09:00:00Z" },
+      // LA ligne en vigueur : Atlético appartient bien à la Ligue 1 J1.
+      { matchday_id: J1, match_id: "atletico", is_active: true, created_at: "2026-08-12T09:00:00Z" },
+      { matchday_id: J2, match_id: "liverpool", is_active: true, created_at: "2026-08-24T09:00:00Z" },
+      // Ligne PÉRIMÉE placée EN DERNIER, exprès : c'est la situation réelle,
+      // l'ordre de lecture n'étant pas garanti par la base. L'ancien code
+      // gardait « la dernière lue » et rattachait donc Atlético à la journée 2,
+      // faisant disparaître les points de la journée 1.
+      { matchday_id: J2, match_id: "atletico", is_active: false, created_at: "2026-08-20T09:00:00Z" },
     ],
     predictions: [
       prono("l1", 1, 0, "2026-08-15T10:00:00Z"),
-      prono("bonus-j1", 2, 1, "2026-08-15T11:00:00Z"), // exact -> 3 pts
-      prono("bonus-j2", 1, 1, "2026-08-24T11:00:00Z"), // bon résultat -> 2 pts
+      prono("atletico", 1, 1, "2026-08-15T11:00:00Z"), // bon résultat -> 2 pts
+      prono("liverpool", 1, 0, "2026-08-24T11:00:00Z"), // match non joué -> 0
     ],
   });
-  verifier("Bonus mal rattaché : les DEUX comptent quand même", s.pointsByUser["u1"], 6);
-  verifier("...chacun sur la journée de SON match", s.pointsByMatchday, { [J1]: 4, [J2]: 2 });
+
+  verifier("Bonus dupliqué : la ligne ACTIVE fait foi", s.pointsByUser["u1"], 3);
+  verifier("...les points restent sur la journée de Ligue 1 attendue",
+    s.pointsByMatchday, { [J1]: 3 });
+}
+
+{
+  // Aucune ligne active (données abîmées) : la plus récente tranche, et le
+  // résultat ne doit surtout pas dépendre de l'ordre de lecture.
+  const s = calculer({
+    bonus: [matchBonus("b", J1, 2, 1)],
+    options: [
+      // La plus récente (J2) est placée EN PREMIER : le résultat ne doit pas
+      // dépendre de l'ordre de lecture.
+      { matchday_id: J2, match_id: "b", is_active: false, created_at: "2026-08-09T09:00:00Z" },
+      { matchday_id: J1, match_id: "b", is_active: false, created_at: "2026-08-01T09:00:00Z" },
+    ],
+    predictions: [prono("b", 2, 1)],
+  });
+  verifier("Sans ligne active : la plus récente tranche", s.pointsByMatchday, { [J2]: 3 });
 }
 
 {

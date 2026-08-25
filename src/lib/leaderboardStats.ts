@@ -57,6 +57,12 @@ export type LeaguePrediction = {
 export type LeagueBonusOption = {
   matchday_id: string;
   match_id: string;
+  /** Le tirage en vigueur pour ce match. Un meme match peut porter plusieurs
+   * lignes — une par tirage rejoue — mais une seule reste active. C'est elle
+   * qui dit a quelle journee de Ligue 1 le bonus se rattache. */
+  is_active?: boolean | null;
+  /** Depart en cas d'egalite : sans ligne active, la plus recente l'emporte. */
+  created_at?: string | null;
 };
 
 export type LeagueProfile = {
@@ -147,38 +153,57 @@ export function computeLeagueStats(
   const matchById = new Map<string, LeagueMatch>();
   [...ligue1Matches, ...bonusMatches].forEach((m) => matchById.set(String(m.id), m));
 
-  // JOURNEE D'UN MATCH BONUS : celle du MATCH, jamais celle de sa ligne
-  // d'option.
+  // JOURNEE D'UN MATCH BONUS : celle de sa ligne bonus_options ACTIVE.
   //
-  // bonus_options ne sert qu'a repondre a une question : « ce match est-il un
-  // candidat bonus ? ». Son matchday_id, lui, n'est pas fiable — constate en
-  // production : Atletico-Villarreal, un match de la journee 2, portait une
-  // ligne d'option rattachee a la journee 1, et la base contient 189 lignes
-  // d'options la ou il en faudrait douze, empilees par les tirages
-  // successifs.
+  // Le modele est le bon et il faut le lire correctement :
+  //   * bonus_options.matchday_id designe la journee de LIGUE 1 a laquelle le
+  //     bonus se rattache — c'est le calendrier du jeu ;
+  //   * matches.matchday_id designe la journee du championnat ETRANGER
+  //     (La Liga, Premier League...) — c'est le calendrier de ce championnat.
+  // Atletico-Villarreal, par exemple, est la 2e journee de Liga jouee pendant
+  // la 1re journee de Ligue 1. Les deux valeurs sont justes, elles ne
+  // repondent simplement pas a la meme question.
   //
-  // Consequence, avant ce correctif : un joueur ayant joue deux bonus dont
-  // les options pointaient toutes deux sur la journee 1 n'en voyait compter
-  // qu'UN SEUL — la regle « un bonus par joueur et par journee » ne garde que
-  // le plus recent. En validant son bonus de la journee 2, il evinçait donc
-  // celui de la journee 1, deja joue et deja compte. Ses points disparaissaient
-  // du jour au lendemain, sans qu'aucune donnee n'ait ete effacee. Quatorze
-  // joueurs etaient dans ce cas sur le seul Atletico-Villarreal.
+  // LE DEFAUT REEL, constate en production : un meme match porte PLUSIEURS
+  // lignes d'options, sur des journees de Ligue 1 differentes — chaque tirage
+  // rejoue ajoute la sienne sans effacer les precedentes. Atletico-Villarreal
+  // en comptait quatre sur la journee 1 et une sur la journee 2. Cette Map
+  // etant remplie ligne apres ligne, c'est la DERNIERE LUE qui l'emportait,
+  // dans l'ordre — arbitraire — ou la base les renvoie.
   //
-  // Le match, lui, sait a quelle journee il appartient. C'est la seule source
-  // que ni un tirage rejoue ni une journee creee en double ne peuvent fausser.
+  // Consequence : en validant un bonus, un joueur decalait l'attribution d'un
+  // autre bonus, deja joue et deja compte, vers une autre journee. Ses points
+  // de la journee 1 disparaissaient sous ses yeux, sans qu'aucune donnee
+  // n'ait ete effacee.
   //
-  // Le bareme ne change pas : 3 points pour un score exact, 2 pour le bon
-  // resultat. Seule change la journee a laquelle le bonus est rattache.
-  const bonusMatchdayByMatchId = new Map<string, string>();
+  // La ligne ACTIVE tranche : il n'y en a qu'une par match, c'est le tirage
+  // en vigueur. A defaut d'active, on prend la plus recente, et en dernier
+  // recours la premiere rencontree — pour ne jamais ignorer un bonus, meme
+  // sur des donnees abimees.
+  const meilleureOptionParMatch = new Map<string, LeagueBonusOption>();
   bonusOptions.forEach((option) => {
     const matchId = String(option.match_id);
-    const match = matchById.get(matchId);
-    const journeeDuMatch = match?.matchday_id != null ? String(match.matchday_id) : "";
+    const actuelle = meilleureOptionParMatch.get(matchId);
+    if (!actuelle) {
+      meilleureOptionParMatch.set(matchId, option);
+      return;
+    }
 
-    // Repli sur la ligne d'option si le match n'a pas ete charge ou n'a pas de
-    // journee : mieux vaut une attribution imparfaite qu'un bonus ignore.
-    bonusMatchdayByMatchId.set(matchId, journeeDuMatch || String(option.matchday_id));
+    const activeAvant = actuelle.is_active === true;
+    const activeApres = option.is_active === true;
+    if (activeAvant !== activeApres) {
+      if (activeApres) meilleureOptionParMatch.set(matchId, option);
+      return;
+    }
+
+    const dateAvant = actuelle.created_at ? new Date(actuelle.created_at).getTime() : 0;
+    const dateApres = option.created_at ? new Date(option.created_at).getTime() : 0;
+    if (dateApres > dateAvant) meilleureOptionParMatch.set(matchId, option);
+  });
+
+  const bonusMatchdayByMatchId = new Map<string, string>();
+  meilleureOptionParMatch.forEach((option, matchId) => {
+    bonusMatchdayByMatchId.set(matchId, String(option.matchday_id));
   });
 
   // Une prédiction bonus correspond à un seul match bonus sélectionné par
@@ -368,11 +393,12 @@ export function computeLeagueStats(
   // Meme regle que plus haut : la journee vient du match. Sans cela, le
   // denominateur de l'assiduite compterait une journee et le numerateur une
   // autre.
+  // Meme source que l'attribution des points : une seule option retenue par
+  // match, sinon un match compterait plusieurs fois dans le denominateur de
+  // l'assiduite.
   const bonusOptionsByDay = new Map<string, string[]>();
-  bonusOptions.forEach((option) => {
-    const matchId = String(option.match_id);
-    const dayId = bonusMatchdayByMatchId.get(matchId);
-    if (!dayId) return;
+  meilleureOptionParMatch.forEach((option, matchId) => {
+    const dayId = String(option.matchday_id);
     const list = bonusOptionsByDay.get(dayId) ?? [];
     list.push(matchId);
     bonusOptionsByDay.set(dayId, list);

@@ -188,6 +188,7 @@ function ClassementPage() {
       matchday_id: string;
       match_id: string;
       is_active: boolean;
+      created_at: string | null;
     };
 
     async function load() {
@@ -358,7 +359,9 @@ function ClassementPage() {
         // joué, jamais à la sélection "active" au moment du calcul.
         const { data: bonusOptionsData, error: bonusOptionsError } = await supabase
           .from("bonus_options")
-          .select("matchday_id, match_id, is_active")
+          // created_at : depart en cas d'egalite quand un match porte
+          // plusieurs lignes d'options sans qu'aucune ne soit active.
+          .select("matchday_id, match_id, is_active, created_at")
           .in("matchday_id", matchdayIds);
 
         if (isStale()) return;
