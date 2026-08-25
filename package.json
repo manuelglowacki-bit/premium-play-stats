@@ -16,7 +16,8 @@
     "verif-prives": "tsx src/lib/messagesPrives.verif.ts",
     "verif-cache": "tsx src/lib/cacheRequetes.verif.ts",
     "verif-rappels": "tsx src/lib/rappels.verif.ts",
-    "verif-journee": "tsx src/lib/numeroJournee.verif.ts"
+    "verif-journee": "tsx src/lib/numeroJournee.verif.ts",
+    "verif-bonus": "tsx src/services/bonusSelection.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
