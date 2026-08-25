@@ -7,6 +7,7 @@ import {
   BarChart3,
   User,
   Shield,
+  MoreHorizontal,
   LogIn,
   LogOut,
   MessageCircle,
@@ -101,6 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const headerRef = useRef<HTMLElement | null>(null);
   const navRef = useRef<HTMLDivElement | null>(null);
   const [vestiaireUnread, setVestiaireUnread] = useState(0);
+  const [menuPlusOuvert, setMenuPlusOuvert] = useState(false);
   // Journee et saison affichees dans l'en-tete. Elles etaient ecrites en dur
   // ("J1 • 2026", "Saison 2026-2027") et ne bougeaient donc jamais.
   const [headerSeason, setHeaderSeason] = useState<string | null>(null);
@@ -267,20 +269,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     navigate({ to: "/auth" });
   };
 
+  // Sur un ecran de 390px, huit onglets donnent des libelles de 9px et des
+  // cibles trop serrees pour le pouce. Les quatre les plus utilises restent
+  // visibles ; les autres passent derriere un bouton « Plus ». Sur grand
+  // ecran, tout reste affiche — la place ne manque pas.
+  //
+  // `principal: true` marque ceux qui restent visibles sur telephone. Le
+  // Vestiaire en fait partie : c'est lui qui porte la pastille de messages non
+  // lus, la cacher la rendrait inutile.
   const navItems = [
-    { label: "Accueil", to: "/", icon: Home },
-    { label: "Pronos", to: "/pronostics", icon: Target },
-    { label: "Classement", to: "/classement", icon: Trophy },
-    { label: "Gazette", to: "/gazette", icon: Newspaper },
-    { label: "Vestiaire", to: "/trophees", icon: MessageCircle },
+    { label: "Accueil", to: "/", icon: Home, principal: true },
+    { label: "Pronos", to: "/pronostics", icon: Target, principal: true },
+    { label: "Classement", to: "/classement", icon: Trophy, principal: true },
+    { label: "Gazette", to: "/gazette", icon: Newspaper, principal: false },
+    { label: "Vestiaire", to: "/trophees", icon: MessageCircle, principal: true },
     // La route /trophees contient actuellement le Vestiaire.
-    { label: "Stats", to: "/stats", icon: BarChart3 },
-    { label: "Profil", to: "/profil", icon: User },
+    { label: "Stats", to: "/stats", icon: BarChart3, principal: false },
+    { label: "Profil", to: "/profil", icon: User, principal: false },
     // Invisible pour les joueurs : aucun lien/bouton Admin dans la nav tant
     // que profiles.is_admin n'est pas vrai. L'URL /admin reste en plus
     // protÃ©gÃ©e cÃ´tÃ© route par AdminRoute (voir src/routes/admin.tsx).
-    ...(isAdmin ? [{ label: "Admin", to: "/admin", icon: Shield }] : []),
+    ...(isAdmin ? [{ label: "Admin", to: "/admin", icon: Shield, principal: false }] : []),
   ];
+
+  const navSecondaires = navItems.filter((item) => !item.principal);
+  // Le bouton « Plus » s'allume quand on se trouve sur une des pages qu'il
+  // contient : sans cela, sur Profil ou Stats, aucun onglet ne serait actif et
+  // le joueur ne saurait pas ou il est.
+  const surUnePageSecondaire = navSecondaires.some((item) => item.to === currentPath);
 
   return (
     <div
@@ -537,6 +553,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 key={item.to}
                 to={item.to}
                 className={`flex flex-shrink-0 flex-col items-center gap-0.5 px-1 py-2 rounded-xl transition-all ${
+                  item.principal ? "" : "hidden sm:flex"
+                } ${
                   isActive
                     ? "text-emerald-400 bg-emerald-500/10 shadow-[0_0_14px_rgba(16,185,129,0.28)]"
                     : "text-slate-400 hover:text-white"
@@ -554,7 +572,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
+
+          {/* « Plus » — telephone uniquement, la ou la place manque. */}
+          {navSecondaires.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setMenuPlusOuvert((ouvert) => !ouvert)}
+              className={`flex flex-shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-2 transition-all sm:hidden ${
+                menuPlusOuvert || surUnePageSecondaire
+                  ? "bg-emerald-500/10 text-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.28)]"
+                  : "text-slate-400 hover:text-white"
+              }`}
+              aria-label="Plus de pages"
+              aria-expanded={menuPlusOuvert}
+            >
+              <MoreHorizontal size={16} />
+              <span className="whitespace-nowrap font-mono text-[9px] font-bold">Plus</span>
+            </button>
+          )}
         </nav>
+
+        {/* Le menu s'ouvre AU-DESSUS de la barre : sous elle, il sortirait de
+            l'ecran. Un fond pleine page le ferme au premier appui a cote. */}
+        {menuPlusOuvert && (
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-40 cursor-default sm:hidden"
+              onClick={() => setMenuPlusOuvert(false)}
+              aria-label="Fermer le menu"
+            />
+            <div className="absolute bottom-[calc(100%+8px)] right-0 z-50 w-52 overflow-hidden rounded-2xl border border-slate-800/80 bg-[#060b16]/98 shadow-[0_20px_50px_rgba(0,0,0,.75)] backdrop-blur-xl sm:hidden">
+              {navSecondaires.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={() => setMenuPlusOuvert(false)}
+                    className={`flex items-center gap-3 px-4 py-3 transition ${
+                      currentPath === item.to
+                        ? "bg-emerald-500/10 text-emerald-400"
+                        : "text-slate-300 hover:bg-white/[.05] hover:text-white"
+                    }`}
+                  >
+                    <Icon size={16} />
+                    <span className="font-mono text-xs font-bold">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
 
     </div>
