@@ -461,7 +461,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           toutes les pages d'un coup, sans dupliquer le correctif page par
           page. */}
       <main className="relative z-10 flex min-h-0 flex-1 flex-col px-4 py-6 md:px-8 md:py-10">
-        <div className="min-w-0 w-full">{children}</div>
+        {/* Ce wrapper doit etre un MAILLON de la chaine flex, pas un bloc
+            ordinaire. Ajoute a l'origine pour `min-w-0` (debordement en
+            largeur), il etait reste en `display: block`, sans `flex: 1` et
+            avec `min-height: auto` : il grandissait donc avec son contenu au
+            lieu de tenir dans <main>.
+
+            Consequence mesuree sur le Vestiaire, ecran 390x780 avec vingt
+            messages : <main> faisait bien 711px, mais ce wrapper 1711px. La
+            zone de messages heritait de cette hauteur, ne defilait plus
+            (scrollHeight == clientHeight) et le champ de saisie se retrouvait
+            a 1674px, tres loin sous le bord de l'ecran — impossible d'ecrire
+            ni de remonter le fil.
+
+            `flex-1 min-h-0 flex-col` le remet dans la chaine ; `min-w-0`
+            reste, il corrigeait un vrai debordement horizontal. */}
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">{children}</div>
 </main>
 
       {/* ================= NAVIGATION â€” un seul bloc, sur tous les Ã©crans ================= */}

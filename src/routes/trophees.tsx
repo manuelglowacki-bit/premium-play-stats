@@ -1815,9 +1815,16 @@ function VestiairePage() {
             encore cet espace reviendrait à recréer le même grand vide
             inutile qu'on corrige ici, juste avec un autre nombre. */}
         <div
-          className={`mx-auto flex min-h-0 w-full max-w-[1500px] flex-1 flex-col px-2 pt-2 sm:px-4 sm:pt-4 ${
-            keyboardOpen ? "pb-2" : "pb-32"
-          }`}
+          className="mx-auto flex min-h-0 w-full max-w-[1500px] flex-1 flex-col px-2 pt-2 sm:px-4 sm:pt-4"
+          style={{
+            // Reserve exactement la hauteur MESUREE de la nav flottante
+            // (--app-nav-h, pose par AppShell) au lieu d'un pb-32 en dur, plus
+            // large que necessaire : sur telephone, les pixels repris ici vont
+            // directement aux messages.
+            paddingBottom: keyboardOpen
+              ? "0.5rem"
+              : "calc(var(--app-nav-h, 72px) + env(safe-area-inset-bottom) + 1.5rem)",
+          }}
         >
 
           {/* TOP BAR */}
@@ -2096,7 +2103,14 @@ function VestiairePage() {
                     du site (même image /arriere plan general.png). Contenu
                     piloté par sectionMeta, inchangé selon l'onglet actif. */}
                 <div
-                  className="relative shrink-0 overflow-hidden border-b border-white/[.07] px-4 py-3.5 sm:px-6"
+                  className={`relative shrink-0 overflow-hidden border-b border-white/[.07] px-4 py-2 sm:px-6 sm:py-3.5 ${
+                    // Pendant la saisie, la hauteur visible est divisee par
+                    // deux par le clavier : tout ce qui n'est pas le fil ni le
+                    // champ de saisie doit s'effacer, sinon le bouton Envoyer
+                    // repasse sous le bord de l'ecran. Le bandeau revient des
+                    // que le clavier se ferme.
+                    keyboardOpen ? "hidden sm:block" : ""
+                  }`}
                   style={{
                     backgroundImage:
                       "linear-gradient(120deg, rgba(4,10,20,.94), rgba(4,22,18,.78)), url('/arriere%20plan%20general.png')",
@@ -2116,7 +2130,10 @@ function VestiairePage() {
                         <div className="mt-0.5 truncate font-display text-sm font-black text-white">
                           {activeSection === "general" ? "Bienvenue dans le Vestiaire ! 👋" : sectionMeta.title}
                         </div>
-                        <div className="mt-0.5 truncate text-[10px] text-slate-400">
+                        {/* Masquee sur telephone : sur un ecran de 780px, chaque
+                            ligne prise ici est une ligne de moins pour les
+                            messages, qui sont la vraie raison d'etre de la page. */}
+                        <div className="mt-0.5 hidden truncate text-[10px] text-slate-400 sm:block">
                           {activeSection === "general"
                             ? "Partage, échange et vis ta passion du foot tous ensemble 🔥"
                             : sectionMeta.subtitle}
