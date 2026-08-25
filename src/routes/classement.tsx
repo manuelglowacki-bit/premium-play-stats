@@ -491,25 +491,6 @@ function ClassementPage() {
           }
         });
 
-        // BADGES — calcules sur les journees TERMINEES uniquement, dans
-        // l'ordre chronologique : « le plus longtemps dans le top 3 » n'a de
-        // sens que si l'on rejoue le classement journee apres journee, et une
-        // journee en cours fausserait le compte a chaque rafraichissement.
-        const journeesTerminees = [...ligue1Matchdays]
-          .filter((md: any) => Object.prototype.hasOwnProperty.call(pointsByMatchday, String(md.id)))
-          .sort((a: any, b: any) => Number(a.number ?? 0) - Number(b.number ?? 0))
-          .map((md: any) => String(md.id));
-
-        setBadgesByUser(
-          calculerBadges({
-            joueurs: (profiles ?? []).map((profil: any) => ({ id: String(profil.id) })),
-            pointsParJourneeParJoueur: pointsByUserAndMatchday ?? {},
-            journeesOrdonnees: journeesTerminees,
-            bonsResultatsParJoueur: regularitySuccess,
-            scoresExactsParJoueur: exactScores,
-          }),
-        );
-
         // CARRIÈRE — même source unique que index.tsx/profil.tsx
         // (aggregateCareerStatsByUser, src/lib/careerLevel.ts), plus de
         // boucle séparée lisant `predictions.points` (colonne jamais mise à
@@ -718,6 +699,35 @@ function ClassementPage() {
           setParticipationTotalByUser(participationTotals);
           setPlayedMatchdaysByUser(playedMatchdaysByUser);
           setFinishedMatchdayCount(finishedNumbers.length);
+
+          // BADGES — calcules sur les journees REELLEMENT terminees, dans
+          // l'ordre chronologique.
+          //
+          // `finishedNumbers` est la seule definition rigoureuse dont on
+          // dispose : une journee n'y entre que si TOUS ses matchs de Ligue 1
+          // sont joues. S'appuyer sur « il existe des points pour cette
+          // journee » ferait entrer la journee en cours des le premier but, et
+          // le badge du vainqueur du jour changerait de main a chaque
+          // rafraichissement pendant les matchs.
+          const numeroVersId = new Map<number, string>();
+          ligue1Matchdays.forEach((md: any) => {
+            const numero = Number(md.number ?? 0);
+            if (numero > 0) numeroVersId.set(numero, String(md.id));
+          });
+
+          const journeesTerminees = finishedNumbers
+            .map((numero) => numeroVersId.get(numero))
+            .filter((id): id is string => Boolean(id));
+
+          setBadgesByUser(
+            calculerBadges({
+              joueurs: (profiles ?? []).map((profil: any) => ({ id: String(profil.id) })),
+              pointsParJourneeParJoueur: pointsByUserAndMatchday ?? {},
+              journeesOrdonnees: journeesTerminees,
+              bonsResultatsParJoueur: regularitySuccess,
+              scoresExactsParJoueur: exactScores,
+            }),
+          );
           setLatestMatchdayNumber(latestFinishedNumber);
           setBestMatchday(topMatchday);
           setCareerStatsByUser(Object.fromEntries(careerByUser));

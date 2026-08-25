@@ -4,6 +4,19 @@
  * Petites distinctions affichées à côté du pseudo. Elles ne rapportent aucun
  * point et n'entrent dans aucun calcul : c'est de la lecture, pas du jeu.
  *
+ * Les cinq distinctions :
+ *   🎯 le plus de bons résultats en 1N2
+ *   💎 le plus de scores exacts
+ *   📈 le meilleur total sur une seule journée, depuis le début
+ *   🏅 le vainqueur de la dernière journée terminée — il change de mains à
+ *      chaque journée, c'est tout son intérêt
+ *   🔥 les journées consécutives avec des points
+ *
+ * Tout évolue au fil des matchs : 🎯 💎 📈 🔥 sont recalculés à chaque
+ * affichage sur les scores en direct, et bougent donc pendant les matchs.
+ * 🏅 est le seul à attendre la fin complète d'une journée — sinon il
+ * changerait de propriétaire à chaque but marqué.
+ *
  * Règles communes à tous :
  *   * un badge n'est attribué que s'il a un SENS — un « meilleur au 1N2 »
  *     avec zéro bon résultat ne distingue personne ;
@@ -94,43 +107,27 @@ export function calculerBadges(entree: EntreeBadges): Record<string, Badge[]> {
     }),
   );
 
-  // ---------- Le plus longtemps dans les trois premiers ----------
-  // On rejoue le classement CUMULÉ après chaque journée, puis on compte
-  // combien de fois chacun s'y trouvait dans les trois premiers. À égalité de
-  // points, tout le monde partage le rang : trois joueurs à égalité en tête
-  // sont tous « dans le top 3 », personne n'est sorti par un départage
-  // arbitraire.
-  const cumul: Record<string, number> = {};
-  const passagesTop3: Record<string, number> = {};
-  ids.forEach((id) => {
-    cumul[id] = 0;
-    passagesTop3[id] = 0;
-  });
-
-  entree.journeesOrdonnees.forEach((jour) => {
+  // ---------- Vainqueur de la journée précédente ----------
+  // Le meilleur total sur la DERNIÈRE journée terminée. Ce badge change de
+  // propriétaire à chaque journée : c'est tout son intérêt, il récompense la
+  // forme du moment et non le cumul de la saison, déjà lisible dans le
+  // classement lui-même.
+  //
+  // Tant que la journée en cours n'est pas finie, il reste sur le vainqueur
+  // de la précédente — sans quoi il changerait de main à chaque but marqué.
+  const derniereJournee = entree.journeesOrdonnees[entree.journeesOrdonnees.length - 1];
+  if (derniereJournee) {
+    const pointsDeLaJournee: Record<string, number> = {};
     ids.forEach((id) => {
-      cumul[id] += entree.pointsParJourneeParJoueur[id]?.[jour] ?? 0;
+      pointsDeLaJournee[id] = entree.pointsParJourneeParJoueur[id]?.[derniereJournee] ?? 0;
     });
-
-    // Les trois meilleurs totaux distincts, ex æquo compris.
-    const totaux = [...new Set(ids.map((id) => cumul[id]))].sort((a, b) => b - a).slice(0, 3);
-    const seuil = totaux[totaux.length - 1];
-    if (seuil === undefined || seuil <= 0) return;
-    ids.forEach((id) => {
-      if (cumul[id] >= seuil && cumul[id] > 0) passagesTop3[id] += 1;
-    });
-  });
-
-  // Le badge n'a de sens qu'a partir de deux journees : sur une seule, il
-  // recompenserait simplement le classement du moment, deja visible.
-  if (entree.journeesOrdonnees.length >= 2) {
-    const podium = meilleurs(passagesTop3, ids);
-    podium.gagnants.forEach((id) =>
+    const vainqueur = meilleurs(pointsDeLaJournee, ids);
+    vainqueur.gagnants.forEach((id) =>
       ajouter(id, {
-        id: "indeboulonnable",
-        icone: "👑",
-        libelle: "Indéboulonnable",
-        detail: `${podium.valeur} journées dans le top 3`,
+        id: "vainqueur_journee",
+        icone: "🏅",
+        libelle: "Vainqueur de la dernière journée",
+        detail: `${vainqueur.valeur} points sur la dernière journée`,
       }),
     );
   }

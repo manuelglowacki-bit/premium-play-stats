@@ -47,8 +47,9 @@ console.log("\nBADGES DU CLASSEMENT\n");
   verifier("...et a lui seul", idsDe(r, "a").includes("sniper"), false);
   verifier("le roi du score exact", idsDe(r, "c").includes("score_exact"), true);
   verifier("la meilleure journee (8 points)", idsDe(r, "a").includes("record_journee"), true);
-  verifier("l'indeboulonnable, toujours dans le top 3", idsDe(r, "a").includes("indeboulonnable"), true);
-  verifier("...pas celui qui n'y est jamais entre", idsDe(r, "d").includes("indeboulonnable"), false);
+  // Sur la derniere journee (j3), c'est « c » qui marque le plus : 4 points.
+  verifier("le vainqueur de la derniere journee", idsDe(r, "c").includes("vainqueur_journee"), true);
+  verifier("...et pas le leader du classement general", idsDe(r, "a").includes("vainqueur_journee"), false);
   verifier("serie en cours pour qui marque a chaque journee", idsDe(r, "d").includes("serie"), true);
 }
 
@@ -75,7 +76,7 @@ console.log("\nBADGES DU CLASSEMENT\n");
     bonsResultatsParJoueur: { a: 5, b: 3, c: 2, d: 1 },
     scoresExactsParJoueur: {},
   });
-  verifier("une seule journee : pas d'indeboulonnable", idsDe(r, "a").includes("indeboulonnable"), false);
+  verifier("une seule journee : le vainqueur du jour est bien designe", idsDe(r, "a").includes("vainqueur_journee"), true);
   verifier("une seule journee : pas de serie", idsDe(r, "a").includes("serie"), false);
 }
 
@@ -101,6 +102,27 @@ console.log("\nBADGES DU CLASSEMENT\n");
     scoresExactsParJoueur: {},
   });
   verifier("une journee blanche coupe la serie", idsDe(r, "a").includes("serie"), false);
+}
+
+{
+  // Le badge du jour doit CHANGER DE MAIN d'une journee a l'autre : c'est tout
+  // son interet. Meme jeu de donnees, arrete une journee plus tot.
+  const donnees = {
+    joueurs,
+    pointsParJourneeParJoueur: {
+      a: { j1: 8, j2: 3, j3: 3 },
+      b: { j1: 7, j2: 4, j3: 2 },
+      c: { j1: 6, j2: 2, j3: 4 },
+      d: { j1: 1, j2: 1, j3: 1 },
+    },
+    bonsResultatsParJoueur: {},
+    scoresExactsParJoueur: {},
+  };
+  const apresJ2 = calculerBadges({ ...donnees, journeesOrdonnees: ["j1", "j2"] });
+  const apresJ3 = calculerBadges({ ...donnees, journeesOrdonnees: ["j1", "j2", "j3"] });
+  verifier("apres la J2, le badge du jour est a « b » (4 points)", idsDe(apresJ2, "b").includes("vainqueur_journee"), true);
+  verifier("apres la J3, il est passe a « c » (4 points)", idsDe(apresJ3, "c").includes("vainqueur_journee"), true);
+  verifier("...et « b » ne l'a plus", idsDe(apresJ3, "b").includes("vainqueur_journee"), false);
 }
 
 const total = reussis + echecs.length;
