@@ -463,8 +463,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* py resserre pendant la saisie : clavier ouvert, la hauteur visible
           tombe de moitie, et 24px de marge en haut comme en bas se prennent
           directement sur le contenu qu'on essaie de lire. */}
+      {/* overflow-y-auto : INDISPENSABLE depuis que ce conteneur a une hauteur
+          fixe (--app-vh). Sans lui, le corps de page ne pouvant plus grandir,
+          une page plus haute que l'ecran — le classement a 23 joueurs, par
+          exemple — se retrouvait COUPEE au lieu de defiler. C'est donc ici que
+          le defilement general vit desormais.
+
+          Le Vestiaire n'est pas gene : son contenu tient exactement dans la
+          hauteur disponible (chaine flex), donc <main> n'a rien a faire
+          defiler et sa propre zone de messages continue de s'en charger. */}
       <main
-        className={`relative z-10 flex min-h-0 flex-1 flex-col px-4 md:px-8 ${
+        className={`relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:px-8 ${
           keyboardOpen ? "py-2" : "py-6 md:py-10"
         }`}
       >
