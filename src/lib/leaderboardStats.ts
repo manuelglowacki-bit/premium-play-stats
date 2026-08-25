@@ -147,9 +147,38 @@ export function computeLeagueStats(
   const matchById = new Map<string, LeagueMatch>();
   [...ligue1Matches, ...bonusMatches].forEach((m) => matchById.set(String(m.id), m));
 
+  // JOURNEE D'UN MATCH BONUS : celle du MATCH, jamais celle de sa ligne
+  // d'option.
+  //
+  // bonus_options ne sert qu'a repondre a une question : « ce match est-il un
+  // candidat bonus ? ». Son matchday_id, lui, n'est pas fiable — constate en
+  // production : Atletico-Villarreal, un match de la journee 2, portait une
+  // ligne d'option rattachee a la journee 1, et la base contient 189 lignes
+  // d'options la ou il en faudrait douze, empilees par les tirages
+  // successifs.
+  //
+  // Consequence, avant ce correctif : un joueur ayant joue deux bonus dont
+  // les options pointaient toutes deux sur la journee 1 n'en voyait compter
+  // qu'UN SEUL — la regle « un bonus par joueur et par journee » ne garde que
+  // le plus recent. En validant son bonus de la journee 2, il evinçait donc
+  // celui de la journee 1, deja joue et deja compte. Ses points disparaissaient
+  // du jour au lendemain, sans qu'aucune donnee n'ait ete effacee. Quatorze
+  // joueurs etaient dans ce cas sur le seul Atletico-Villarreal.
+  //
+  // Le match, lui, sait a quelle journee il appartient. C'est la seule source
+  // que ni un tirage rejoue ni une journee creee en double ne peuvent fausser.
+  //
+  // Le bareme ne change pas : 3 points pour un score exact, 2 pour le bon
+  // resultat. Seule change la journee a laquelle le bonus est rattache.
   const bonusMatchdayByMatchId = new Map<string, string>();
   bonusOptions.forEach((option) => {
-    bonusMatchdayByMatchId.set(String(option.match_id), String(option.matchday_id));
+    const matchId = String(option.match_id);
+    const match = matchById.get(matchId);
+    const journeeDuMatch = match?.matchday_id != null ? String(match.matchday_id) : "";
+
+    // Repli sur la ligne d'option si le match n'a pas ete charge ou n'a pas de
+    // journee : mieux vaut une attribution imparfaite qu'un bonus ignore.
+    bonusMatchdayByMatchId.set(matchId, journeeDuMatch || String(option.matchday_id));
   });
 
   // Une prédiction bonus correspond à un seul match bonus sélectionné par
@@ -336,11 +365,16 @@ export function computeLeagueStats(
     bonusMatches.filter(isPlayable).map((m) => String(m.id)),
   );
 
+  // Meme regle que plus haut : la journee vient du match. Sans cela, le
+  // denominateur de l'assiduite compterait une journee et le numerateur une
+  // autre.
   const bonusOptionsByDay = new Map<string, string[]>();
   bonusOptions.forEach((option) => {
-    const dayId = String(option.matchday_id);
+    const matchId = String(option.match_id);
+    const dayId = bonusMatchdayByMatchId.get(matchId);
+    if (!dayId) return;
     const list = bonusOptionsByDay.get(dayId) ?? [];
-    list.push(String(option.match_id));
+    list.push(matchId);
     bonusOptionsByDay.set(dayId, list);
   });
 
