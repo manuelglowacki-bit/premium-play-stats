@@ -1875,7 +1875,7 @@ function PronosticsPage() {
                 Mes pronostics
               </p>
               <h1
-                className="mt-1 flex items-center gap-2.5 bg-gradient-to-b from-white from-30% via-white via-70% to-[color-mix(in_oklab,var(--sky)_26%,white)] bg-clip-text font-display text-[clamp(1.9rem,5vw,3rem)] font-bold uppercase leading-none tracking-tight text-transparent"
+                className="mt-1 flex items-center gap-2.5 bg-gradient-to-b from-white from-30% via-white via-70% to-[color-mix(in_oklab,var(--sky)_26%,white)] bg-clip-text font-display text-[clamp(1.35rem,4vw,2.1rem)] font-bold uppercase leading-none tracking-tight text-transparent"
                 style={{
                   filter:
                     "drop-shadow(0 1px 0 rgba(0,0,0,.35)) drop-shadow(0 0 20px rgba(22,82,240,.16))",

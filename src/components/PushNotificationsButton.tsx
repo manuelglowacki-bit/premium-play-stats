@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
@@ -27,6 +28,32 @@ export default function PushNotificationsButton({
   // Sans cet etat, le bloc apparaitrait une fraction de seconde chez ceux
   // qui ont deja active, le temps de la verification.
   const [verifie, setVerifie] = useState(false);
+
+  /**
+   * Le joueur a ferme la proposition. Elle occupait une grande carte en haut
+   * de la page Pronos, y compris pour quelqu'un ayant deja refuse les
+   * notifications : une invitation qu'on ne peut pas ecarter finit par etre
+   * lue comme du bruit, et c'est toute la page qui en patit.
+   *
+   * Le refus est garde sur l'appareil. Il ne coupe rien : les notifications
+   * restent activables depuis le Profil, ou le meme bloc est toujours affiche.
+   */
+  const [refuse, setRefuse] = useState(() => {
+    try {
+      return localStorage.getItem("rappels-proposition-fermee") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  function fermerProposition() {
+    setRefuse(true);
+    try {
+      localStorage.setItem("rappels-proposition-fermee", "1");
+    } catch {
+      // Navigation privee : la proposition reviendra au prochain passage.
+    }
+  }
 
   /**
    * iPhone : les notifications Push n'existent PAS dans Safari. Apple ne les
@@ -228,9 +255,24 @@ export default function PushNotificationsButton({
   }
 
   if (hideWhenEnabled && (!verifie || enabled)) return null;
+  // `hideWhenEnabled` marque la proposition spontanee (page Pronos). Ailleurs
+  // — le Profil — on va CHERCHER le reglage : l'y masquer le rendrait
+  // introuvable des le premier refus.
+  if (hideWhenEnabled && refuse) return null;
 
   return (
-    <div className="mx-3 my-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] p-4">
+    <div className="relative mx-3 my-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] p-4">
+      {hideWhenEnabled && (
+        <button
+          type="button"
+          onClick={fermerProposition}
+          className="absolute right-2 top-2 grid size-6 place-items-center rounded-full text-slate-500 transition hover:bg-white/[.06] hover:text-white"
+          aria-label="Ne plus proposer"
+          title="Ne plus proposer — reste disponible dans le Profil"
+        >
+          <X size={13} />
+        </button>
+      )}
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="text-sm font-black text-white">🔔 Rappels de pronostics</div>
