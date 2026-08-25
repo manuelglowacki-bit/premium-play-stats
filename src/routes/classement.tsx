@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   Minus,
+  Share2,
   Target,
   Trophy,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { calculerBadges, CATALOGUE_BADGES, type Badge } from "@/lib/classementBadges";
+import { dessinerAffiche, afficheEnFichier } from "@/lib/afficheClassement";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/classement")({
@@ -176,6 +178,8 @@ function ClassementPage() {
   // rapportent aucun point et n'entrent dans aucun calcul (voir
   // src/lib/classementBadges.ts et ses verifications).
   const [badgesByUser, setBadgesByUser] = useState<Record<string, Badge[]>>({});
+  const [afficheEnCours, setAfficheEnCours] = useState(false);
+  const [afficheErreur, setAfficheErreur] = useState("");
   const [latestMatchdayNumber, setLatestMatchdayNumber] = useState<number | null>(null);
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
   const [previousRankByUser, setPreviousRankByUser] = useState<Record<string, number>>({});
@@ -829,7 +833,7 @@ function ClassementPage() {
   const loading = players === null;
 
   // Statistiques dérivées mémoïsées avec DÉPARTAGE STRICT + ASSIDUITÉ
-  const { totalPlayers } = useMemo(() => {
+  const { totalPlayers, classementComplet } = useMemo(() => {
     const sortedList = (players ?? []).map((p) => ({
       ...p,
       points: pointsByUser[p.id] ?? 0,
@@ -850,7 +854,18 @@ function ClassementPage() {
     }));
 
     const list: RankedPlayer[] = rankPlayers(sortedList);
-    return { totalPlayers: list.length };
+    // L'affiche partagee reutilise EXACTEMENT ce classement : elle ne peut
+    // donc pas raconter autre chose que la page.
+    const meilleur = list[0]?.points ?? 0;
+    return {
+      totalPlayers: list.length,
+      classementComplet: list.map((joueur) => ({
+        rang: joueur.rank,
+        pseudo: (joueur.pseudo ?? "Joueur").trim(),
+        points: joueur.points,
+        ecart: Math.max(0, meilleur - joueur.points),
+      })),
+    };
   }, [
     players,
     pointsByUser,
@@ -866,6 +881,61 @@ function ClassementPage() {
   // Le 3e reçoit le solde afin que le total reste exactement égal à la cagnotte.
   // Règle de répartition extraite dans src/lib/prizePool.ts : l'Accueil
   // affiche les mêmes montants sans recopier le calcul.
+  /**
+   * Genere l'affiche et la propose au partage.
+   *
+   * Sur telephone, `navigator.share` ouvre directement le choix de
+   * l'application : deux gestes et l'image est dans le Vestiaire ou WhatsApp.
+   * Ailleurs — ordinateur, navigateur sans partage de fichier — on retombe sur
+   * un telechargement. Jamais de message d'echec pour un navigateur qui ne
+   * sait simplement pas partager.
+   */
+  async function genererAffiche() {
+    if (afficheEnCours) return;
+    setAfficheEnCours(true);
+    setAfficheErreur("");
+
+    try {
+      const canvas = dessinerAffiche({
+        saison: season,
+        journee: latestMatchdayNumber,
+        lignes: classementComplet,
+      });
+
+      const nom = latestMatchdayNumber
+        ? `classement-J${latestMatchdayNumber}.png`
+        : "classement.png";
+      const fichier = await afficheEnFichier(canvas, nom);
+
+      const partage = navigator as Navigator & {
+        canShare?: (donnees: { files?: File[] }) => boolean;
+        share?: (donnees: { files?: File[]; title?: string }) => Promise<void>;
+      };
+
+      if (partage.canShare?.({ files: [fichier] }) && partage.share) {
+        try {
+          await partage.share({ files: [fichier], title: nom });
+          return;
+        } catch (erreur) {
+          // Partage annule par le joueur : ce n'est pas une erreur, et on ne
+          // lui impose pas un telechargement qu'il n'a pas demande.
+          if ((erreur as Error)?.name === "AbortError") return;
+        }
+      }
+
+      const lien = document.createElement("a");
+      lien.href = URL.createObjectURL(fichier);
+      lien.download = nom;
+      lien.click();
+      URL.revokeObjectURL(lien.href);
+    } catch (erreur) {
+      console.error("Affiche du classement :", erreur);
+      setAfficheErreur("L'affiche n'a pas pu être générée. Réessaie.");
+    } finally {
+      setAfficheEnCours(false);
+    }
+  }
+
   const prizePool = totalPlayers * 10;
   const prizeByRank = computePrizeByRank(prizePool);
 
@@ -957,6 +1027,32 @@ function ClassementPage() {
                   })}
                 </div>
               </div>
+            </div>
+
+            {/* AFFICHE PARTAGEABLE — l'organisateur fabriquait cette image a
+                la main dans un outil externe, a chaque journee, alors que le
+                site possede deja toutes les donnees. */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.04] px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="font-display text-sm font-black text-amber-100">
+                  Partager le classement
+                </div>
+                <p className="mt-0.5 text-[11px] leading-snug text-slate-400">
+                  Une image prête à envoyer dans le Vestiaire ou sur WhatsApp.
+                </p>
+                {afficheErreur && (
+                  <p className="mt-1 text-[11px] text-rose-300">{afficheErreur}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void genererAffiche()}
+                disabled={afficheEnCours || classementComplet.length === 0}
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-300/15 px-4 py-2 font-display text-xs font-black uppercase tracking-wide text-amber-100 transition hover:bg-amber-300/25 disabled:opacity-40"
+              >
+                <Share2 size={14} />
+                {afficheEnCours ? "Génération…" : "Générer l'affiche"}
+              </button>
             </div>
 
             {/* LEGENDE DES BADGES — sans elle, les pastilles a cote des
