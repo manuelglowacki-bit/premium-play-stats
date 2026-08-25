@@ -1,6 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import webpush from "npm:web-push@3.6.7";
-import { corsHeaders } from "../_shared/cors.ts";
+
+// En-tetes CORS ecrits ICI plutot qu'importes de ../_shared/cors.ts : cette
+// fonction doit pouvoir etre deployee par un simple copier-coller depuis le
+// tableau de bord Supabase, ou les fichiers voisins n'existent pas. Trois
+// lignes dupliquees valent mieux qu'un deploiement impossible depuis un
+// telephone.
 
 // ============================================================
 // NOTIFIER LES JOUEURS CITÉS DANS UN MESSAGE DU VESTIAIRE
@@ -21,6 +26,11 @@ import { corsHeaders } from "../_shared/cors.ts";
 // notification arbitraire à toute la ligue. Elle vérifie aussi que l'appelant
 // est bien l'auteur du message, et refuse de notifier l'auteur lui-même.
 // ============================================================
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
