@@ -28,6 +28,23 @@ export default function PushNotificationsButton({
   // qui ont deja active, le temps de la verification.
   const [verifie, setVerifie] = useState(false);
 
+  /**
+   * iPhone : les notifications Push n'existent PAS dans Safari. Apple ne les
+   * autorise que depuis un site AJOUTE A L'ECRAN D'ACCUEIL (iOS 16.4+).
+   *
+   * Sans ce test, un joueur sur iPhone voyait un badge rouge « Desactivees »
+   * et un bouton « Activer » qui echouait avec « pas disponibles sur cet
+   * appareil » — une phrase qui laisse croire que son telephone est trop
+   * vieux, alors qu'il lui manque juste une manipulation de dix secondes.
+   */
+  const surIphone =
+    typeof navigator !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const applicationInstallee =
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(display-mode: standalone)").matches ||
+      (window.navigator as { standalone?: boolean }).standalone === true);
+  const iphoneSansInstallation = surIphone && !applicationInstallee;
+
   useEffect(() => {
     void (async () => {
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -108,7 +125,11 @@ export default function PushNotificationsButton({
 
     try {
       if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
-        throw new Error("Les notifications Push ne sont pas disponibles sur cet appareil.");
+        throw new Error(
+          iphoneSansInstallation
+            ? "Sur iPhone, les notifications ne marchent que depuis l'application installée. Touche le bouton Partager en bas de Safari, puis « Sur l'écran d'accueil » — et rouvre le site depuis cette icône."
+            : "Les notifications Push ne sont pas disponibles sur cet appareil.",
+        );
       }
 
       if (!VAPID_PUBLIC_KEY) {
@@ -216,6 +237,16 @@ export default function PushNotificationsButton({
           <div className="mt-1 text-xs leading-relaxed text-slate-400">
             Reçois une notification 1 h avant un match si tu n'as pas encore fait ton prono.
           </div>
+          {/* La marche a suivre AVANT le clic : un joueur sur iPhone ne doit
+              pas avoir a echouer une fois pour apprendre ce qui lui manque. */}
+          {iphoneSansInstallation && (
+            <div className="mt-2 rounded-lg border border-amber-300/25 bg-amber-300/[0.07] px-2.5 py-2 text-[11px] leading-relaxed text-amber-100">
+              <span className="font-black">Sur iPhone,</span> les notifications ne fonctionnent
+              qu'une fois le site installé. Touche <span className="font-black">Partager</span> en
+              bas de Safari, puis <span className="font-black">« Sur l'écran d'accueil »</span>, et
+              rouvre le site depuis cette icône.
+            </div>
+          )}
           {message && message !== "Notifications activées ✓" && (
             <div className="mt-2 text-xs text-emerald-300">{message}</div>
           )}
