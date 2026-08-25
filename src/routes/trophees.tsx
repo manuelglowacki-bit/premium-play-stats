@@ -712,26 +712,28 @@ function VestiairePage() {
         if (messagesError) throw messagesError;
 
         const rows = (rawMessages || []) as ChatMessageRow[];
-        const userIds = Array.from(
-          new Set(
-            rows
-              .map((row) => row.user_id)
-              .filter((id): id is string => Boolean(id))
-          )
-        );
 
+        // TOUT l'effectif, et non les seuls auteurs des 150 derniers messages.
+        //
+        // `profiles` sert ici a trois choses : nommer l'auteur d'un message,
+        // lister « le reste du groupe » sous les joueurs connectes, et proposer
+        // les joueurs quand on tape « @ ». Restreint aux auteurs, il ne
+        // contenait que les rares personnes ayant deja ecrit — le selecteur de
+        // mention n'en proposait donc qu'une poignee, souvent une seule, et
+        // citer quelqu'un qui n'avait jamais parle etait impossible. C'est
+        // aussi ce qui laissait « le reste du groupe » presque vide.
+        //
+        // La ligue tient en quelques dizaines de lignes : les charger toutes
+        // coute moins qu'une requete par auteur.
         const profileMap: Record<string, Profile> = {};
-        if (userIds.length) {
-          const { data: profileRows, error: profilesError } = await supabase
-            .from("profiles")
-            .select("id, pseudo, avatar_url, favorite_team, is_admin, favorite_team_override, favorite_team_id")
-            .in("id", userIds);
+        const { data: profileRows, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, pseudo, avatar_url, favorite_team, is_admin, favorite_team_override, favorite_team_id");
 
-          if (profilesError) throw profilesError;
+        if (profilesError) throw profilesError;
 
-          for (const profile of (profileRows || []) as Profile[]) {
-            profileMap[profile.id] = profile;
-          }
+        for (const profile of (profileRows || []) as Profile[]) {
+          profileMap[profile.id] = profile;
         }
 
         setProfiles(profileMap);
@@ -3109,8 +3111,7 @@ function VestiairePage() {
                           .map((profil) => ({ id: profil.id, pseudo: (profil.pseudo ?? "").trim(), avatar: profil.avatar_url }))
                           .filter((profil) => profil.pseudo.length >= 2)
                           .filter((profil) => !recherche || profil.pseudo.toLowerCase().includes(recherche))
-                          .sort((a, b) => a.pseudo.localeCompare(b.pseudo, "fr"))
-                          .slice(0, 6);
+                          .sort((a, b) => a.pseudo.localeCompare(b.pseudo, "fr"));
 
                         if (!candidats.length) return null;
 
@@ -3118,7 +3119,12 @@ function VestiairePage() {
                           <div className="absolute bottom-[calc(100%+10px)] left-2 z-50 w-[min(300px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-emerald-400/20 bg-[#07121e]/98 shadow-[0_25px_70px_rgba(0,0,0,.65)] backdrop-blur-2xl">
                             <div className="border-b border-white/[.07] px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-emerald-300">
                               Citer un joueur
+                              <span className="ml-1.5 text-slate-500">({candidats.length})</span>
                             </div>
+                            {/* Defilant : avec tout l'effectif la liste ne tient
+                                plus dans la hauteur d'un telephone, et une
+                                coupe nette cacherait la moitie des joueurs. */}
+                            <div className="max-h-56 overflow-y-auto overscroll-contain">
                             {candidats.map((candidat) => (
                               <button
                                 key={candidat.id}
@@ -3145,6 +3151,7 @@ function VestiairePage() {
                                 <span className="truncate text-sm font-bold text-white">{candidat.pseudo}</span>
                               </button>
                             ))}
+                            </div>
                           </div>
                         );
                       })()}
