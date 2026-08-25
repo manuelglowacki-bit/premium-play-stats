@@ -1797,7 +1797,7 @@ function VestiairePage() {
       `}</style>
 
       <div
-        className="vestiaire-root flex flex-col"
+        className="vestiaire-root -my-4 flex flex-col md:-my-8"
         style={{
           backgroundImage:
             "linear-gradient(180deg, rgba(2,8,18,.68), rgba(2,8,18,.86)), url('/arriere%20plan%20general.png')",
@@ -2111,7 +2111,7 @@ function VestiairePage() {
                     du site (même image /arriere plan general.png). Contenu
                     piloté par sectionMeta, inchangé selon l'onglet actif. */}
                 <div
-                  className={`relative shrink-0 overflow-hidden border-b border-white/[.07] px-4 py-2 sm:px-6 sm:py-3.5 ${
+                  className={`relative shrink-0 overflow-hidden border-b border-white/[.07] px-4 py-2 sm:px-6 ${
                     // Pendant la saisie, la hauteur visible est divisee par
                     // deux par le clavier : tout ce qui n'est pas le fil ni le
                     // champ de saisie doit s'effacer, sinon le bouton Envoyer
@@ -2128,14 +2128,14 @@ function VestiairePage() {
                 >
                   <div className="relative flex flex-wrap items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-amber-300/30 bg-amber-300/10 text-amber-300 shadow-[0_0_16px_rgba(252,211,77,.10)]">
-                        <Pin size={14} />
+                      <span className="grid size-6 shrink-0 place-items-center rounded-lg border border-amber-300/30 bg-amber-300/10 text-amber-300">
+                        <Pin size={11} />
                       </span>
                       <div className="min-w-0">
-                        <div className="font-mono text-[8px] font-bold uppercase tracking-[.2em] text-amber-300/80">
-                          Message épinglé
-                        </div>
-                        <div className="mt-0.5 truncate font-display text-sm font-black text-white">
+                        {/* Le libelle « Message epingle » est porte par l'icone
+                            elle-meme : le repeter en toutes lettres coutait une
+                            ligne entiere, prise sur la conversation. */}
+                        <div className="truncate font-display text-[13px] font-black text-white">
                           {activeSection === "general" ? "Bienvenue dans le Vestiaire ! 👋" : sectionMeta.title}
                         </div>
                         {/* Masquee sur telephone : sur un ecran de 780px, chaque

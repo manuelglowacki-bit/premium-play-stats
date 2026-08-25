@@ -1223,6 +1223,21 @@ function PronosticsPage() {
     (bonusComplete ? 1 : 0);
   const total = mainMatches.length + coeurMatchesForDay.length + (bonusCandidates.length > 0 ? 1 : 0);
   const progressPct = total > 0 ? Math.min(100, Math.round((filled / total) * 100)) : 0;
+
+  // MAXIMUM ATTEIGNABLE SUR LA JOURNEE, deduit du bareme et non ecrit en dur :
+  //   match de Ligue 1 ordinaire   1 pt
+  //   match du club de coeur       2 pts (score exact)
+  //   match bonus                  3 pts (score exact)
+  // Une journee a 8 matchs ordinaires, 1 match de coeur et un bonus plafonne
+  // donc a 8 + 2 + 3 = 13 points. Le chiffre suit automatiquement le nombre
+  // reel de matchs : rien a corriger si une journee en compte plus ou moins.
+  const pointsMax =
+    mainMatches.length * 1 +
+    coeurMatchesForDay.length * 2 +
+    (bonusCandidates.length > 0 ? 3 : 0);
+
+  const pointsJournee = selectedMatchdayId ? (mesPoints.parJournee[selectedMatchdayId] ?? 0) : 0;
+  const pointsPct = pointsMax > 0 ? Math.min(100, Math.round((pointsJournee / pointsMax) * 100)) : 0;
   const allDone = filled === total && total > 0;
 
   // ============================================================
@@ -1873,7 +1888,58 @@ function PronosticsPage() {
               </h1>
             </div>
 
-            <div className="shrink-0 text-right">
+            <div className="flex shrink-0 items-start gap-5 text-right">
+              {/* ANNEAU DES POINTS — meme forme que celui des pronostics, a
+                  cote de lui : l'un dit ce qui est rempli, l'autre ce que ça
+                  rapporte. Le maximum n'est pas ecrit en dur, il se deduit du
+                  bareme et du nombre reel de matchs de la journee.
+                  Le chiffre vient du MEME moteur que le classement
+                  (useMesPoints) : les deux ne peuvent pas se contredire. */}
+              <div>
+                <div className="relative inline-flex size-20 items-center justify-center">
+                  <svg className="absolute inset-0 -rotate-90" viewBox="0 0 80 80">
+                    <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r="34"
+                      fill="none"
+                      stroke="url(#ptsGrad)"
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                      strokeDasharray={`${2 * Math.PI * 34}`}
+                      strokeDashoffset={`${2 * Math.PI * 34 * (1 - pointsPct / 100)}`}
+                      className="transition-all duration-500"
+                    />
+                    <defs>
+                      <linearGradient id="ptsGrad" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor="#E7B542" />
+                        <stop offset="100%" stopColor="#FDE68A" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                  <div className="flex flex-col items-center leading-none">
+                    {mesPoints.chargement ? (
+                      <span className="font-display text-xl font-black text-slate-600">—</span>
+                    ) : (
+                      <>
+                        <span className="font-display text-xl font-black leading-none text-white">
+                          {pointsJournee}
+                          <span className="text-slate-500">/{pointsMax}</span>
+                        </span>
+                        <span className="mt-0.5 font-mono text-[8px] uppercase tracking-widest text-slate-500">
+                          pts
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <p className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#E7B542]">
+                  {mesPoints.chargement ? "Calcul…" : `${mesPoints.saison} pts saison`}
+                </p>
+              </div>
+
+              <div>
               <div className="relative inline-flex size-20 items-center justify-center">
                 <svg className="absolute inset-0 -rotate-90" viewBox="0 0 80 80">
                   <circle
@@ -1924,6 +1990,7 @@ function PronosticsPage() {
                     ? "Complet"
                     : `${total - filled} à remplir`}
               </p>
+              </div>
               {/* Le bouton "Valider" qui vivait ici a été retiré : l'action
                   de validation a désormais un unique emplacement, bien plus
                   visible, juste après le sélecteur de journée (voir le

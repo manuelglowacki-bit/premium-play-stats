@@ -1546,6 +1546,10 @@ function PronoFollowUpTab({
                               : "text-amber-400"
                         }`}
                       >
+                        {/* « L1 » explicite : sans lui, « 9/9 » suivi de
+                            « Non fait » se lit comme une contradiction, alors
+                            que les deux ne parlent pas de la meme chose. */}
+                        <span className="mr-1 text-[9px] text-slate-500">L1</span>
                         {row.l1Completed}/{row.l1Expected}
                       </span>
                     </div>
@@ -1562,7 +1566,7 @@ function PronoFollowUpTab({
                             row.bonusSelected ? "text-emerald-400" : "text-amber-400"
                           }`}
                         >
-                          🎁 {row.bonusSelected ? "Fait" : "Non fait"}
+                          🎁 Bonus {row.bonusSelected ? "fait" : "non fait"}
                         </span>
                       ) : (
                         <span className="font-mono text-[11px] text-slate-600">—</span>
@@ -1579,7 +1583,11 @@ function PronoFollowUpTab({
                       ) : row.status === "incomplete" ? (
                         <span className="font-mono text-[11px] font-bold text-amber-400">
                           🟠 INCOMPLET
-                          {row.l1Missing > 0 && ` · ${row.l1Missing} manquant${row.l1Missing > 1 ? "s" : ""}`}
+                          {row.l1Missing > 0
+                            ? ` · ${row.l1Missing} match${row.l1Missing > 1 ? "s" : ""} L1`
+                            : row.bonusExpected && !row.bonusSelected
+                              ? " · bonus manquant"
+                              : ""}
                         </span>
                       ) : (
                         <span className="font-mono text-[11px] font-bold text-red-400">🔴 AUCUN PRONO</span>
