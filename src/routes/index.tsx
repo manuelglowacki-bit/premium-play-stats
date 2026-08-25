@@ -79,6 +79,16 @@ function IndexPage() {
   // fois passee, il affichait 00 00 00 00 indefiniment, sous un libelle
   // "Prochaine journee · J1 • 21 aout 2026" lui aussi ecrit en dur.
   const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string; day: string } | null>(null);
+  // Ou en est la ligue sur la prochaine journee. Sert le rappel collectif
+  // ci-dessous : c'est ce qui evite a l'organisateur de relancer 23 personnes
+  // une par une avant chaque vendredi.
+  const [participationJournee, setParticipationJournee] = useState<{
+    journee: number;
+    totalMatchs: number;
+    totalJoueurs: number;
+    enRetard: number;
+    mesPronos: number;
+  } | null>(null);
   const [potAmount, setPotAmount] = useState(0);
   // Saison affichee dans le bandeau. Elle etait ecrite en dur
   // ("SAISON 2026—2027") : elle serait restee identique l'an prochain.
@@ -279,6 +289,52 @@ function IndexPage() {
           setNextKickoff({ at, label: `${dateLabel} à ${timeLabel}`, day: `J${journee}` });
         } else {
           setNextKickoff(null);
+        }
+
+        // -------- Qui n'a pas encore valide la prochaine journee --------
+        // On repart de LA MEME journee que le compte a rebours ci-dessus :
+        // deux facons de designer "la prochaine journee" finiraient par se
+        // contredire un soir de decalage. Le filtre is_bonus est celui deja
+        // employe plus haut — sans lui, les matchs des quatre championnats
+        // bonus gonfleraient le nombre de pronostics attendus et personne ne
+        // serait jamais "complet".
+        if (nextDay) {
+          const [journeeVisee] = nextDay;
+          const idsDeLaJournee = new Set(
+            (reconciledMatches || [])
+              .filter(
+                (m: any) =>
+                  m?.is_bonus !== true &&
+                  Number(m?.matchday ?? m?.match_day ?? 0) === journeeVisee,
+              )
+              .map((m: any) => String(m.id)),
+          );
+
+          const faitsParJoueur = new Map<string, number>();
+          (predictions || []).forEach((pr: any) => {
+            if (!idsDeLaJournee.has(String(pr.match_id))) return;
+            const uid = String(pr.user_id);
+            faitsParJoueur.set(uid, (faitsParJoueur.get(uid) || 0) + 1);
+          });
+
+          const totalMatchs = idsDeLaJournee.size;
+          const joueurs = (profiles || []) as any[];
+          // "En retard" = il manque au moins un pronostic. Un joueur qui en a
+          // fait huit sur dix n'a pas valide sa journee non plus.
+          const enRetard =
+            totalMatchs === 0
+              ? 0
+              : joueurs.filter((j) => (faitsParJoueur.get(String(j.id)) || 0) < totalMatchs).length;
+
+          setParticipationJournee({
+            journee: journeeVisee,
+            totalMatchs,
+            totalJoueurs: joueurs.length,
+            enRetard,
+            mesPronos: user?.id ? faitsParJoueur.get(String(user.id)) || 0 : 0,
+          });
+        } else {
+          setParticipationJournee(null);
         }
 
 
@@ -694,6 +750,82 @@ setLeaderboard(rankedRankings);
             installee, ni sur un navigateur qui ne sait pas installer, ni si le
             joueur a ferme la proposition. */}
         <InstallerApplication />
+
+        {/* ---------- RAPPEL COLLECTIF DE LA PROCHAINE JOURNEE ----------
+            Avant chaque journee, l'organisateur relancait les retardataires un
+            par un dans le Vestiaire. L'information existe deja : on la met la
+            ou tout le monde arrive.
+
+            Le bloc ne dit jamais QUI est en retard : afficher des noms sur la
+            page d'accueil d'une ligue entre amis punit publiquement, alors
+            qu'un compteur suffit a creer le rappel. Il disparait entierement
+            quand il n'y a plus rien a rappeler. */}
+        {participationJournee && participationJournee.totalMatchs > 0 && (() => {
+          const p = participationJournee;
+          const restants = Math.max(0, p.totalMatchs - p.mesPronos);
+          const jeSuisEnRetard = restants > 0;
+          const aJour = Math.max(0, p.totalJoueurs - p.enRetard);
+          const part = p.totalJoueurs > 0 ? Math.round((aJour / p.totalJoueurs) * 100) : 0;
+
+          return (
+            <section
+              className={`dash-fade-up relative overflow-hidden rounded-3xl border p-4 backdrop-blur-xl sm:p-5 ${
+                jeSuisEnRetard
+                  ? "border-amber-400/40 bg-amber-500/[0.07] shadow-[0_0_40px_rgba(245,158,11,0.12)]"
+                  : "border-slate-800 bg-[#0d1322]/75"
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                <div className="min-w-0 flex-1">
+                  {/* Pas de date de fermeture ici : le compte a rebours du
+                      bandeau, juste en dessous, la donne deja — repetee, elle
+                      tenait sur trois lignes sur telephone pour rien. */}
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Journée {p.journee}
+                  </p>
+
+                  {jeSuisEnRetard ? (
+                    <p className="mt-1 font-display text-lg font-black text-amber-300 sm:text-xl">
+                      Il te reste {restants} prono{restants > 1 ? "s" : ""} à faire.
+                    </p>
+                  ) : (
+                    <p className="mt-1 font-display text-lg font-black text-emerald-300 sm:text-xl">
+                      Tes pronos sont validés.
+                    </p>
+                  )}
+
+                  <p className="mt-1 text-sm text-slate-300">
+                    {p.enRetard === 0
+                      ? `Les ${p.totalJoueurs} joueurs ont validé leur journée.`
+                      : `${p.enRetard} joueur${p.enRetard > 1 ? "s" : ""} sur ${p.totalJoueurs} n${p.enRetard > 1 ? "'ont" : "'a"} pas encore validé.`}
+                  </p>
+                </div>
+
+                {jeSuisEnRetard && (
+                  <Link
+                    to="/pronostics"
+                    className="tap shrink-0 rounded-2xl bg-amber-400 px-4 py-2.5 font-display text-sm font-black text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.35)] transition hover:bg-amber-300"
+                  >
+                    Faire mes pronos
+                  </Link>
+                )}
+              </div>
+
+              {/* Jauge : on voit d'un coup d'oeil si la ligue est prete. */}
+              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    p.enRetard === 0 ? "bg-emerald-400" : "bg-amber-400"
+                  }`}
+                  style={{ width: `${part}%` }}
+                />
+              </div>
+              <p className="mt-1.5 text-right font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                {aJour}/{p.totalJoueurs} prêts
+              </p>
+            </section>
+          );
+        })()}
 
         {/* HERO SECTION avec Effet Verre */}
         {/* Rembourrage reduit (p-12 -> p-8 sur grand ecran) : c'est lui qui
