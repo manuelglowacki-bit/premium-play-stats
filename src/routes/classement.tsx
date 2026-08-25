@@ -812,7 +812,16 @@ function ClassementPage() {
 
   return (
     <AppShell>
-      <main className="relative mx-auto w-full max-w-[1400px] overflow-hidden px-3 pb-28 pt-3 sm:px-5 lg:px-8">
+      {/* PAS de `overflow-hidden` ici — meme cause, meme correctif que sur la
+          page Stats (voir le commentaire equivalent dans stats.tsx). Depuis
+          qu'AppShell donne au conteneur de page une hauteur reellement
+          definie, ce bloc n'a plus une hauteur « auto » qui grandit avec son
+          contenu : il herite d'une hauteur fixe. Combine a overflow-hidden,
+          tout ce qui depassait — c'est-a-dire le classement a partir du
+          troisieme joueur — etait DECOUPE au lieu de faire defiler.
+          Le halo decoratif du fond a deja son propre conteneur en
+          overflow-hidden juste en dessous : rien ne deborde de ce cote. */}
+      <main className="relative mx-auto w-full max-w-[1400px] px-3 pb-28 pt-3 sm:px-5 lg:px-8">
         {/* Fond volontairement épuré : aucune bannière de podium. */}
         <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[900px] overflow-hidden">
           <div className="absolute left-1/2 top-20 h-[620px] w-[1000px] -translate-x-1/2 rounded-full bg-sky-500/[0.035] blur-[130px]" />
