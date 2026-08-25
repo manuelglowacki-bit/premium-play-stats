@@ -198,7 +198,20 @@ export function computeLeagueStats(
 
     const dateAvant = actuelle.created_at ? new Date(actuelle.created_at).getTime() : 0;
     const dateApres = option.created_at ? new Date(option.created_at).getTime() : 0;
-    if (dateApres > dateAvant) meilleureOptionParMatch.set(matchId, option);
+    if (dateApres !== dateAvant) {
+      if (dateApres > dateAvant) meilleureOptionParMatch.set(matchId, option);
+      return;
+    }
+
+    // Dernier depart, a dates egales : l'identifiant de journee, compare comme
+    // du texte. Le choix n'a aucune signification metier — il n'en a pas
+    // besoin. Ce qui compte est qu'il soit TOUJOURS le meme : sans lui, deux
+    // affichages du meme classement pourraient differer selon l'ordre dans
+    // lequel la base a renvoye les lignes, et c'est precisement ce genre
+    // d'instabilite qui a fait disparaitre des points.
+    if (String(option.matchday_id) < String(actuelle.matchday_id)) {
+      meilleureOptionParMatch.set(matchId, option);
+    }
   });
 
   const bonusMatchdayByMatchId = new Map<string, string>();

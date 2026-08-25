@@ -200,6 +200,21 @@ console.log("\nADDITION DES JOURNÉES — aucun point ne doit se perdre en route
   verifier("Deux bonus le même jour : un seul compte", s.pointsByUser["u1"], 3);
 }
 
+{
+  // Dates identiques et aucune ligne active : le resultat ne doit pas dependre
+  // de l'ordre de lecture. On calcule deux fois, avec les options dans un ordre
+  // puis dans l'autre — les deux totaux doivent etre identiques.
+  const optionsA = [
+    { matchday_id: J1, match_id: "b", is_active: false, created_at: "2026-08-01T09:00:00Z" },
+    { matchday_id: J2, match_id: "b", is_active: false, created_at: "2026-08-01T09:00:00Z" },
+  ];
+  const commun = { bonus: [matchBonus("b", J1, 2, 1)], predictions: [prono("b", 2, 1)] };
+  const sensA = calculer({ ...commun, options: optionsA });
+  const sensB = calculer({ ...commun, options: [...optionsA].reverse() });
+  verifier("Dates egales : le resultat ne depend pas de l'ordre de lecture",
+    sensA.pointsByMatchday, sensB.pointsByMatchday);
+}
+
 // ==================================================================
 console.log("\nCLUB DE CŒUR — reconnu par identifiant comme par nom\n");
 // ==================================================================
