@@ -203,6 +203,9 @@ type ParsedChatContent = {
     name: string;
     text: string;
   };
+  /** Identifiants des joueurs cites avec @. Sert au surlignage a l'affichage,
+   * et c'est ce que la fonction serveur relit pour savoir qui notifier. */
+  mentions?: string[];
 };
 
 function parseChatContent(content: string): ParsedChatContent {
@@ -230,6 +233,9 @@ function parseChatContent(content: string): ParsedChatContent {
           typeof parsed.replyTo.text === "string"
             ? parsed.replyTo
             : undefined,
+        mentions: Array.isArray(parsed.mentions)
+          ? parsed.mentions.filter((item: unknown): item is string => typeof item === "string")
+          : undefined,
       };
     }
   } catch {
@@ -335,6 +341,47 @@ function isVideoUrl(url: string): boolean {
  * ne peut devenir une balise. Un salon ou 23 personnes ecrivent librement
  * n'est pas l'endroit pour faire confiance au texte recu.
  */
+/**
+ * Surligne les @pseudo dans un texte deja mis en forme. Applique APRES le
+ * gras et l'italique, sur les seuls morceaux de texte brut : appliquer les
+ * deux dans le meme passage rendrait chaque regle dependante de l'autre.
+ */
+function surlignerMentions(morceaux: ReactNode[], pseudos: string[]): ReactNode[] {
+  if (!pseudos.length) return morceaux;
+
+  // Du plus long au plus court : sans cela « @Max » capturerait le debut de
+  // « @Maxime ».
+  const tries = [...pseudos].sort((a, b) => b.length - a.length);
+  const echappe = tries.map((pseudo) => pseudo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const motif = new RegExp(`@(?:${echappe.join("|")})`, "gi");
+
+  const sortie: ReactNode[] = [];
+  let cle = 0;
+
+  morceaux.forEach((morceau) => {
+    if (typeof morceau !== "string") {
+      sortie.push(morceau);
+      return;
+    }
+    let position = 0;
+    let trouve: RegExpExecArray | null;
+    motif.lastIndex = 0;
+    while ((trouve = motif.exec(morceau)) !== null) {
+      if (trouve.index > position) sortie.push(morceau.slice(position, trouve.index));
+      cle += 1;
+      sortie.push(
+        <span key={`m${cle}`} className="rounded bg-emerald-400/15 px-1 font-bold text-emerald-300">
+          {trouve[0]}
+        </span>,
+      );
+      position = trouve.index + trouve[0].length;
+    }
+    if (position < morceau.length) sortie.push(morceau.slice(position));
+  });
+
+  return sortie;
+}
+
 function formaterTexteMessage(texte: string): ReactNode[] {
   // Un seul passage. Le gras est teste AVANT l'italique, sinon `**` serait lu
   // comme deux italiques vides.
@@ -482,6 +529,8 @@ function VestiairePage() {
   const [emojiQuery, setEmojiQuery] = useState("");
   // Le panneau « toutes les emoticones » des reactions, replie par defaut.
   const [reactionsCompletes, setReactionsCompletes] = useState(false);
+  // Selecteur de mention : ouvert quand le joueur vient de taper « @ ».
+  const [mentionRecherche, setMentionRecherche] = useState<string | null>(null);
   // Les messages longs replies que le joueur a choisi d'ouvrir.
   const [messagesDeplies, setMessagesDeplies] = useState<Set<string>>(() => new Set());
   const [emojiCategorie, setEmojiCategorie] = useState(EMOJI_CATEGORIES[0].id);
@@ -1030,12 +1079,18 @@ function VestiairePage() {
         ? await uploadChatImages(pendingFiles)
         : [];
 
+      // MENTIONS. On resout les @pseudo au moment de l'envoi, contre la liste
+      // reelle des joueurs : le texte seul ne suffit pas, un pseudo peut
+      // changer et « @quelquun » qui n'existe pas ne doit rien declencher.
+      const mentions = resoudreMentions(content);
+
       const payload =
-        imageUrls.length || replyTo
+        imageUrls.length || replyTo || mentions.length
           ? JSON.stringify({
               v: 1,
               text: content,
               images: imageUrls,
+              mentions: mentions.length ? mentions : undefined,
               replyTo: replyTo
                 ? {
                     name: displayName(replyTo.profile),
@@ -1063,6 +1118,7 @@ function VestiairePage() {
       ]);
 
       setDraft("");
+      setMentionRecherche(null);
       setPendingFiles([]);
       setReplyTo(null);
       setEmojiOpen(false);
@@ -1093,6 +1149,15 @@ function VestiairePage() {
             : message
         )
       );
+
+      // Prevenir les joueurs cites. Volontairement APRES l'enregistrement et
+      // sans `await` bloquant : une notification qui n'part pas ne doit jamais
+      // empecher un message d'etre envoye.
+      if (mentions.length && data?.id) {
+        void supabase.functions
+          .invoke("notifier-mention", { body: { messageId: (data as ChatMessageRow).id } })
+          .catch((erreur) => console.warn("Vestiaire — notification de mention :", erreur));
+      }
     } catch (error) {
       console.error("Vestiaire — envoi :", error);
       setMessages((current) =>
@@ -1568,6 +1633,39 @@ function VestiairePage() {
     () => messageList.filter((message) => pinnedIds.includes(message.id)),
     [messageList, pinnedIds]
   );
+
+  /**
+   * Les joueurs cites avec @ dans un texte.
+   *
+   * On compare au pseudo REEL de chaque joueur, pas a une expression
+   * generique : « @machin » qui ne correspond a personne ne doit rien
+   * declencher, et un pseudo contenant une espace (« Le lensois de lm ») doit
+   * pouvoir etre cite. On teste donc chaque pseudo connu, du plus long au plus
+   * court — sinon « @Max » capturerait le debut de « @Maxime ».
+   *
+   * La comparaison ignore la casse et les espaces de bord : les pseudos de la
+   * ligue en contiennent (« Sanji » avec une espace finale, constate en base).
+   */
+  function resoudreMentions(texte: string): string[] {
+    if (!texte.includes("@")) return [];
+
+    const candidats = Object.values(profiles)
+      .map((profil) => ({ id: profil.id, pseudo: (profil.pseudo ?? "").trim() }))
+      .filter((profil) => profil.pseudo.length >= 2 && profil.id !== currentUserId)
+      .sort((a, b) => b.pseudo.length - a.pseudo.length);
+
+    const enMinuscules = texte.toLowerCase();
+    const trouves: string[] = [];
+
+    candidats.forEach((candidat) => {
+      const cible = `@${candidat.pseudo.toLowerCase()}`;
+      if (enMinuscules.includes(cible) && !trouves.includes(candidat.id)) {
+        trouves.push(candidat.id);
+      }
+    });
+
+    return trouves;
+  }
 
   function addEmoji(emoji: string) {
     setDraft((current) => `${current}${emoji}`);
@@ -2460,7 +2558,12 @@ function VestiairePage() {
                                               replie ? "max-h-[15rem] overflow-hidden" : ""
                                             }`}
                                           >
-                                            {formaterTexteMessage(parsed.text)}
+                                            {surlignerMentions(
+                                              formaterTexteMessage(parsed.text),
+                                              (parsed.mentions ?? [])
+                                                .map((id) => (profiles[id]?.pseudo ?? "").trim())
+                                                .filter((pseudo) => pseudo.length >= 2),
+                                            )}
                                             {message.id.startsWith("temp-") ? (
                                               <span className="ml-2 text-[9px] text-slate-600">Envoi…</span>
                                             ) : null}
@@ -2899,7 +3002,18 @@ function VestiairePage() {
                         <textarea
                           ref={draftRef}
                           value={draft}
-                          onChange={(event) => setDraft(event.target.value)}
+                          onChange={(event) => {
+                            const valeur = event.target.value;
+                            setDraft(valeur);
+                            // Ouvre le selecteur si le curseur suit un « @ »
+                            // colle a un debut de mot. On ne cherche que sur la
+                            // fin du texte : rouvrir le selecteur en corrigeant
+                            // une faute vingt caracteres plus haut serait
+                            // penible.
+                            const avant = valeur.slice(0, event.target.selectionStart ?? valeur.length);
+                            const dernier = avant.match(/(?:^|\s)@([^\s@]{0,20})$/);
+                            setMentionRecherche(dernier ? dernier[1] : null);
+                          }}
                           onPaste={handlePaste}
                           onKeyDown={(event) => {
                             // Entree envoie (reflexe de messagerie),
@@ -2983,6 +3097,57 @@ function VestiairePage() {
                           <div className="mt-2 border-t border-white/[.06] pt-1.5 text-[7px] font-semibold uppercase tracking-wider text-slate-600">Powered by GIPHY</div>
                         </div>
                       )}
+
+                      {/* SELECTEUR DE MENTION — s'ouvre quand on tape « @ ».
+                          Il evite d'avoir a ecrire le pseudo exactement : un
+                          « @ » suivi d'un pseudo approximatif ne notifierait
+                          personne, et le joueur n'en saurait rien. */}
+                      {mentionRecherche !== null && (() => {
+                        const recherche = mentionRecherche.trim().toLowerCase();
+                        const candidats = Object.values(profiles)
+                          .filter((profil) => profil.id !== currentUserId)
+                          .map((profil) => ({ id: profil.id, pseudo: (profil.pseudo ?? "").trim(), avatar: profil.avatar_url }))
+                          .filter((profil) => profil.pseudo.length >= 2)
+                          .filter((profil) => !recherche || profil.pseudo.toLowerCase().includes(recherche))
+                          .sort((a, b) => a.pseudo.localeCompare(b.pseudo, "fr"))
+                          .slice(0, 6);
+
+                        if (!candidats.length) return null;
+
+                        return (
+                          <div className="absolute bottom-[calc(100%+10px)] left-2 z-50 w-[min(300px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-emerald-400/20 bg-[#07121e]/98 shadow-[0_25px_70px_rgba(0,0,0,.65)] backdrop-blur-2xl">
+                            <div className="border-b border-white/[.07] px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-widest text-emerald-300">
+                              Citer un joueur
+                            </div>
+                            {candidats.map((candidat) => (
+                              <button
+                                key={candidat.id}
+                                type="button"
+                                onClick={() => {
+                                  // Remplace le « @debut » en cours par le
+                                  // pseudo complet, pour que la resolution a
+                                  // l'envoi le retrouve a coup sur.
+                                  setDraft((actuel) =>
+                                    actuel.replace(/(^|\s)@([^\s@]{0,20})$/, `$1@${candidat.pseudo} `),
+                                  );
+                                  setMentionRecherche(null);
+                                  draftRef.current?.focus();
+                                }}
+                                className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition hover:bg-white/[.06]"
+                              >
+                                <span className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-gradient-to-br from-emerald-400/25 to-slate-900 text-[9px] font-black text-white">
+                                  {candidat.avatar ? (
+                                    <img src={candidat.avatar} alt="" className="size-full object-cover" />
+                                  ) : (
+                                    candidat.pseudo.slice(0, 2).toUpperCase()
+                                  )}
+                                </span>
+                                <span className="truncate text-sm font-bold text-white">{candidat.pseudo}</span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
 
                       {emojiOpen && (() => {
                         // Trois affichages possibles, dans cet ordre de

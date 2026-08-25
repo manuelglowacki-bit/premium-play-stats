@@ -194,8 +194,8 @@ async function handleAutomaticReminders() {
           title: "Prono Ligue 1 LM",
           body: `${home} - ${away} commence dans 1 heure. Tu n'as pas encore fait ton pronostic.`,
           url: "/pronostics",
-          icon: "/prono-icon-192.png",
-          badge: "/prono-icon-192.png",
+          icon: "/pwa-192.png",
+          badge: "/notification-badge.png",
           tag: `prono-reminder-${matchId}`,
           data: {
             url: "/pronostics",
@@ -410,8 +410,8 @@ async function handleManualReminder(req: Request, body: ManualReminderBody) {
     title,
     body: messageBody,
     url: "/pronostics",
-    icon: "/prono-icon-192.png",
-    badge: "/prono-icon-192.png",
+    icon: "/pwa-192.png",
+    badge: "/notification-badge.png",
     tag: matchdayId ? `prono-manual-${matchdayId}-${targetUserId}` : `prono-manual-${targetUserId}`,
     data: {
       url: "/pronostics",
