@@ -2425,15 +2425,33 @@ function PronosticsPage() {
                       <div className="relative overflow-hidden rounded-[20px] bg-white/[0.02] backdrop-blur-xl border border-white/5 p-4 transition-all duration-500 hover:-translate-y-1 hover:bg-[#081221]/80 hover:border-emerald-400/50 hover:shadow-[0_15px_40px_rgba(52,211,153,0.15)]">
                         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
-                        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
-                          <div className="flex w-[56px] shrink-0 flex-col items-center justify-center border-r border-emerald-500/25 pr-4">
+                        {/* Sur telephone, cette ligne etait un `flex-col` :
+                            l'heure, l'equipe a domicile, les boutons 1N2 puis
+                            l'equipe a l'exterieur s'empilaient chacun sur sa
+                            propre ligne. Mesure a 393px : 480px de hauteur par
+                            match, soit pres de 5000px a faire defiler pour dix
+                            matchs, et l'adversaire hors ecran quand on regarde
+                            le haut de la carte.
+
+                            On garde le meme balisage — donc le meme rendu sur
+                            ordinateur — et on le replie en trois lignes avec
+                            `flex-wrap` + `order` : l'heure, puis les deux
+                            equipes cote a cote, puis les boutons. Les deux
+                            `basis-full` sont des sauts de ligne : sans eux,
+                            les equipes remonteraient se serrer a cote de
+                            l'heure. */}
+                        <div className="relative z-10 flex flex-wrap items-center gap-x-3 gap-y-2 sm:flex-nowrap sm:items-center sm:gap-4">
+                          <div className="order-1 flex shrink-0 items-center justify-center sm:order-1 sm:w-[56px] sm:flex-col sm:border-r sm:border-emerald-500/25 sm:pr-4">
                             <span className="font-mono text-sm font-black text-emerald-400">
                               {time}
                             </span>
                           </div>
 
-                          <div className="flex flex-1 items-center gap-4 min-w-0 justify-start">
-                            <div className="relative size-12 shrink-0 flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
+                          {/* saut de ligne (telephone seulement) */}
+                          <div aria-hidden className="order-3 h-0 basis-full sm:hidden" />
+
+                          <div className="order-4 flex flex-1 items-center gap-2 min-w-0 justify-start sm:order-2 sm:gap-4">
+                            <div className="relative size-10 shrink-0 flex items-center justify-center group-hover:scale-110 transition-transform duration-500 sm:size-12">
                               <ClubCrest
                                 club={home}
                                 size="size-full drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)]"
@@ -2443,15 +2461,19 @@ function PronosticsPage() {
                                 voit son pronostic sans avoir a traduire 1/N/2.
                                 Un nul laisse les deux noms au blanc. */}
                             <b
-                              className={`truncate font-display text-base font-bold transition-colors md:text-lg ${
+                              className={`truncate font-display text-sm font-bold transition-colors sm:text-base md:text-lg ${
                                 current === "1" ? "text-emerald-300" : "text-white"
                               }`}
                             >
-                              {home.name}
+                              <span className="sm:hidden">{home.short_name || home.name}</span>
+                              <span className="hidden sm:inline">{home.name}</span>
                             </b>
                           </div>
 
-                          <div className="flex shrink-0 flex-col items-center gap-2 mx-auto">
+                          {/* saut de ligne (telephone seulement) */}
+                          <div aria-hidden className="order-6 h-0 basis-full sm:hidden" />
+
+                          <div className="order-7 flex w-full shrink-0 flex-col items-center gap-2 sm:order-3 sm:mx-auto sm:w-auto">
                             {/* Les trois boutons etaient colles au centre : le
                                 "1" (victoire a domicile) se retrouvait aussi
                                 loin de l'equipe de gauche que le "2". Ils
@@ -2513,20 +2535,21 @@ function PronosticsPage() {
                           </div>
 
                           {isMatchLocked(match) && (
-                            <span className="shrink-0 rounded-full border border-red-500/25 bg-red-500/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-red-300">
+                            <span className="order-2 ml-auto shrink-0 rounded-full border border-red-500/25 bg-red-500/10 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-red-300 sm:order-4 sm:ml-0">
                               {lockLabel(match)}
                             </span>
                           )}
 
-                          <div className="flex flex-1 items-center gap-4 min-w-0 justify-end">
+                          <div className="order-5 flex flex-1 items-center gap-2 min-w-0 justify-end sm:order-5 sm:gap-4">
                             <b
-                              className={`truncate text-right font-display text-base font-bold transition-colors md:text-lg ${
+                              className={`truncate text-right font-display text-sm font-bold transition-colors sm:text-base md:text-lg ${
                                 current === "2" ? "text-emerald-300" : "text-white"
                               }`}
                             >
-                              {away.name}
+                              <span className="sm:hidden">{away.short_name || away.name}</span>
+                              <span className="hidden sm:inline">{away.name}</span>
                             </b>
-                            <div className="relative size-12 shrink-0 flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
+                            <div className="relative size-10 shrink-0 flex items-center justify-center group-hover:scale-110 transition-transform duration-500 sm:size-12">
                               <ClubCrest
                                 club={away}
                                 size="size-full drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)]"
@@ -2688,10 +2711,10 @@ function PronosticsPage() {
                           {dayName} {dayDate} • {time}
                         </span>
 
-                        <div className="flex items-center justify-between w-full max-w-md gap-4">
+                        <div className="flex items-center justify-between w-full max-w-md gap-2 sm:gap-4">
                           {/* Équipe Domicile (90px) */}
-                          <div className="flex flex-col items-center flex-1 text-center group">
-                            <div className="relative size-20 md:size-[90px] flex items-center justify-center group-hover:scale-105 transition-all duration-300">
+                          <div className="flex min-w-0 flex-col items-center flex-1 text-center group">
+                            <div className="relative size-16 sm:size-20 md:size-[90px] flex items-center justify-center group-hover:scale-105 transition-all duration-300">
                               <ClubCrest
                                 club={home}
                                 size="size-full drop-shadow-[0_8px_20px_rgba(0,0,0,0.9)]"
@@ -2708,7 +2731,7 @@ function PronosticsPage() {
                               avec un "VS" gris a peine visible entre elles.
                               Elles reposent maintenant sur un panneau sombre :
                               l'action principale du bloc se detache du decor. */}
-                          <div className="flex shrink-0 flex-col items-center space-y-2 rounded-2xl border border-white/[.07] bg-black/45 px-3 py-2.5 backdrop-blur-sm">
+                          <div className="flex shrink-0 flex-col items-center space-y-2 rounded-2xl border border-white/[.07] bg-black/45 px-2 py-2.5 backdrop-blur-sm sm:px-3">
                             <div className="flex items-center gap-2">
                               <input
                                 inputMode="numeric"
@@ -2716,7 +2739,7 @@ function PronosticsPage() {
                                 value={score.home}
                                 onChange={(e) => setCoeurValue(match.id, "home", e.target.value)}
                                 placeholder="-"
-                                className="size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
+                                className="size-12 sm:size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-xl sm:text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
                               />
                               <span className="font-display text-xl font-bold text-slate-400">
                                 —
@@ -2727,7 +2750,7 @@ function PronosticsPage() {
                                 value={score.away}
                                 onChange={(e) => setCoeurValue(match.id, "away", e.target.value)}
                                 placeholder="-"
-                                className="size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
+                                className="size-12 sm:size-14 md:size-16 rounded-2xl border border-emerald-500/20 bg-[#050913]/90 text-center font-display text-xl sm:text-2xl md:text-3xl font-black text-white outline-none transition-all duration-300 shadow-[inset_0_2px_10px_rgba(0,0,0,0.9)] focus:border-[#14F195] focus:shadow-[0_0_20px_rgba(20,241,149,0.4)] focus:scale-105"
                               />
                             </div>
                             <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-slate-400">
@@ -2787,8 +2810,8 @@ function PronosticsPage() {
                           </div>
 
                           {/* Équipe Extérieur (90px) */}
-                          <div className="flex flex-col items-center flex-1 text-center group">
-                            <div className="relative size-20 md:size-[90px] flex items-center justify-center group-hover:scale-105 transition-all duration-300">
+                          <div className="flex min-w-0 flex-col items-center flex-1 text-center group">
+                            <div className="relative size-16 sm:size-20 md:size-[90px] flex items-center justify-center group-hover:scale-105 transition-all duration-300">
                               <ClubCrest
                                 club={away}
                                 size="size-full drop-shadow-[0_8px_20px_rgba(0,0,0,0.9)]"
