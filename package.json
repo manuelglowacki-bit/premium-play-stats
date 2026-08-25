@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "verif-points": "tsx src/lib/leaderboardStats.verif.ts",
-    "verif-badges": "tsx src/lib/classementBadges.verif.ts"
+    "verif-badges": "tsx src/lib/classementBadges.verif.ts",
+    "verif-prives": "tsx src/lib/messagesPrives.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

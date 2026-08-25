@@ -183,21 +183,44 @@ export async function supprimerMonMessage(id: string): Promise<void> {
  * réel les ferait clignoter.
  */
 export function abonnerMessagesRecus(moi: string, quandRecu: (message: MessagePrive) => void) {
-  const canal = supabase
-    .channel(`messages-prives-${moi}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "direct_messages",
-        filter: `recipient_id=eq.${moi}`,
-      },
-      (charge) => quandRecu(charge.new as MessagePrive),
-    )
-    .subscribe();
+  // Le nom du canal doit etre UNIQUE A CET ABONNEMENT, et pas seulement a la
+  // personne. Deux endroits ecoutent les messages recus — la pastille de
+  // l'entete et le panneau ouvert — et Supabase refuse deux abonnements au
+  // meme nom :
+  //
+  //   cannot add `postgres_changes` callbacks for realtime:<nom> after `subscribe()`
+  //
+  // L'erreur est levee sur-le-champ, remonte de l'effet React, et faisait
+  // tomber tout le Vestiaire sur « Something went wrong » a l'ouverture des
+  // messages prives. Le reste du fichier trophees.tsx tire deja un identifiant
+  // au sort pour chacun de ses canaux, pour cette raison exacte.
+  const suffixe =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  return () => {
-    void supabase.removeChannel(canal);
-  };
+  try {
+    const canal = supabase
+      .channel(`messages-prives-${moi}-${suffixe}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "direct_messages",
+          filter: `recipient_id=eq.${moi}`,
+        },
+        (charge) => quandRecu(charge.new as MessagePrive),
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(canal);
+    };
+  } catch (erreur) {
+    // Le temps reel est un confort : sans lui les messages arrivent au
+    // prochain chargement. Il ne doit en aucun cas emporter le Vestiaire.
+    console.warn("Messages prives — temps reel indisponible :", erreur);
+    return () => {};
+  }
 }
