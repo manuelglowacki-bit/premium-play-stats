@@ -1830,7 +1830,15 @@ function VestiairePage() {
           {/* TOP BAR */}
           <section className="vestiaire-panel vestiaire-glow min-h-0 flex-1 overflow-hidden rounded-[26px]">
 
-            <header className="flex items-center justify-between gap-3 border-b border-white/[.07] px-3 py-3 sm:px-5">
+            {/* 111px mesures : le plus gros poste de decor de la page. Pendant
+                la saisie il s'efface — l'en-tete de l'application, juste
+                au-dessus, dit deja ou l'on est, et ces pixels vont aux
+                messages, qu'on veut justement relire en repondant. */}
+            <header
+              className={`flex items-center justify-between gap-3 border-b border-white/[.07] px-3 py-3 sm:px-5 ${
+                keyboardOpen ? "hidden sm:flex" : ""
+              }`}
+            >
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid size-10 shrink-0 place-items-center rounded-2xl border border-emerald-300/30 bg-gradient-to-br from-emerald-400/20 to-purple-500/15 text-emerald-300 shadow-[0_0_25px_rgba(16,185,129,.10)]">
                   <MessageCircle size={20} />
@@ -2907,7 +2915,13 @@ function VestiairePage() {
                           placeholder={
                             currentUserId ? "Écris ton message..." : "Connecte-toi pour écrire..."
                           }
-                          className="min-h-[24px] max-h-[132px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-0.5 text-sm leading-6 text-white outline-none placeholder:text-slate-600"
+                          // text-base (16px) et NON text-sm : sous 16px, Android
+                          // et iOS zooment automatiquement sur le champ des
+                          // qu'on le touche, et toute la page part au triple de
+                          // sa taille. C'est ecrit ici plutot que laisse a la
+                          // regle globale, car la classe Tailwind du champ
+                          // l'emporterait sur elle (specificite CSS).
+                          className="min-h-[24px] max-h-[132px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-0.5 text-base leading-6 text-white outline-none placeholder:text-slate-600"
                         />
 
                         <button

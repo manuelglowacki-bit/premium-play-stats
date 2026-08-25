@@ -460,7 +460,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           en largeur. Un seul wrapper min-w-0 ici corrige structurellement
           toutes les pages d'un coup, sans dupliquer le correctif page par
           page. */}
-      <main className="relative z-10 flex min-h-0 flex-1 flex-col px-4 py-6 md:px-8 md:py-10">
+      {/* py resserre pendant la saisie : clavier ouvert, la hauteur visible
+          tombe de moitie, et 24px de marge en haut comme en bas se prennent
+          directement sur le contenu qu'on essaie de lire. */}
+      <main
+        className={`relative z-10 flex min-h-0 flex-1 flex-col px-4 md:px-8 ${
+          keyboardOpen ? "py-2" : "py-6 md:py-10"
+        }`}
+      >
         {/* Ce wrapper doit etre un MAILLON de la chaine flex, pas un bloc
             ordinaire. Ajoute a l'origine pour `min-w-0` (debordement en
             largeur), il etait reste en `display: block`, sans `flex: 1` et

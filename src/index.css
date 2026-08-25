@@ -96,9 +96,13 @@ body{
 /* sur ecran tactile. Sur ordinateur, rien ne change.                 */
 /* ---------------------------------------------------------------- */
 @media (pointer: coarse) {
-    input:not([type="checkbox"]):not([type="radio"]),
-    select,
-    textarea{
+    /* `:is(...)` avec deux `:not([attribut])` porte la specificite a 0,2,1 —
+       au-dessus d'une classe utilitaire comme `text-sm` (0,1,0), qui sinon
+       l'emporte et laisse le champ sous 16px. C'est exactement ce qui s'est
+       produit sur le champ du Vestiaire : la regle etait ecrite, mais
+       perdait, et le telephone zoomait a chaque fois qu'on touchait le
+       champ. */
+    :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]){
         font-size:16px;
     }
 }
