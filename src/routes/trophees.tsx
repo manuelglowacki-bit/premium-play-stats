@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { ClipboardEvent, DragEvent } from "react";
+import type { ClipboardEvent, DragEvent, ReactNode } from "react";
 import {
   Bell,
   Camera,
@@ -323,6 +323,70 @@ const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov", ".m4v"];
 function isVideoUrl(url: string): boolean {
   const path = url.split("?")[0].toLowerCase();
   return VIDEO_EXTENSIONS.some((ext) => path.endsWith(ext));
+}
+
+/**
+ * Met en forme le texte d'un message : **gras**, *italique*, ~~barre~~ et
+ * `code`. C'est la convention de toutes les messageries, et surtout celle des
+ * textes que les joueurs collent depuis ailleurs — sans ca, un classement
+ * copie s'affiche truffe d'asterisques.
+ *
+ * Renvoie des elements React, jamais du HTML : rien de ce qu'un joueur ecrit
+ * ne peut devenir une balise. Un salon ou 23 personnes ecrivent librement
+ * n'est pas l'endroit pour faire confiance au texte recu.
+ */
+function formaterTexteMessage(texte: string): ReactNode[] {
+  // Un seul passage. Le gras est teste AVANT l'italique, sinon `**` serait lu
+  // comme deux italiques vides.
+  //
+  // L'italique exige que l'etoile ouvrante ne soit pas suivie d'une espace et
+  // que la fermante ne soit pas precedee d'une espace. Sans cette precaution,
+  // « 2 * 3 = 6 et 4 * 5 = 20 » passait en italique, et une liste a puces
+  // collee depuis ailleurs (« * 21e Chris : 5 points ») etait mangee.
+  const motif = /(\*\*[^*\n]+\*\*|~~[^~\n]+~~|`[^`\n]+`|\*(?![\s*])[^*\n]*[^\s*]\*)/g;
+
+  const morceaux: ReactNode[] = [];
+  let position = 0;
+  let trouve: RegExpExecArray | null;
+  let cle = 0;
+
+  while ((trouve = motif.exec(texte)) !== null) {
+    if (trouve.index > position) morceaux.push(texte.slice(position, trouve.index));
+
+    const jeton = trouve[0];
+    cle += 1;
+
+    if (jeton.startsWith("**")) {
+      morceaux.push(
+        <strong key={`g${cle}`} className="font-black text-white">
+          {jeton.slice(2, -2)}
+        </strong>,
+      );
+    } else if (jeton.startsWith("~~")) {
+      morceaux.push(
+        <span key={`b${cle}`} className="line-through opacity-70">
+          {jeton.slice(2, -2)}
+        </span>,
+      );
+    } else if (jeton.startsWith("`")) {
+      morceaux.push(
+        <code key={`c${cle}`} className="rounded bg-black/30 px-1 py-0.5 font-mono text-[.9em]">
+          {jeton.slice(1, -1)}
+        </code>,
+      );
+    } else {
+      morceaux.push(
+        <em key={`i${cle}`} className="italic text-slate-200">
+          {jeton.slice(1, -1)}
+        </em>,
+      );
+    }
+
+    position = trouve.index + jeton.length;
+  }
+
+  if (position < texte.length) morceaux.push(texte.slice(position));
+  return morceaux;
 }
 
 function messagePreview(content: string) {
@@ -2371,7 +2435,7 @@ function VestiairePage() {
                                               replie ? "max-h-[15rem] overflow-hidden" : ""
                                             }`}
                                           >
-                                            {parsed.text}
+                                            {formaterTexteMessage(parsed.text)}
                                             {message.id.startsWith("temp-") ? (
                                               <span className="ml-2 text-[9px] text-slate-600">Envoi…</span>
                                             ) : null}
