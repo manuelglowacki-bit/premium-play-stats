@@ -20,6 +20,7 @@ import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
+import { useMesPoints } from "@/hooks/useMesPoints";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { withAlpha } from "@/lib/team-theme";
 import { resolveBonusClubLogo } from "@/services/bonusClubLogoService";
@@ -478,6 +479,12 @@ function PronosticsPage() {
   // — c'est CE champ qui sert à repérer les matchs du joueur, pas un nom.
   const { favoriteTeamId } = useFavoriteTeam();
 
+  // Compteur de points affiche en tete de page. Calcule par le MEME moteur
+  // que le classement (voir useMesPoints) : les deux chiffres ne peuvent donc
+  // pas se contredire.
+  const [utilisateurId, setUtilisateurId] = useState<string | null>(null);
+  const mesPoints = useMesPoints(utilisateurId);
+
   // Chargement des matchs/journées/équipes réellement synchronisés depuis
   // football-data.org (mêmes tables que l'admin — voir src/services/adminService.ts)
   // + des pronostics déjà enregistrés par le joueur connecté, pour ne pas les
@@ -492,6 +499,8 @@ function PronosticsPage() {
         const {
           data: { user },
         } = await supabase.auth.getUser();
+
+        setUtilisateurId(user?.id ?? null);
 
         const [
           { data: competitionsData, error: competitionsError },
@@ -2243,6 +2252,29 @@ function PronosticsPage() {
                     {filled} <span className="text-slate-500 font-normal">/</span>{" "}
                     <span className="text-slate-300">{total}</span>
                   </div>
+                </div>
+
+                {/* POINTS ACQUIS — journee en cours et cumul de la saison.
+                    Les deux chiffres sortent du meme moteur que le classement
+                    (useMesPoints) : ils ne peuvent donc pas le contredire.
+                    Un compte tenu a part ici aurait fini par diverger, et le
+                    jour venu personne n'aurait su lequel croire. */}
+                <div className="text-right pl-3 border-l border-[#E7B542]/25">
+                  <div className="font-mono text-[11px] text-slate-400 uppercase tracking-widest">
+                    Points
+                  </div>
+                  {mesPoints.chargement ? (
+                    <div className="font-display text-2xl font-bold text-slate-600">—</div>
+                  ) : (
+                    <div className="flex items-baseline justify-end gap-1.5">
+                      <span className="font-display text-2xl font-bold text-[#E7B542]">
+                        {selectedMatchdayId ? (mesPoints.parJournee[selectedMatchdayId] ?? 0) : 0}
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-500">
+                        · {mesPoints.saison} saison
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
