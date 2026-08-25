@@ -20,7 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { fetchAllRows } from "@/lib/supabaseFetchAll";
+import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
 import { matchAppeal, type StandingsLookup } from "@/lib/clubReputation";
@@ -789,7 +789,7 @@ function GazettePage() {
         supabase.from("profiles").select("*").order("pseudo", { ascending: true, nullsFirst: false }),
         // Paginee : sans cela PostgREST tronque a 1000 lignes en silence et
         // la Gazette raconte la journee sur des chiffres incomplets.
-        fetchAllRows("predictions", "*", ["user_id", "match_id"]),
+        fetchAllRowsCache("predictions", "*", ["user_id", "match_id"]),
         supabase.from("teams").select("id, name, short_name, logo_url"),
         supabase
           .from("user_season_favorite_teams")

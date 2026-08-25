@@ -15,7 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { computeLeagueStats, type LeagueMatch, type LeagueProfile, type LeagueBonusOption } from "@/lib/leaderboardStats";
-import { fetchAllRows } from "@/lib/supabaseFetchAll";
+import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
@@ -343,7 +343,7 @@ function StatsPage() {
         // lignes (voir src/lib/supabaseFetchAll.ts). Avec les 5 championnats,
         // `matches` dépasse ce seuil et les matchs Ligue 1 de la journée
         // pouvaient tout simplement ne pas être renvoyés.
-        fetchAllRows(
+        fetchAllRowsCache(
           "matches",
           "id, matchday, matchday_id, status, finished, kickoff, api_fixture_id, home_score, away_score, is_bonus, home_team_id, away_team_id, home_team, away_team",
           ["id"],
@@ -357,7 +357,7 @@ function StatsPage() {
         // Paginé pour la même raison : tous les pronostics de tous les
         // joueurs dépassent vite 1000 lignes. Ordre stable = la clé unique
         // (user_id, match_id).
-        fetchAllRows(
+        fetchAllRowsCache(
           "predictions",
           "user_id, match_id, home_prediction, away_prediction, created_at",
           ["user_id", "match_id"],

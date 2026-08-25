@@ -1,6 +1,6 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
 import { supabase } from "@/lib/supabase";
-import { fetchAllRows } from "@/lib/supabaseFetchAll";
+import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import AdminRoute from "@/components/auth/AdminRoute";
@@ -533,7 +533,7 @@ function AdminPage() {
       getSettings(),
       // Paginee : meme troncature silencieuse a 1000 lignes que sur le
       // Classement et la Gazette.
-      fetchAllRows(
+      fetchAllRowsCache(
         "predictions",
         "user_id,match_id,home_prediction,away_prediction,created_at",
         ["user_id", "match_id"],

@@ -18,7 +18,7 @@ import { computePrizeByRank } from "@/lib/prizePool";
 import { calculerBadges, CATALOGUE_BADGES, type Badge } from "@/lib/classementBadges";
 import { dessinerAffiche, afficheEnFichier } from "@/lib/afficheClassement";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
-import { fetchAllRows } from "@/lib/supabaseFetchAll";
+import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 
 export const Route = createFileRoute("/classement")({
   head: () => ({
@@ -442,7 +442,7 @@ function ClassementPage() {
         // caracteres, que bien des serveurs refusent. On filtre desormais
         // apres reception, comme le font deja l'Accueil et les Stats.
         const scoredIds = new Set(allScoredMatchIds);
-        const { data: toutesPredictions, error: predictionsError } = await fetchAllRows<{
+        const { data: toutesPredictions, error: predictionsError } = await fetchAllRowsCache<{
           user_id: string;
           match_id: string;
           home_prediction: number | null;

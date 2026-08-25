@@ -23,7 +23,7 @@ import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES }
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
-import { fetchAllRows } from "@/lib/supabaseFetchAll";
+import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
 
 export const Route = createFileRoute("/")({
@@ -163,7 +163,7 @@ function IndexPage() {
           // computeLeagueStats, la même fonction que le Classement.
           // Paginé : sans .range(), PostgREST tronque silencieusement à 1000
           // lignes (voir src/lib/supabaseFetchAll.ts).
-          fetchAllRows(
+          fetchAllRowsCache(
             "predictions",
             "user_id,match_id,home_prediction,away_prediction,created_at",
             ["user_id", "match_id"],
@@ -174,7 +174,7 @@ function IndexPage() {
           // dupliquerait des lignes). L'ancien .order("kickoff") n'était utilisé
           // nulle part : la seule sélection qui dépend d'un ordre, la journée
           // terminée la plus récente, retrie explicitement par numéro de journée.
-          fetchAllRows(
+          fetchAllRowsCache(
             "matches",
             "id,matchday_id,matchday_code,matchday,match_day,status,kickoff,kickoff_time,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished,api_fixture_id",
             ["id"],

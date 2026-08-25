@@ -33,7 +33,7 @@ import {
 } from "@/lib/careerLevel";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
-import { fetchAllRows } from "@/lib/supabaseFetchAll";
+import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import {
   fetchLiveApiMatches,
   reconcileMatchesWithLive,
@@ -182,14 +182,14 @@ function ProfilPage() {
           // computeLeagueStats, la même fonction que le Classement.
           // Paginé : sans .range(), PostgREST tronque silencieusement à 1000
           // lignes (voir src/lib/supabaseFetchAll.ts).
-          fetchAllRows(
+          fetchAllRowsCache(
             "predictions",
             "user_id,match_id,home_prediction,away_prediction,created_at",
             ["user_id", "match_id"],
           ),
 
           // Paginé pour la même raison (5 championnats = plus de 1000 matchs).
-          fetchAllRows(
+          fetchAllRowsCache(
             "matches",
             "id,matchday,matchday_id,status,kickoff,api_fixture_id,home_score,away_score,home_team_id,away_team_id,home_team,away_team,is_bonus,finished",
             ["id"],

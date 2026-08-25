@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { avecCache, viderCache } from "./cacheRequetes";
 
 // PostgREST plafonne toute requête non paginée (Supabase : 1000 lignes par
 // défaut). La troncature est SILENCIEUSE : pas d'erreur, juste des lignes
@@ -14,6 +15,30 @@ const PAGE_SIZE = 1000;
 // Garde-fou : au-delà, on considère qu'une pagination part en boucle plutôt
 // que de charger indéfiniment.
 const MAX_PAGES = 200;
+
+/**
+ * Version mise en cache. C'est celle que les pages doivent appeler.
+ *
+ * Meme signature, meme resultat. La difference : deux pages qui demandent la
+ * meme chose pendant la meme minute ne la telechargent qu'une fois — et si
+ * elles la demandent EN MEME TEMPS, une seule requete part.
+ *
+ * Mesure sur le site construit, un joueur qui fait Accueil -> Classement ->
+ * Stats : trois lots complets de pronostics telecharges, pour trois fois les
+ * memes lignes.
+ */
+export async function fetchAllRowsCache<T = any>(
+  table: string,
+  columns: string,
+  orderBy: string[],
+): Promise<{ data: T[] | null; error: any }> {
+  const cle = `${table}|${columns}|${orderBy.join(",")}`;
+  const resultat = await avecCache(cle, () => fetchAllRows<T>(table, columns, orderBy));
+  // Une erreur n'est jamais mémorisée : on ne veut pas la resservir pendant
+  // une minute a toutes les pages.
+  if (resultat.error) viderCache(cle);
+  return resultat;
+}
 
 export async function fetchAllRows<T = any>(
   table: string,

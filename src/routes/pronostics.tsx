@@ -19,6 +19,7 @@ import { AppShell } from "@/components/prono/AppShell";
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
+import { viderCache } from "@/lib/cacheRequetes";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useMesPoints } from "@/hooks/useMesPoints";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
@@ -1497,6 +1498,9 @@ function PronosticsPage() {
       const { error } = await supabase
         .from("predictions")
         .upsert(l1Rows, { onConflict: "user_id, match_id" });
+      // Le joueur doit voir SON pronostic tout de suite, pas au bout d'une
+      // minute : le cache partage entre les pages oublie ce qu'il sait.
+      viderCache();
       if (error) l1Error = error.message;
     }
 
@@ -1504,6 +1508,7 @@ function PronosticsPage() {
       const { error } = await supabase
         .from("predictions")
         .upsert([bonusRow], { onConflict: "user_id, match_id" });
+      viderCache();
 
       if (error) {
         bonusError = error.message;
@@ -1554,6 +1559,7 @@ function PronosticsPage() {
               .delete()
               .eq("user_id", user.id)
               .in("match_id", otherBonusIds);
+            viderCache();
 
             // Le bonus sélectionné est déjà sauvegardé.
             // Un éventuel refus RLS du nettoyage ne doit pas annuler la validation.
@@ -1778,6 +1784,7 @@ function PronosticsPage() {
           .delete()
           .eq("user_id", user.id)
           .in("match_id", [...new Set(matchIds)]);
+            viderCache();
 
         if (deleteError) throw deleteError;
       }
