@@ -38,6 +38,20 @@ export function InstallerApplication({ compact = false }: { compact?: boolean })
   const surIphone =
     typeof navigator !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent);
 
+  // Sur iPhone, « Sur l'écran d'accueil » N'EXISTE QUE DANS SAFARI. Un joueur
+  // qui ouvre le lien depuis WhatsApp, Messenger, Instagram ou Chrome lit la
+  // marche à suivre, ne trouve pas l'option, et abandonne — sans jamais
+  // comprendre pourquoi. On détecte donc le cas et on lui dit d'abord la
+  // seule chose qui débloque : ouvrir le site dans Safari.
+  //
+  // Reconnaître Safari se fait par élimination : Chrome (CriOS), Firefox
+  // (FxiOS) et Edge (EdgiOS) s'annoncent, et les navigateurs intégrés aux
+  // applications ne mettent pas « Safari » dans leur signature.
+  const dansSafari =
+    typeof navigator !== "undefined" &&
+    /Safari/.test(navigator.userAgent) &&
+    !/CriOS|FxiOS|EdgiOS|OPiOS|GSA\//.test(navigator.userAgent);
+
   useEffect(() => {
     const dejaInstallee =
       window.matchMedia?.("(display-mode: standalone)").matches ||
@@ -151,9 +165,20 @@ export function InstallerApplication({ compact = false }: { compact?: boolean })
 
           {surIphone && !invite ? (
             <div className="mt-2.5 rounded-lg border border-amber-300/25 bg-amber-300/[0.07] px-2.5 py-2 text-[11px] leading-relaxed text-amber-100">
-              Touche <Share size={11} className="mx-0.5 inline align-[-1px]" />
-              <span className="font-black">Partager</span> en bas de Safari, puis{" "}
-              <span className="font-black">« Sur l'écran d'accueil »</span>.
+              {dansSafari ? (
+                <>
+                  Touche <Share size={11} className="mx-0.5 inline align-[-1px]" />
+                  <span className="font-black">Partager</span> en bas de l'écran, puis{" "}
+                  <span className="font-black">« Sur l'écran d'accueil »</span>.
+                </>
+              ) : (
+                <>
+                  <span className="font-black">Ouvre d'abord ce site dans Safari.</span>{" "}
+                  L'ajout à l'écran d'accueil n'existe que là — pas depuis WhatsApp,
+                  Messenger ni Chrome. Touche les trois points en haut, puis
+                  « Ouvrir dans Safari ».
+                </>
+              )}
             </div>
           ) : (
             <button
