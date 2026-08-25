@@ -160,7 +160,16 @@ export default function PushNotificationsButton({
       }
 
       if (!VAPID_PUBLIC_KEY) {
-        throw new Error("VITE_VAPID_PUBLIC_KEY est absent de .env.local.");
+        // Ce message s'affiche a l'organisateur comme aux joueurs : il doit
+        // dire ou est le probleme, pas ou il serait sur un ordinateur de
+        // developpement. `.env.local` n'existe pas sur le site en ligne — la
+        // cle publique s'y ajoute dans les variables d'environnement de
+        // l'hebergeur, et elle n'est prise en compte qu'au BUILD SUIVANT.
+        throw new Error(
+          "La clé publique des notifications (VITE_VAPID_PUBLIC_KEY) manque " +
+            "dans la configuration du site. À ajouter dans les variables " +
+            "d'environnement de Vercel, puis redéployer.",
+        );
       }
 
       const { data: { user } } = await supabase.auth.getUser();
