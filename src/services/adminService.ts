@@ -123,6 +123,15 @@ export interface AppSettings {
   timezone: string;
   maintenance_mode: boolean;
   maintenance_message: string | null;
+
+  // Colonne bien presente en base (migration 20260817090000), toujours lue et
+  // enregistree par l'ecran Reglages, mais absente de ce type : TypeScript
+  // signalait donc une erreur sur du code parfaitement fonctionnel. La
+  // bascule Mercato a ete retiree de l'interface Admin a la demande de
+  // l'organisateur ; la valeur, elle, continue d'etre conservee, pour que
+  // rien ne soit perdu si la bascule revient. Optionnelle : les anciennes
+  // lignes peuvent ne pas la porter.
+  mercato_active?: boolean | null;
 }
 
 // ============================================================

@@ -2602,12 +2602,14 @@ function PronosticsPage() {
                                   </div>
                                   <span
                                     className={`mt-1 font-display text-[11px] font-black uppercase tracking-wider ${
-                                      displayPoints > 0
-                                        ? "text-emerald-300"
-                                        : "text-red-300"
+                                      displayPoints == null
+                                        ? "text-slate-400"
+                                        : displayPoints > 0
+                                          ? "text-emerald-300"
+                                          : "text-red-300"
                                     }`}
                                   >
-                                    {score.home !== "" && score.away !== ""
+                                    {score.home !== "" && score.away !== "" && displayPoints != null
                                       ? displayPoints > 0
                                         ? `+${displayPoints} PT`
                                         : "0 PT"

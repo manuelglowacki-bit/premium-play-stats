@@ -48,23 +48,24 @@ html{
     -webkit-text-size-adjust:100%;
     text-size-adjust:100%;
 
-    /* Rien ne doit jamais deborder sur le cote : sur un telephone, un
-       debordement de quelques pixels rend toute la page baladeuse.
-       `clip` plutot que `hidden` : `hidden` creerait un conteneur de
-       defilement et casserait les elements colles (sticky) a l'interieur. */
-    overflow-x:clip;
+    /* PAS de `overflow-x` ici. Une valeur autre que `visible` sur <html> se
+       PROPAGE a la zone d'affichage elle-meme : ce n'est pas une regle
+       locale, elle change la facon dont toute la page defile. Le Vestiaire
+       repose sur une chaine flex a hauteur fixe (--app-vh) avec une seule
+       zone qui defile ; toucher au defilement global l'a bloque sur
+       telephone. Un debordement lateral, s'il y en a un, se corrige sur
+       l'element fautif, pas ici. */
 }
 
 body{
     margin:0;
-    overflow-x:clip;
 
-    /* Pas de rebond elastique en haut/bas une fois l'application installee :
-       c'est ce qui distingue une vraie application d'une page web. */
-    overscroll-behavior-y:none;
+    /* PAS de `overscroll-behavior` global non plus, pour la meme raison : le
+       Vestiaire pose deja `overscroll-behavior: contain` sur SA zone de
+       messages (voir .vestiaire-scroll), la ou c'est le comportement voulu. */
 
     /* Le rectangle gris qui clignote sous le doigt a chaque appui sur
-       Android. Les etats de survol/appui sont deja geres par le site. */
+       Android. Purement visuel, sans effet sur le defilement. */
     -webkit-tap-highlight-color:transparent;
 }
 
@@ -73,23 +74,17 @@ body{
    avant montage de React et aux pages hors AppShell (ex. /auth), pour rester
    cohérent partout.
 
-   POURQUOI UNE COUCHE FIXE ET PAS `background-attachment: fixed` :
-   iOS ne gère pas cette propriété comme les autres navigateurs. Le fond y
-   saute, se redimensionne au défilement et fait ramer la page — c'est très
-   visible sur un iPhone. Une couche `position: fixed` derrière tout le
-   contenu donne exactement le même rendu, partout, sans ce défaut. */
-body::before{
-    content:"";
-    position:fixed;
-    inset:0;
-    z-index:-1;
+   Pas de `background-attachment: fixed` : iOS ne gère pas cette propriété
+   comme les autres navigateurs, le fond y saute au défilement. Inutile ici
+   de toute façon — le corps de page ne défile pas, ce sont les conteneurs
+   internes qui défilent. */
+body{
     background-image:
         linear-gradient(rgba(8,12,20,.72),rgba(8,12,20,.88)),
         url('/arriere%20plan%20general.png');
     background-size:cover;
     background-position:center top;
     background-repeat:no-repeat;
-    pointer-events:none;
 }
 
 /* ---------------------------------------------------------------- */
