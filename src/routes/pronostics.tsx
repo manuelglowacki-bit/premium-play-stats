@@ -1242,6 +1242,42 @@ function PronosticsPage() {
     return Boolean(lockDate && Date.now() >= lockDate.getTime());
   };
 
+  /**
+   * Le match a-t-il REELLEMENT commence ? Question differente de
+   * `isMatchLocked`, et c'est la seule a poser avant d'effacer quoi que ce
+   * soit.
+   *
+   * `isMatchLocked` repond « la saisie est-elle encore ouverte ? », d'apres la
+   * date limite de la journee. Or cette date peut ne pas exister :
+   * `getMatchLockDate` renvoie null quand la journee n'est ni en
+   * `auto_minus_1` ni pourvue d'une date manuelle — le cas des journees
+   * creees avant que ce mode ne devienne le defaut. `isMatchLocked` vaut
+   * alors false, et un match TERMINE passe pour « pas encore commence ».
+   *
+   * PERTE DE DONNEES CONSTATEE : en validant son bonus, un joueur voyait
+   * disparaitre le pronostic bonus d'une journee precedente deja jouee, et
+   * les points qui allaient avec. Le nettoyage des autres candidats croyait
+   * n'effacer que des lignes sans consequence.
+   *
+   * On regarde donc l'etat REEL du match, que l'administrateur ne peut pas
+   * defaire d'un reglage : termine, score saisi, ou coup d'envoi passe. La
+   * date limite ne sert plus que de dernier recours.
+   *
+   * Ceci ne touche pas au calcul des points : cela empeche seulement
+   * d'effacer les pronostics sur lesquels ils reposent.
+   */
+  const hasMatchStarted = (match: MatchRow): boolean => {
+    if (match.finished) return true;
+    if (match.home_score != null && match.away_score != null) return true;
+
+    if (match.kickoff) {
+      const kickoff = new Date(match.kickoff);
+      if (!Number.isNaN(kickoff.getTime()) && Date.now() >= kickoff.getTime()) return true;
+    }
+
+    return isMatchLocked(match);
+  };
+
   // FAILLE CORRIGEE — selectBonusMatch ne verifiait que le match VISE :
   //     if (!match || isMatchLocked(match)) return;
   // Rien ne regardait le match DEJA choisi. Un joueur ayant pris
@@ -1467,7 +1503,11 @@ function PronosticsPage() {
           const otherBonusIds = currentDayBonusIds.filter((id) => {
             if (id === bonusRow.match_id) return false;
             const other = matches.find((item) => item.id === id);
-            return !other || !isMatchLocked(other);
+            // Match introuvable dans la liste chargee : on ne sait pas s'il a
+            // ete joue, donc on n'y touche pas. Mieux vaut une ligne inutile
+            // en base qu'un pronostic efface par erreur.
+            if (!other) return false;
+            return !hasMatchStarted(other);
           });
 
           if (otherBonusIds.length > 0) {
@@ -1664,7 +1704,7 @@ function PronosticsPage() {
       // eux seuls sont encore modifiables, donc eux seuls peuvent legitimement
       // etre effaces. Un resultat acquis n'appartient plus a l'interface.
       const startedIds = new Set(
-        matches.filter((m) => isMatchLocked(m)).map((m) => String(m.id)),
+        matches.filter((m) => hasMatchStarted(m)).map((m) => String(m.id)),
       );
 
       const matchIds = [
