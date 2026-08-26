@@ -1509,7 +1509,15 @@ function PronoFollowUpTab({
                 return (
                   <div
                     key={playerId}
-                    className={`flex flex-col gap-2.5 p-3.5 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_110px_170px_auto] lg:items-center lg:gap-3 lg:p-4 ${
+                    /* Sous 1024px, cette ligne empilait CINQ blocs les uns
+                       sous les autres : ~190px par joueur, soit 4400px a
+                       faire defiler pour retrouver les retardataires parmi 23.
+                       Elle se replie desormais en deux lignes — le joueur et
+                       son bouton, puis ses trois etats cote a cote — avec
+                       `flex-wrap` et `order`. La grille des grands ecrans, et
+                       donc son affichage en colonnes, ne bouge pas : chaque
+                       bloc retrouve sa place d'origine via `lg:order-*`. */
+                    className={`flex flex-wrap items-center gap-x-2.5 gap-y-1.5 p-3.5 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_110px_170px_auto] lg:items-center lg:gap-3 lg:p-4 ${
                       row.status === "none"
                         ? "bg-red-500/[0.035]"
                         : row.status === "incomplete"
@@ -1518,7 +1526,7 @@ function PronoFollowUpTab({
                     }`}
                   >
                     {/* Colonne JOUEUR */}
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="order-1 flex min-w-0 flex-1 items-center gap-3 lg:order-1 lg:flex-none">
                       <div className="relative size-9 shrink-0 overflow-hidden rounded-full border border-slate-700 bg-slate-800 sm:size-10">
                         {row.player.avatar_url ? (
                           <img
@@ -1537,11 +1545,11 @@ function PronoFollowUpTab({
                       </div>
                     </div>
 
+                    {/* saut de ligne (telephone seulement) */}
+                    <div aria-hidden className="order-3 h-0 basis-full lg:hidden" />
+
                     {/* Colonne LIGUE 1 — X/Y matches pronostiqués */}
-                    <div className="flex items-center gap-2 lg:justify-center">
-                      <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-500 lg:hidden">
-                        Ligue 1
-                      </span>
+                    <div className="order-4 flex items-center gap-2 lg:order-2 lg:justify-center">
                       <span
                         className={`font-display text-sm font-black ${
                           row.l1Completed === row.l1Expected && row.l1Expected > 0
@@ -1561,10 +1569,7 @@ function PronoFollowUpTab({
 
                     {/* Colonne BONUS — sélectionné ou non (le cas "aucun bonus configuré
                         pour la journée" reste un simple tiret, pas un statut manquant). */}
-                    <div className="flex items-center gap-2 lg:justify-center">
-                      <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-slate-500 lg:hidden">
-                        Bonus
-                      </span>
+                    <div className="order-5 flex items-center gap-2 lg:order-3 lg:justify-center">
                       {row.bonusExpected ? (
                         <span
                           className={`font-mono text-[11px] font-bold ${
@@ -1579,7 +1584,7 @@ function PronoFollowUpTab({
                     </div>
 
                     {/* Colonne STATUT */}
-                    <div>
+                    <div className="order-6 lg:order-4">
                       {row.status === "complete" ? (
                         <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-bold text-emerald-400">
                           <CheckCircle2 size={12} />
@@ -1603,7 +1608,7 @@ function PronoFollowUpTab({
                         un texte avec le lien du site), uniquement pour les joueurs
                         qui n'ont pas terminé. */}
                     {row.status !== "complete" && (
-                      <div className="flex flex-wrap items-center gap-1.5 lg:justify-end lg:gap-2">
+                      <div className="order-2 flex shrink-0 flex-wrap items-center gap-1.5 lg:order-5 lg:justify-end lg:gap-2">
                         <button
                           type="button"
                           onClick={() => void remind(row)}
