@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { ongletVisible } from "@/lib/ongletVisible";
 import { computeLeagueStats, type LeagueMatch, type LeagueProfile, type LeagueBonusOption } from "@/lib/leaderboardStats";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { rankPlayers } from "@/lib/leaderboardRanking";
@@ -760,7 +761,8 @@ function StatsPage() {
     // charge API / fraîcheur live) + rafraîchissement immédiat lorsque
     // l'utilisateur revient sur l'onglet.
     const liveRefreshTimer = window.setInterval(() => {
-      loadStats();
+      // Onglet cache : on ne recharge pas. Voir src/lib/ongletVisible.ts.
+      if (ongletVisible()) loadStats();
     }, 15_000);
 
     const handleVisibilityChange = () => {

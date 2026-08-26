@@ -19,6 +19,7 @@ import { AppShell } from "@/components/prono/AppShell";
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
+import { ongletVisible } from "@/lib/ongletVisible";
 import { viderCache } from "@/lib/cacheRequetes";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useMesPoints } from "@/hooks/useMesPoints";
@@ -872,7 +873,10 @@ function PronosticsPage() {
     void refreshLive();
     // Même cadence que Classement/Accueil/Profil/Stats/Gazette (15s, cf.
     // src/lib/liveMatches.ts) — compromis charge API / fraîcheur live.
-    const timer = window.setInterval(refreshLive, 15_000);
+    const timer = window.setInterval(() => {
+      // Onglet cache : on ne recharge pas. Voir src/lib/ongletVisible.ts.
+      if (ongletVisible()) refreshLive();
+    }, 15_000);
 
     return () => {
       cancelled = true;

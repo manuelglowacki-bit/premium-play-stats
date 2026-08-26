@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
 import { supabase } from "@/lib/supabase";
+import { ongletVisible } from "@/lib/ongletVisible";
 import { useAuth } from "@/context/AuthContext";
 import { calculateCareerScore, aggregateCareerStatsByUser } from "@/lib/careerLevel";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -821,7 +822,10 @@ function ClassementPage() {
     // Le classement est vivant : pendant un match, le score de l'API peut
     // changer sans qu'aucun événement Supabase ne soit déclenché. On recharge
     // donc les données toutes les 30 secondes.
-    const liveRefreshTimer = window.setInterval(refreshRanking, 15_000);
+    const liveRefreshTimer = window.setInterval(() => {
+      // Onglet cache : on ne recharge pas. Voir src/lib/ongletVisible.ts.
+      if (ongletVisible()) refreshRanking();
+    }, 15_000);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") refreshRanking();

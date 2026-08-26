@@ -20,6 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { ongletVisible } from "@/lib/ongletVisible";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
@@ -922,7 +923,10 @@ function GazettePage() {
     loadData();
     // Même cadence que les autres pages (15s) — un compromis charge API /
     // fraîcheur live, cf. src/lib/liveMatches.ts.
-    const refresh = window.setInterval(() => loadData(true), 15000);
+    const refresh = window.setInterval(() => {
+      // Onglet cache : on ne recharge pas. Voir src/lib/ongletVisible.ts.
+      if (ongletVisible()) loadData(true);
+    }, 15000);
     const ticker = window.setInterval(() => setClock(Date.now()), 1000);
     return () => {
       window.clearInterval(refresh);

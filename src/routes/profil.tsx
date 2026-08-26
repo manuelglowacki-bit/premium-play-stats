@@ -20,6 +20,7 @@ import { AppShell } from "@/components/prono/AppShell";
 import { InstallerApplication } from "@/components/prono/InstallerApplication";
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { supabase } from "@/lib/supabase";
+import { ongletVisible } from "@/lib/ongletVisible";
 import { resizeImageToDataUrl } from "@/lib/resizeImage";
 import { useAuth } from "@/context/AuthContext";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
@@ -665,7 +666,8 @@ function ProfilPage() {
      // src/lib/liveMatches.ts) — compromis charge API / fraîcheur live.
      const liveRefreshTimer = window.setInterval(() => {
       setLiveTick(Date.now());
-      if (document.visibilityState === "visible") {
+      // Onglet cache : on ne recharge pas. Voir src/lib/ongletVisible.ts.
+      if (ongletVisible()) {
         loadData();
       }
     }, 15_000);

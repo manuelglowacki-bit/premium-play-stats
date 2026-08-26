@@ -5,6 +5,7 @@ import { InstallerApplication } from "@/components/prono/InstallerApplication";
 import { useFavoriteTeam } from "@/hooks/useFavoriteTeam";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { ongletVisible } from "@/lib/ongletVisible";
 import { numeroDeJournee } from "@/lib/numeroJournee";
 import { resizeImageToDataUrl } from "@/lib/resizeImage";
 import {
@@ -569,7 +570,10 @@ setLeaderboard(rankedRankings);
 
     fetchHomeData();
 
-    const interval = window.setInterval(fetchHomeData, 15000);
+    const interval = window.setInterval(() => {
+      // Onglet cache : on ne recharge pas. Voir src/lib/ongletVisible.ts.
+      if (ongletVisible()) fetchHomeData();
+    }, 15000);
     const onFocus = () => fetchHomeData();
     const onVisible = () => {
       if (document.visibilityState === "visible") fetchHomeData();
