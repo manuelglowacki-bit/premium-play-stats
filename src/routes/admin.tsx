@@ -1,7 +1,7 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import AdminRoute from "@/components/auth/AdminRoute";
 import {
@@ -1128,6 +1128,20 @@ function PronoFollowUpTab({
     [rows, filter],
   );
 
+  // OU COMMENCE LE BLOC DES JOUEURS A JOUR.
+  //
+  // Le tri place deja les retardataires en tete et les complets en fin de
+  // liste (voir `rang` plus haut) — mais rien ne le montrait : 23 lignes se
+  // suivaient sans rupture, et les 5 joueurs a relancer se noyaient dans les
+  // 18 autres. On insere donc deux bandeaux, uniquement quand la liste
+  // contient VRAIMENT les deux groupes (sinon un bandeau seul n'apprend
+  // rien, et sur un filtre precis il ferait doublon avec le filtre lui-meme).
+  const premierComplet = useMemo(
+    () => filteredRows.findIndex((row) => row.status === "complete"),
+    [filteredRows],
+  );
+  const listeMixte = filter === "all" && premierComplet > 0;
+
   // Message affiché dans la notification Push réelle (Phase 2). Variantes
   // par statut reprises telles quelles du cahier des charges §9 — le
   // statut "complete" ne devrait jamais atteindre cette fonction puisque le
@@ -1500,15 +1514,27 @@ function PronoFollowUpTab({
                 Aucun joueur dans ce filtre.
               </div>
             ) : (
-              filteredRows.map((row) => {
+              filteredRows.map((row, index) => {
                 const playerId = String(row.player.id);
                 const wasReminded = reminded.has(playerId);
                 const isReminding = reminding.has(playerId);
                 const wasCopied = copiedId === playerId;
+                const complet = row.status === "complete";
 
                 return (
+                  <Fragment key={playerId}>
+                    {listeMixte && index === 0 && (
+                      <div className="flex items-center gap-2 bg-amber-500/[0.06] px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300/90">
+                        <Bell size={11} />À relancer · {pendingRows.length}
+                      </div>
+                    )}
+                    {listeMixte && index === premierComplet && (
+                      <div className="flex items-center gap-2 bg-emerald-500/[0.06] px-4 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300/90">
+                        <CheckCircle2 size={11} />
+                        Ont fait leurs pronos · {summary.complete}
+                      </div>
+                    )}
                   <div
-                    key={playerId}
                     /* Sous 1024px, cette ligne empilait CINQ blocs les uns
                        sous les autres : ~190px par joueur, soit 4400px a
                        faire defiler pour retrouver les retardataires parmi 23.
@@ -1517,7 +1543,9 @@ function PronoFollowUpTab({
                        `flex-wrap` et `order`. La grille des grands ecrans, et
                        donc son affichage en colonnes, ne bouge pas : chaque
                        bloc retrouve sa place d'origine via `lg:order-*`. */
-                    className={`flex flex-wrap items-center gap-x-2.5 gap-y-1.5 p-3.5 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_110px_170px_auto] lg:items-center lg:gap-3 lg:p-4 ${
+                    className={`flex flex-wrap items-center gap-x-2.5 gap-y-1.5 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_110px_170px_auto] lg:items-center lg:gap-3 lg:p-4 ${
+                      complet ? "px-3.5 py-2" : "p-3.5"
+                    } ${
                       row.status === "none"
                         ? "bg-red-500/[0.035]"
                         : row.status === "incomplete"
@@ -1527,7 +1555,11 @@ function PronoFollowUpTab({
                   >
                     {/* Colonne JOUEUR */}
                     <div className="order-1 flex min-w-0 flex-1 items-center gap-3 lg:order-1 lg:flex-none">
-                      <div className="relative size-9 shrink-0 overflow-hidden rounded-full border border-slate-700 bg-slate-800 sm:size-10">
+                      <div
+                        className={`relative shrink-0 overflow-hidden rounded-full border border-slate-700 bg-slate-800 ${
+                          complet ? "size-7 sm:size-8 lg:size-10" : "size-9 sm:size-10"
+                        }`}
+                      >
                         {row.player.avatar_url ? (
                           <img
                             src={row.player.avatar_url}
@@ -1545,8 +1577,11 @@ function PronoFollowUpTab({
                       </div>
                     </div>
 
-                    {/* saut de ligne (telephone seulement) */}
-                    <div aria-hidden className="order-3 h-0 basis-full lg:hidden" />
+                    {/* saut de ligne (telephone seulement) — inutile pour un
+                        joueur a jour : sans bouton d'action, sa ligne tient
+                        deja sur une seule, et c'est autant de defilement en
+                        moins avant d'atteindre le suivant. */}
+                    {!complet && <div aria-hidden className="order-3 h-0 basis-full lg:hidden" />}
 
                     {/* Colonne LIGUE 1 — X/Y matches pronostiqués */}
                     <div className="order-4 flex items-center gap-2 lg:order-2 lg:justify-center">
@@ -1643,6 +1678,7 @@ function PronoFollowUpTab({
                       </div>
                     )}
                   </div>
+                  </Fragment>
                 );
               })
             )}
