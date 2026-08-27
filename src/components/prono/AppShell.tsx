@@ -21,6 +21,7 @@ import {
 } from "@/lib/vestiaireUnread";
 import { useAuth } from "@/context/AuthContext";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
+import { NouvelleVersion } from "@/components/prono/NouvelleVersion";
 
 /**
  * Hauteur rÃ©ellement visible de l'app, en une seule source pour toute
@@ -548,6 +549,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             role sur grand ecran. */}
 
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col [&>*]:w-full">{children}</div>
+
+        {/* Bandeau « Nouvelle version » — pose ici pour couvrir toutes les
+            pages d'un coup, et au-dessus de la nav flottante. */}
+        <NouvelleVersion />
 </main>
 
       {/* ================= NAVIGATION â€” un seul bloc, sur tous les Ã©crans ================= */}
