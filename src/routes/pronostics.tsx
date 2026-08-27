@@ -3124,19 +3124,11 @@ function PronosticsPage() {
 
                 <div className="relative mt-3 flex justify-center">
                   <span className="rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-200">
-                    {bonusChoisi === 0 ? (
-                      "🔥 Aucun choix pour l’instant"
-                    ) : choiceCount === 0 ? (
-                      // « 0 % · 0 joueur » dit deux fois la meme chose.
-                      "🔥 Personne"
-                    ) : (
-                      <>
-                        🔥 {choicePercent}%
-                        <span className="ml-1 text-amber-200/60">
-                          · {choiceCount} joueur{choiceCount > 1 ? "s" : ""}
-                        </span>
-                      </>
-                    )}
+                    {bonusChoisi === 0
+                      ? "🔥 Aucun choix pour l’instant"
+                      : choiceCount === 0
+                        ? "🔥 Personne"
+                        : `🔥 ${choicePercent}%`}
                   </span>
                 </div>
 
