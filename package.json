@@ -18,7 +18,9 @@
     "verif-rappels": "tsx src/lib/rappels.verif.ts",
     "verif-journee": "tsx src/lib/numeroJournee.verif.ts",
     "verif-bonus": "tsx src/services/bonusSelection.verif.ts",
-    "verif-repartition": "tsx src/lib/repartitionBonus.verif.ts"
+    "verif-repartition": "tsx src/lib/repartitionBonus.verif.ts",
+    "verif-1n2": "tsx src/lib/repartition1N2.verif.ts",
+    "verif-pagination": "tsx src/lib/pagination.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

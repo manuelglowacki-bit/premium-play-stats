@@ -40,41 +40,86 @@ export async function fetchAllRowsCache<T = any>(
   return resultat;
 }
 
+/**
+ * Meme pagination, mais filtree sur une liste de valeurs (`column in (...)`).
+ *
+ * Sert aux statistiques d'une journee : les pronostics de TOUS les joueurs
+ * sur la douzaine de matchs affiches. A 23 joueurs cela tient largement sous
+ * la limite, mais a 100 joueurs (23 x 14 = 322 lignes contre 100 x 14 = 1400)
+ * la requete simple serait tronquee EN SILENCE a 1000 lignes et les
+ * pourcentages afficheraient n'importe quoi sans le moindre message d'erreur.
+ */
+export async function fetchAllRowsIn<T = any>(
+  table: string,
+  columns: string,
+  orderBy: string[],
+  column: string,
+  values: string[],
+): Promise<{ data: T[] | null; error: any }> {
+  if (values.length === 0) return { data: [], error: null };
+
+  return fetchAllRows<T>(table, columns, orderBy, (query) => query.in(column, values));
+}
+
 export async function fetchAllRows<T = any>(
   table: string,
   columns: string,
   orderBy: string[],
+  filtre?: (query: any) => any,
 ): Promise<{ data: T[] | null; error: any }> {
   if (orderBy.length === 0) {
     return { data: null, error: new Error(`fetchAllRows(${table}) : ordre stable requis`) };
   }
 
-  const rows: T[] = [];
+  return paginer<T>(table, async (from, to) => {
+    let query = supabase.from(table).select(columns).range(from, to);
 
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const from = page * PAGE_SIZE;
-
-    let query = supabase
-      .from(table)
-      .select(columns)
-      .range(from, from + PAGE_SIZE - 1);
+    // Le filtre s'applique AVANT l'ordre et la pagination : chaque page est
+    // alors une tranche du resultat filtre, jamais de la table entiere.
+    if (filtre) query = filtre(query);
 
     orderBy.forEach((column) => {
       query = query.order(column, { ascending: true });
     });
 
-    const { data, error } = await query;
+    return query;
+  });
+}
+
+/**
+ * La boucle de pagination, isolee de Supabase pour etre verifiable.
+ *
+ * `chargerPage(from, to)` doit renvoyer la tranche demandee. La boucle
+ * s'arrete a la premiere page incomplete — c'est la seule facon de savoir
+ * qu'on a tout lu, PostgREST ne disant pas combien de lignes restent.
+ *
+ * Testee par npm run verif-pagination.
+ */
+export async function paginer<T = any>(
+  table: string,
+  chargerPage: (from: number, to: number) => Promise<{ data: any; error: any }>,
+  pageSize: number = PAGE_SIZE,
+  maxPages: number = MAX_PAGES,
+): Promise<{ data: T[] | null; error: any }> {
+  const rows: T[] = [];
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const from = page * pageSize;
+
+    const { data, error } = await chargerPage(from, from + pageSize - 1);
     if (error) return { data: null, error };
 
     const batch = (data ?? []) as T[];
     rows.push(...batch);
 
     // Page incomplète = dernière page.
-    if (batch.length < PAGE_SIZE) return { data: rows, error: null };
+    if (batch.length < pageSize) return { data: rows, error: null };
   }
 
   return {
     data: null,
-    error: new Error(`fetchAllRows(${table}) : plus de ${MAX_PAGES * PAGE_SIZE} lignes, pagination interrompue`),
+    error: new Error(
+      `fetchAllRows(${table}) : plus de ${maxPages * pageSize} lignes, pagination interrompue`,
+    ),
   };
 }

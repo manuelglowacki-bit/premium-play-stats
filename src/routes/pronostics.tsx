@@ -17,6 +17,12 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
 import { repartitionBonus, repartirCent } from "@/lib/repartitionBonus";
+import {
+  repartition1N2,
+  repartitionVide,
+  type RepartitionMatch,
+} from "@/lib/repartition1N2";
+import { fetchAllRowsIn } from "@/lib/supabaseFetchAll";
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
@@ -415,6 +421,8 @@ function PronosticsPage() {
     const [bonusChoisi, setBonusChoisi] = useState(0);
     // Effectif total, uniquement pour le libelle « X sur Y ont choisi ».
     const [bonusInscrits, setBonusInscrits] = useState(0);
+    // Repartition 1/N/2 de chaque match de la journee, par match_id.
+    const [repartitions, setRepartitions] = useState<Record<string, RepartitionMatch>>({});
   const [bonusLoading, setBonusLoading] = useState(false);
   const [bonusError, setBonusError] = useState<string | null>(null);
   // Pronostics déjà enregistrés par le joueur, tels que renvoyés par
@@ -1145,15 +1153,20 @@ function PronosticsPage() {
     let cancelled = false;
 
     async function loadBonusChoiceStats() {
-      if (!selectedMatchdayId || bonusCandidates.length === 0) {
+      const bonusMatchIds = bonusCandidates.map((candidate) => String(candidate.match.id));
+      // Les matchs Ligue 1 et club de coeur de la journee, en plus des quatre
+      // candidats bonus : une seule requete sert les deux statistiques.
+      const autresMatchIds = [...mainMatches, ...coeurMatchesForDay].map((m) => String(m.id));
+      const tousLesMatchIds = [...new Set([...bonusMatchIds, ...autresMatchIds])];
+
+      if (!selectedMatchdayId || tousLesMatchIds.length === 0) {
         setBonusChoiceCounts({});
         setBonusChoicePercents({});
         setBonusChoisi(0);
         setBonusInscrits(0);
+        setRepartitions({});
         return;
       }
-
-      const bonusMatchIds = bonusCandidates.map((candidate) => candidate.match.id);
 
       try {
         const { data: players, error: playersError } = await supabase
@@ -1162,13 +1175,24 @@ function PronosticsPage() {
 
         if (playersError) throw playersError;
 
-        const { data: predictions, error: predictionsError } = await supabase
-          .from("predictions")
-          // `created_at` departage un joueur qui a change d'avis et laisse
-          // deux lignes : sans lui il comptait double et la somme des quatre
-          // badges depassait 100 %.
-          .select("user_id, match_id, created_at")
-          .in("match_id", bonusMatchIds);
+        // Pagine : a 100 joueurs sur 14 matchs on depasse les 1000 lignes que
+        // PostgREST renvoie au maximum, et la troncature est SILENCIEUSE.
+        // `created_at` departage un joueur qui a change d'avis et laisse deux
+        // lignes : sans lui il compterait deux fois et la somme des parts
+        // depasserait 100 %.
+        const { data: predictions, error: predictionsError } = await fetchAllRowsIn<{
+          user_id: string | null;
+          match_id: string | null;
+          home_prediction: number | null;
+          away_prediction: number | null;
+          created_at?: string | null;
+        }>(
+          "predictions",
+          "user_id,match_id,home_prediction,away_prediction,created_at",
+          ["user_id", "match_id"],
+          "match_id",
+          tousLesMatchIds,
+        );
 
         if (predictionsError) throw predictionsError;
 
@@ -1180,6 +1204,7 @@ function PronosticsPage() {
         setBonusChoicePercents(repartirCent(comptes));
         setBonusChoisi(joueursAyantChoisi);
         setBonusInscrits(players?.length ?? 0);
+        setRepartitions(repartition1N2(predictions ?? []));
       } catch (error) {
         console.error("Erreur chargement statistiques bonus :", error);
 
@@ -1188,6 +1213,7 @@ function PronosticsPage() {
           setBonusChoicePercents({});
           setBonusChoisi(0);
           setBonusInscrits(0);
+          setRepartitions({});
         }
       }
     }
@@ -1197,7 +1223,7 @@ function PronosticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMatchdayId, bonusCandidates]);
+  }, [selectedMatchdayId, bonusCandidates, mainMatches, coeurMatchesForDay]);
 
   const selectedBonusCandidate =
     bonusCandidates.find((candidate) => candidate.match.id === bonusSelection) ?? null;
@@ -2507,6 +2533,36 @@ function PronosticsPage() {
                               ))}
                             </div>
 
+                            {/* REPARTITION DES PRONOSTICS — meme lecture que
+                                le badge du match bonus, aligne sous les trois
+                                boutons qu'il commente. Chaque match a son
+                                propre denominateur : ils ne se remplissent pas
+                                au meme rythme, et « 67 % » sur trois joueurs
+                                ne dit pas la meme chose que « 67 % » sur
+                                vingt-trois — d'ou l'effectif rappele a cote. */}
+                            {(() => {
+                              const repartition = repartitions[String(match.id)] ?? repartitionVide();
+                              if (repartition.joueurs === 0) return null;
+
+                              return (
+                                <div className="flex w-[164px] items-center justify-between px-1">
+                                  {(["1", "N", "2"] as const).map((k) => (
+                                    <span
+                                      key={k}
+                                      title={`${repartition.comptes[k]} joueur${
+                                        repartition.comptes[k] > 1 ? "s" : ""
+                                      } sur ${repartition.joueurs}`}
+                                      className={`w-10 text-center font-mono text-[9px] font-bold tabular-nums ${
+                                        current === k ? "text-emerald-300" : "text-slate-500"
+                                      }`}
+                                    >
+                                      {repartition.pourcentages[k]}%
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+
                             {(() => {
                               const currentScore = getLiveScore(match);
                               const isLive = Boolean(currentScore?.live);
@@ -2770,6 +2826,31 @@ function PronosticsPage() {
                               </span>{" "}
                               <span>───</span>
                             </div>
+
+                            {/* Meme repartition que les matchs de Ligue 1. Ici
+                                les joueurs saisissent un score exact : l'issue
+                                 1/N/2 en est deduite, exactement comme pour le
+                                calcul des points. */}
+                            {(() => {
+                              const repartition = repartitions[String(match.id)] ?? repartitionVide();
+                              if (repartition.joueurs === 0) return null;
+
+                              return (
+                                <div
+                                  title={`${repartition.joueurs} joueur${
+                                    repartition.joueurs > 1 ? "s" : ""
+                                  } ont pronostique ce match`}
+                                  className="flex items-center gap-2 font-mono text-[9px] font-bold tabular-nums text-slate-400"
+                                >
+                                  {(["1", "N", "2"] as const).map((k) => (
+                                    <span key={k}>
+                                      <span className="text-slate-600">{k}</span>{" "}
+                                      {repartition.pourcentages[k]}%
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
 
                             {(() => {
                               const currentScore = getLiveScore(match);
