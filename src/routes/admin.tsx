@@ -98,6 +98,7 @@ import {
   Trophy,
   KeyRound,
   Copy,
+  BarChart3,
 } from "lucide-react";
 import {
   genererCodeInvitation,
@@ -108,7 +109,7 @@ import {
 /** Onglets de l'espace admin, adressables via le search param `tab`
  * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
  * partageable/bookmarkable. */
-const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "suivi", "verrouillage", "reglages"] as const;
+const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "suivi", "audience", "verrouillage", "reglages"] as const;
 export type AdminTab = (typeof ADMIN_TAB_VALUES)[number];
 
 function isAdminTab(value: unknown): value is AdminTab {
@@ -415,6 +416,7 @@ const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
   { id: "matchs", label: "Matchs", icon: Calendar },
   { id: "bonus", label: "Bonus", icon: Gift },
   { id: "suivi", label: "Suivi pronos", icon: Bell },
+  { id: "audience", label: "Audience", icon: BarChart3 },
   { id: "verrouillage", label: "Verrouillage", icon: Lock },
   { id: "reglages", label: "Réglages", icon: SettingsIcon },
 ];
@@ -828,6 +830,8 @@ function AdminPage() {
               notify={notify}
             />
           )}
+
+          {activeTab === "audience" && <AudienceTab players={players} />}
 
           {activeTab === "verrouillage" && (
             <MatchdayLockTab
@@ -5970,3 +5974,282 @@ function ConfirmDialog({
 
 
 
+
+/* ============================================================
+   AUDIENCE — QUELLES PAGES LES JOUEURS UTILISENT
+   ============================================================
+   Répond à deux questions différentes, et c'est la seconde qui sert vraiment
+   à décider : « quelle page est la plus consultée » (le tableau du haut) et
+   « qui la consulte » (la colonne joueurs, puis le détail par joueur).
+
+   Un compteur anonyme dirait « la Gazette : 41 vues ». Ce tableau dit « 41
+   vues, par 3 joueurs sur 23 » — et c'est cette phrase-là qui permet de
+   trancher si on la coupe pour un groupe.
+
+   La base renvoie des totaux DÉJÀ agrégés (fonctions audience_par_page /
+   audience_par_joueur) : une dizaine de lignes au lieu de plusieurs milliers.
+   Voir supabase/migrations/20260827100000_audience_pages.sql.
+   ============================================================ */
+
+const AUDIENCE_PERIODES = [
+  { id: "7", label: "7 jours", jours: 7 },
+  { id: "30", label: "30 jours", jours: 30 },
+  { id: "90", label: "3 mois", jours: 90 },
+] as const;
+
+const AUDIENCE_NOMS: Record<string, string> = {
+  "/": "Accueil",
+  "/pronostics": "Pronostics",
+  "/classement": "Classement",
+  "/trophees": "Vestiaire",
+  "/gazette": "Gazette",
+  "/stats": "Stats",
+  "/profil": "Profil",
+  "/admin": "Admin",
+};
+
+type LigneAudience = { page: string; vues: number; joueurs: number };
+type LigneJoueur = { user_id: string; page: string; vues: number };
+
+function AudienceTab({ players }: { players: Player[] }) {
+  const [periode, setPeriode] = useState<(typeof AUDIENCE_PERIODES)[number]["id"]>("30");
+  const [pages, setPages] = useState<LigneAudience[]>([]);
+  const [parJoueur, setParJoueur] = useState<LigneJoueur[]>([]);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  const jours = AUDIENCE_PERIODES.find((p) => p.id === periode)?.jours ?? 30;
+
+  useEffect(() => {
+    let annule = false;
+
+    async function charger() {
+      setChargement(true);
+      setErreur(null);
+
+      const depuis = new Date();
+      depuis.setDate(depuis.getDate() - jours);
+      const depuisTexte = depuis.toISOString().slice(0, 10);
+
+      const [resume, detail] = await Promise.all([
+        supabase.rpc("audience_par_page", { p_depuis: depuisTexte }),
+        supabase.rpc("audience_par_joueur", { p_depuis: depuisTexte }),
+      ]);
+
+      if (annule) return;
+
+      if (resume.error || detail.error) {
+        // Message explicite : le cas le plus probable est que la migration
+        // n'a pas encore été passée dans Supabase.
+        setErreur(
+          "Impossible de lire l'audience. Si c'est la première fois : la migration " +
+            "20260827100000_audience_pages.sql doit être exécutée dans Supabase.",
+        );
+        setChargement(false);
+        return;
+      }
+
+      setPages((resume.data ?? []) as LigneAudience[]);
+      setParJoueur((detail.data ?? []) as LigneJoueur[]);
+      setChargement(false);
+    }
+
+    void charger();
+    return () => {
+      annule = true;
+    };
+  }, [jours]);
+
+  const totalVues = useMemo(() => pages.reduce((somme, l) => somme + Number(l.vues), 0), [pages]);
+  const maxVues = useMemo(
+    () => pages.reduce((max, l) => Math.max(max, Number(l.vues)), 0),
+    [pages],
+  );
+
+  // Les joueurs qui n'ouvrent JAMAIS une page donnée : c'est l'information
+  // qu'un compteur de vues ne donne pas, et celle qui permet de décider.
+  const jamais = useMemo(() => {
+    const vusParPage = new Map<string, Set<string>>();
+    for (const ligne of parJoueur) {
+      const set = vusParPage.get(ligne.page) ?? new Set<string>();
+      set.add(String(ligne.user_id));
+      vusParPage.set(ligne.page, set);
+    }
+    return vusParPage;
+  }, [parJoueur]);
+
+  const pseudoParId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const joueur of players) map.set(String(joueur.id), joueur.pseudo ?? "Sans pseudo");
+    return map;
+  }, [players]);
+
+  const [pageOuverte, setPageOuverte] = useState<string | null>(null);
+
+  const detailPage = useMemo(() => {
+    if (!pageOuverte) return null;
+    const vus = jamais.get(pageOuverte) ?? new Set<string>();
+    const parId = new Map<string, number>();
+    for (const ligne of parJoueur) {
+      if (ligne.page !== pageOuverte) continue;
+      parId.set(String(ligne.user_id), Number(ligne.vues));
+    }
+    const lecteurs = [...parId.entries()]
+      .map(([id, vues]) => ({ id, pseudo: pseudoParId.get(id) ?? "Joueur parti", vues }))
+      .sort((a, b) => b.vues - a.vues);
+    const absents = players
+      .filter((joueur) => !vus.has(String(joueur.id)))
+      .map((joueur) => joueur.pseudo ?? "Sans pseudo")
+      .sort((a, b) => a.localeCompare(b, "fr"));
+    return { lecteurs, absents };
+  }, [pageOuverte, parJoueur, jamais, players, pseudoParId]);
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:p-5">
+        <div>
+          <div className="font-display text-lg font-black text-white">Audience</div>
+          <div className="mt-0.5 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+            {totalVues} visite{totalVues > 1 ? "s" : ""} sur {jours} jours
+          </div>
+        </div>
+
+        <div className="flex gap-1.5">
+          {AUDIENCE_PERIODES.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPeriode(p.id)}
+              className={`rounded-xl border px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide transition ${
+                periode === p.id
+                  ? "border-sky-500/50 bg-sky-500/10 text-sky-300"
+                  : "border-slate-800 bg-[#0d1322] text-slate-400 hover:text-white"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {erreur && (
+        <div className="p-4 sm:p-5">
+          <ErrorBanner message={erreur} />
+        </div>
+      )}
+
+      {chargement ? (
+        <p className="p-10 text-center font-mono text-xs text-slate-500">Chargement…</p>
+      ) : pages.length === 0 && !erreur ? (
+        <div className="p-10 text-center">
+          <p className="font-display text-base font-bold text-white">Rien à afficher pour l'instant.</p>
+          <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-slate-500">
+            Le comptage démarre au premier passage des joueurs après la mise en ligne.
+            Reviens dans un jour ou deux.
+          </p>
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-800/70">
+          {pages.map((ligne) => {
+            const vues = Number(ligne.vues);
+            const joueurs = Number(ligne.joueurs);
+            const part = maxVues > 0 ? Math.round((vues / maxVues) * 100) : 0;
+            const ouverte = pageOuverte === ligne.page;
+
+            return (
+              <div key={ligne.page}>
+                <button
+                  type="button"
+                  onClick={() => setPageOuverte(ouverte ? null : ligne.page)}
+                  className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 p-3.5 text-left transition hover:bg-white/[0.02] sm:p-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-display text-sm font-black text-white">
+                      {AUDIENCE_NOMS[ligne.page] ?? ligne.page}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[10px] text-slate-600">{ligne.page}</div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="font-display text-base font-black text-sky-300">{vues}</div>
+                    <div className="font-mono text-[9px] uppercase tracking-widest text-slate-600">
+                      visites
+                    </div>
+                  </div>
+
+                  <div className="w-[92px] text-right">
+                    <div
+                      className={`font-display text-base font-black ${
+                        joueurs === players.length
+                          ? "text-emerald-400"
+                          : joueurs <= Math.max(1, Math.round(players.length / 4))
+                            ? "text-amber-400"
+                            : "text-slate-300"
+                      }`}
+                    >
+                      {joueurs}/{players.length}
+                    </div>
+                    <div className="font-mono text-[9px] uppercase tracking-widest text-slate-600">
+                      joueurs
+                    </div>
+                  </div>
+
+                  {/* Barre de comparaison, relative a la page la plus consultee. */}
+                  <div className="h-1.5 basis-full overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-sky-500/70 to-sky-400"
+                      style={{ width: `${part}%` }}
+                    />
+                  </div>
+                </button>
+
+                {ouverte && detailPage && (
+                  <div className="border-t border-slate-800/70 bg-[#070d18] p-4 sm:p-5">
+                    <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-sky-300">
+                      Qui la consulte
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {detailPage.lecteurs.map((lecteur) => (
+                        <span
+                          key={lecteur.id}
+                          className="rounded-lg border border-slate-700 bg-[#0d1322] px-2 py-1 font-mono text-[11px] text-slate-300"
+                        >
+                          {lecteur.pseudo}{" "}
+                          <span className="font-bold text-sky-300">{lecteur.vues}</span>
+                        </span>
+                      ))}
+                    </div>
+
+                    {detailPage.absents.length > 0 && (
+                      <>
+                        <div className="mt-4 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">
+                          N'y vont jamais · {detailPage.absents.length}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {detailPage.absents.map((pseudo) => (
+                            <span
+                              key={pseudo}
+                              className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-2 py-1 font-mono text-[11px] text-amber-100/80"
+                            >
+                              {pseudo}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="border-t border-slate-800 p-4 text-xs leading-relaxed text-slate-500 sm:p-5">
+        Une visite est comptée une fois par page et par demi-heure, jamais quand
+        l'application est en arrière-plan. Aucune adresse IP, aucun paramètre d'URL :
+        un joueur, une page, un jour. Les données sont gardées 90 jours.
+      </div>
+    </Card>
+  );
+}

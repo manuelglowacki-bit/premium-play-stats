@@ -22,6 +22,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import { useKeyboardOpen } from "@/hooks/useKeyboardOpen";
 import { NouvelleVersion } from "@/components/prono/NouvelleVersion";
+import { useSuiviPages } from "@/hooks/useSuiviPages";
 
 /**
  * Hauteur rÃ©ellement visible de l'app, en une seule source pour toute
@@ -98,6 +99,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // dÃ©jÃ  (profiles.is_admin), c'est le mÃ©canisme dÃ©jÃ  utilisÃ© par
   // AdminRoute pour protÃ©ger la route /admin, rÃ©utilisÃ© ici pour la nav.
   const { user, isAdmin, signOut } = useAuth();
+
+  // Audience : quelles pages les joueurs utilisent (onglet Admin « Audience »).
+  // Un comptage par page et par demi-heure, rien quand l'onglet est cache,
+  // aucun parametre d'URL transmis. Voir src/lib/suiviPages.ts.
+  useSuiviPages(currentPath, Boolean(user));
   const keyboardOpen = useKeyboardOpen();
   useAppViewportHeight();
   const headerRef = useRef<HTMLElement | null>(null);

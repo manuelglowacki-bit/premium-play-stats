@@ -21,7 +21,8 @@
     "verif-repartition": "tsx src/lib/repartitionBonus.verif.ts",
     "verif-1n2": "tsx src/lib/repartition1N2.verif.ts",
     "verif-pagination": "tsx src/lib/pagination.verif.ts",
-    "verif-version": "tsx src/lib/versionSite.verif.ts"
+    "verif-version": "tsx src/lib/versionSite.verif.ts",
+    "verif-audience": "tsx src/lib/suiviPages.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
