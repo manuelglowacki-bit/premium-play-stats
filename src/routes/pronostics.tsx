@@ -16,6 +16,7 @@ import {
   Trophy,
 } from "lucide-react";
 import { AppShell } from "@/components/prono/AppShell";
+import { repartitionBonus, repartirCent } from "@/lib/repartitionBonus";
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
@@ -408,7 +409,12 @@ function PronosticsPage() {
   const [bonusSelection, setBonusSelection] = useState<string | null>(null);
   const [bonusScores, setBonusScores] = useState<Record<string, BonusScore>>({});
     const [bonusChoiceCounts, setBonusChoiceCounts] = useState<Record<string, number>>({});
-    const [bonusChoiceTotal, setBonusChoiceTotal] = useState(0);
+    // Pourcentages deja repartis (somme = 100) — voir src/lib/repartitionBonus.ts.
+    const [bonusChoicePercents, setBonusChoicePercents] = useState<Record<string, number>>({});
+    // Joueurs ayant reellement fait un choix : c'est le denominateur affiche.
+    const [bonusChoisi, setBonusChoisi] = useState(0);
+    // Effectif total, uniquement pour le libelle « X sur Y ont choisi ».
+    const [bonusInscrits, setBonusInscrits] = useState(0);
   const [bonusLoading, setBonusLoading] = useState(false);
   const [bonusError, setBonusError] = useState<string | null>(null);
   // Pronostics déjà enregistrés par le joueur, tels que renvoyés par
@@ -1141,7 +1147,9 @@ function PronosticsPage() {
     async function loadBonusChoiceStats() {
       if (!selectedMatchdayId || bonusCandidates.length === 0) {
         setBonusChoiceCounts({});
-        setBonusChoiceTotal(0);
+        setBonusChoicePercents({});
+        setBonusChoisi(0);
+        setBonusInscrits(0);
         return;
       }
 
@@ -1156,39 +1164,30 @@ function PronosticsPage() {
 
         const { data: predictions, error: predictionsError } = await supabase
           .from("predictions")
-          .select("user_id, match_id")
+          // `created_at` departage un joueur qui a change d'avis et laisse
+          // deux lignes : sans lui il comptait double et la somme des quatre
+          // badges depassait 100 %.
+          .select("user_id, match_id, created_at")
           .in("match_id", bonusMatchIds);
 
         if (predictionsError) throw predictionsError;
 
         if (cancelled) return;
 
-        const counts: Record<string, number> = {};
-        for (const matchId of bonusMatchIds) {
-          counts[matchId] = 0;
-        }
+        const { comptes, joueursAyantChoisi } = repartitionBonus(predictions ?? [], bonusMatchIds);
 
-        const counted = new Set<string>();
-
-        for (const prediction of predictions ?? []) {
-          if (!prediction.user_id || !prediction.match_id) continue;
-
-          const key = `${prediction.user_id}:${prediction.match_id}`;
-          if (counted.has(key)) continue;
-
-          counted.add(key);
-          counts[prediction.match_id] =
-            (counts[prediction.match_id] ?? 0) + 1;
-        }
-
-        setBonusChoiceCounts(counts);
-        setBonusChoiceTotal(players?.length ?? 0);
+        setBonusChoiceCounts(comptes);
+        setBonusChoicePercents(repartirCent(comptes));
+        setBonusChoisi(joueursAyantChoisi);
+        setBonusInscrits(players?.length ?? 0);
       } catch (error) {
         console.error("Erreur chargement statistiques bonus :", error);
 
         if (!cancelled) {
           setBonusChoiceCounts({});
-          setBonusChoiceTotal(0);
+          setBonusChoicePercents({});
+          setBonusChoisi(0);
+          setBonusInscrits(0);
         }
       }
     }
@@ -2988,10 +2987,7 @@ function PronosticsPage() {
             // de bouton, mais ne faisait rien.
             const selectable = !locked && (!bonusChoiceLocked || selected);
             const choiceCount = bonusChoiceCounts[match.id] ?? 0;
-            const choicePercent =
-              bonusChoiceTotal > 0
-                ? Math.round((choiceCount / bonusChoiceTotal) * 100)
-                : 0;
+            const choicePercent = bonusChoicePercents[match.id] ?? 0;
 
             return (
               <div
@@ -3047,7 +3043,19 @@ function PronosticsPage() {
 
                 <div className="relative mt-3 flex justify-center">
                   <span className="rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-wider text-amber-200">
-                    🔥 {choicePercent}% des joueurs
+                    {bonusChoisi === 0 ? (
+                      "🔥 Aucun choix pour l’instant"
+                    ) : choiceCount === 0 ? (
+                      // « 0 % · 0 joueur » dit deux fois la meme chose.
+                      "🔥 Personne"
+                    ) : (
+                      <>
+                        🔥 {choicePercent}%
+                        <span className="ml-1 text-amber-200/60">
+                          · {choiceCount} joueur{choiceCount > 1 ? "s" : ""}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </div>
 
@@ -3217,6 +3225,19 @@ function PronosticsPage() {
                 }`
               : "Sélectionne un seul match"}
           </p>
+
+          {/* Le denominateur, ecrit noir sur blanc. Sans lui, « 40 % » lundi
+              matin (2 joueurs sur 5) et « 40 % » vendredi soir (9 joueurs sur
+              23) se ressemblent alors qu'ils ne pesent pas du tout pareil. */}
+          {bonusInscrits > 0 && (
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              {bonusChoisi === 0
+                ? `Personne n’a encore choisi · ${bonusInscrits} joueurs`
+                : `${bonusChoisi} joueur${bonusChoisi > 1 ? "s" : ""} sur ${bonusInscrits} ${
+                    bonusChoisi > 1 ? "ont" : "a"
+                  } choisi`}
+            </p>
+          )}
 
           {/* Le joueur doit comprendre pourquoi les autres cartes ne repondent
               plus, sans quoi il croit a un bug de l'application. */}
