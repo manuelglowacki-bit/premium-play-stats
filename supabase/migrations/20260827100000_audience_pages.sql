@@ -36,8 +36,15 @@ create table if not exists public.page_stats (
 
   primary key (user_id, page, jour),
 
+  -- Même règle qu'une expression régulière ancrée aux deux bouts, mais écrite
+  -- sans le caractère dollar : l'éditeur SQL de Supabase découpe le script en
+  -- instructions avant de l'envoyer, et un dollar isolé dans un texte lui fait
+  -- perdre le compte des délimiteurs de corps de fonction. Le script échouait
+  -- donc chez lui alors qu'il passait sur un PostgreSQL normal.
   constraint page_stats_page_check check (
-    page ~ '^/[a-z0-9/-]{0,38}$'
+    page like '/%'
+    and char_length(page) <= 39
+    and page !~ '[^a-z0-9/-]'
   ),
   constraint page_stats_vues_check check (vues >= 0)
 );
@@ -105,8 +112,11 @@ begin
 
   -- Tout ce qui n'est pas un chemin simple est ignoré en silence. C'est ce qui
   -- garantit qu'aucun contenu (pseudo, identifiant, texte libre) ne peut
-  -- atterrir dans cette table par un appel malformé.
-  if v_page !~ '^/[a-z0-9/-]{0,38}$' then
+  -- atterrir dans cette table par un appel malformé. Écrit sans le caractère
+  -- dollar, pour la même raison que la contrainte plus haut.
+  if v_page not like '/%'
+     or char_length(v_page) > 39
+     or v_page ~ '[^a-z0-9/-]' then
     return;
   end if;
 
