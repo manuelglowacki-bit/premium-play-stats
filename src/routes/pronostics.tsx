@@ -23,6 +23,46 @@ import {
   type RepartitionMatch,
 } from "@/lib/repartition1N2";
 import { fetchAllRowsIn } from "@/lib/supabaseFetchAll";
+import {
+  choisirJournee,
+  dateVerrouillage,
+  type Memoire,
+} from "@/lib/journeeCourante";
+
+// MEMOIRE DE LA JOURNEE CONSULTEE
+// ================================
+// Horodatee, la ou l'ancienne version ne gardait que l'identifiant : sans
+// date, un joueur ayant un jour regarde la J3 rouvrait la page sur la J3 pour
+// le restant de la saison. La duree de validite et la decision vivent dans
+// src/lib/journeeCourante.ts.
+const CLE_JOURNEE = "prono_ligue1_lm_selected_matchday";
+
+function lireMemoireJournee(): Memoire {
+  try {
+    const brut = window.localStorage.getItem(CLE_JOURNEE);
+    if (!brut) return null;
+
+    // Retrocompatibilite : l'ancien format n'etait qu'un identifiant nu. On le
+    // traite comme une memoire sans date, donc perimee — le joueur repart sur
+    // la bonne journee au lieu de rester bloque sur l'ancienne.
+    if (!brut.startsWith("{")) return null;
+
+    const objet = JSON.parse(brut) as { id?: unknown; a?: unknown };
+    if (typeof objet?.id !== "string" || typeof objet?.a !== "number") return null;
+    return { id: objet.id, a: objet.a };
+  } catch {
+    // Stockage indisponible (navigation privee, quota) : on recalcule.
+    return null;
+  }
+}
+
+function ecrireMemoireJournee(id: string): void {
+  try {
+    window.localStorage.setItem(CLE_JOURNEE, JSON.stringify({ id, a: Date.now() }));
+  } catch {
+    // Sans importance : la page recalculera la journee au prochain passage.
+  }
+}
 import PushNotificationsButton from "@/components/PushNotificationsButton";
 import { CountdownBlocksIconic } from "@/components/prono/Countdown";
 import { supabase } from "@/lib/supabase";
@@ -1029,35 +1069,24 @@ function PronosticsPage() {
     [matchdays],
   );
 
-  // Présélectionne la journée en cours (la première qui contient un match pas
-  // encore terminé), une seule fois au chargement — même logique que le
-  // filtre par journée côté admin (src/routes/admin.tsx). Le joueur reste
-  // ensuite libre de naviguer vers une autre journée.
+  // Présélectionne la journée sur laquelle le joueur a encore quelque chose à
+  // faire, une seule fois au chargement. La règle et ses cas limites vivent
+  // dans src/lib/journeeCourante.ts (npm run verif-journee-courante) — elle a
+  // remplacé deux comportements qui se contredisaient : une mémoire de la
+  // dernière journée consultée SANS péremption (la page rouvrait sur la J3 le
+  // soir où la J2 s'ouvrait) et un repli « première journée avec un match pas
+  // terminé » qu'un seul résultat non synchronisé ramenait en arrière.
   useEffect(() => {
     if (autoSelectedRef.current) return;
     if (sortedMatchdays.length === 0) return;
 
-    const savedDayId = window.localStorage.getItem("prono_ligue1_lm_selected_matchday");
-    if (savedDayId && sortedMatchdays.some((md) => md.id === savedDayId)) {
-      autoSelectedRef.current = true;
-      setSelectedMatchdayId(savedDayId);
-      return;
-    }
-
     autoSelectedRef.current = true;
-    const current = sortedMatchdays.find((md) =>
-      matches.some((m) => m.matchday_id === md.id && !m.finished),
-    );
-    setSelectedMatchdayId(current?.id ?? sortedMatchdays[0].id);
+    setSelectedMatchdayId(choisirJournee(sortedMatchdays, matches, lireMemoireJournee()));
   }, [sortedMatchdays, matches]);
 
   useEffect(() => {
-    if (selectedMatchdayId) {
-      window.localStorage.setItem(
-        "prono_ligue1_lm_selected_matchday",
-        selectedMatchdayId,
-      );
-    }
+    if (!selectedMatchdayId) return;
+    ecrireMemoireJournee(selectedMatchdayId);
   }, [selectedMatchdayId]);
 
   // Le flag "journée validée" ne doit valoir que pour la journée sur
@@ -1070,6 +1099,24 @@ function PronosticsPage() {
     setAutosaveStatus("idle");
     setAutosaveErrorMessage(null);
   }, [selectedMatchdayId]);
+
+  // Sans ceci, le bandeau restait sur J1 pendant que la J3 etait selectionnee :
+  // la pastille verte existait bien, mais hors ecran. Le joueur voyait « J1 »
+  // sous un titre « Journee 3 » et croyait a une incoherence.
+  useEffect(() => {
+    if (!selectedMatchdayId) return;
+    const bandeau = scrollerRef.current;
+    if (!bandeau) return;
+
+    const bouton = bandeau.querySelector<HTMLElement>(
+      `[data-journee="${CSS.escape(selectedMatchdayId)}"]`,
+    );
+    if (!bouton) return;
+
+    // `block: "nearest"` sur un conteneur horizontal evite que le navigateur
+    // fasse aussi defiler la page verticalement pour amener le bandeau a lui.
+    bouton.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [selectedMatchdayId, sortedMatchdays.length]);
 
   const matchesForDay = useMemo(
     () => matches.filter((m) => m.matchday_id === selectedMatchdayId),
@@ -1276,27 +1323,13 @@ function PronosticsPage() {
   // - AUTO -1 MIN : chaque match est verrouillé 1 minute avant son coup d'envoi
   // Le verrouillage est calculé côté joueur avec les vrais kickoff UTC.
   // ============================================================
-  const selectedDeadlineMode = selectedMatchday?.deadline_mode ?? "manual";
 
-  const getMatchLockDate = (match: MatchRow): Date | null => {
-    if (!match.kickoff) return selectedMatchday?.deadline ? new Date(selectedMatchday.deadline) : null;
-
-    const kickoff = new Date(match.kickoff);
-    if (Number.isNaN(kickoff.getTime())) return null;
-
-    const autoLock = new Date(kickoff.getTime() - 60_000);
-
-    if (selectedDeadlineMode === "auto_minus_1") {
-      return autoLock;
-    }
-
-    if (selectedMatchday?.deadline) {
-      const manual = new Date(selectedMatchday.deadline);
-      if (!Number.isNaN(manual.getTime())) return manual;
-    }
-
-    return null;
-  };
+  // Regle inchangee, simplement deplacee dans src/lib/journeeCourante.ts :
+  // le choix de la journee a ouvrir doit repondre « reste-t-il un match a
+  // remplir ? » avec EXACTEMENT la meme definition de la fermeture que celle
+  // qui verrouille les boutons. Deux copies auraient fini par diverger.
+  const getMatchLockDate = (match: MatchRow): Date | null =>
+    dateVerrouillage(match, selectedMatchday);
 
   const isMatchLocked = (match: MatchRow): boolean => {
     const lockDate = getMatchLockDate(match);
@@ -2116,6 +2149,7 @@ function PronosticsPage() {
                   return (
                     <button
                       key={md.id}
+                      data-journee={md.id}
                       onClick={() => setSelectedMatchdayId(md.id)}
                       className={`tap relative flex shrink-0 flex-col items-center gap-1 rounded-2xl border px-5 py-3 transition-all duration-300 backdrop-blur-md ${
                         active
