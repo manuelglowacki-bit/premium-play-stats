@@ -171,6 +171,44 @@ select verifier(
   (select count(*)::text from cron.appels)
 );
 
+
+-- ============================================================
+-- 6. LA TACHE EST BIEN RECOPIEE DEPUIS LES RAPPELS
+-- ============================================================
+-- Le script ne lit plus aucun secret : il recopie la commande qui marche
+-- deja. Ce qui doit etre vrai quelle que soit la facon dont l'adresse et le
+-- secret y sont ecrits.
+
+select verifier(
+  'La commande de synchro appelle bien sync-ligue1-matches',
+  (select position('sync-ligue1-matches' in command) > 0
+   from cron.job where jobname = 'prono-ligue1-sync-resultats')
+);
+
+select verifier(
+  'Elle n''appelle plus send-prono-reminders',
+  (select position('send-prono-reminders' in command) = 0
+   from cron.job where jobname = 'prono-ligue1-sync-resultats')
+);
+
+select verifier(
+  'Elle porte la condition qui evite les appels inutiles',
+  (select position('sync_resultats_necessaire' in command) > 0
+   from cron.job where jobname = 'prono-ligue1-sync-resultats')
+);
+
+select verifier(
+  'Le secret des rappels est transmis tel quel, sans que le script l''ait lu',
+  (select position('x-cron-secret' in command) > 0
+   from cron.job where jobname = 'prono-ligue1-sync-resultats')
+);
+
+select verifier(
+  'Une seule tache de synchronisation, meme apres plusieurs passages',
+  (select count(*) from cron.job where jobname like 'prono-ligue1-sync%') = 1,
+  (select count(*)::text from cron.job where jobname like 'prono-ligue1-sync%')
+);
+
 -- ============================================================
 -- RESULTAT
 -- ============================================================
