@@ -761,6 +761,10 @@ function GazettePage() {
   const [rankingTeamNames, setRankingTeamNames] = useState<Record<string, string | undefined>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [clock, setClock] = useState(Date.now());
+  // Repliement de l'analyse — etat d'AFFICHAGE uniquement. Le texte reste
+  // celui que produit `analysis` ; on choisit seulement combien de
+  // paragraphes sont visibles avant le clic.
+  const [analyseDepliee, setAnalyseDepliee] = useState(false);
   // Empêche une requête devenue obsolète (refresh live précédent encore en
   // vol) d'écraser un résultat plus récent — même garde que Classement/
   // Accueil/Profil/Stats.
@@ -1806,195 +1810,587 @@ function GazettePage() {
       <div className="relative z-10 mx-auto max-w-[1320px] px-3 pb-28 md:px-6 md:pb-20">
         <article className="overflow-hidden rounded-[30px] border border-slate-800/90 bg-[#07101c]/96 shadow-[0_30px_100px_rgba(0,0,0,.45)]">
 
-          {/* 1 — GAZETTE LIVE */}
-          <header className="border-b border-slate-800 px-5 py-6 md:px-10 md:py-8">
-            <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-              <div>
-                <div className="flex items-center gap-3">
-                  <span className="relative flex size-3"><span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" /><span className="relative size-3 rounded-full bg-emerald-400" /></span>
-                  <span className="font-mono text-[10px] font-black uppercase tracking-[.25em] text-emerald-300">GAZETTE LIVE</span>
-                </div>
-                <h1 className="mt-2 font-display text-5xl font-black uppercase leading-none tracking-[-.05em] text-white md:text-7xl">LA GAZETTE</h1>
-                <p className="mt-3 text-sm text-slate-400">{new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })} · la vie de votre compétition, match après match.</p>
-              </div>
-              <div className="flex flex-wrap gap-2 font-mono text-[9px] font-bold uppercase tracking-[.12em]">
-                <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-emerald-300">{currentJournee?.title ?? "J—"}</span>
-                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-400">
-                  Aujourd'hui {finishedCount}/{totalMatches} terminés · {todaysMatches.filter((x) => !x.isBonus).length} L1 · {todaysMatches.filter((x) => x.isBonus).length} bonus
+          {/* ============================================================
+              1 — L'OURS : le titre, la date, et ce qui se joue MAINTENANT
+              ============================================================
+              L'entete accumulait quatre pastilles techniques de meme poids —
+              journee, compte des matchs, LIVE, heure de mise a jour — dont
+              aucune ne ressortait. Il n'en reste qu'une qui compte vraiment,
+              le direct ; le reste redescend au rang de legende. */}
+          <header className="relative overflow-hidden border-b border-slate-800 px-5 py-7 md:px-10 md:py-9">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -right-24 -top-28 size-72 rounded-full bg-emerald-500/[0.07] blur-3xl"
+            />
+            <div className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+              <div className="min-w-0">
+                <span className="font-mono text-[10px] font-black uppercase tracking-[.3em] text-emerald-300">
+                  Gazette live
                 </span>
-                {liveCount > 0 && <span className="rounded-full border border-red-400/30 bg-red-400/10 px-3 py-2 text-red-300">{liveCount} LIVE</span>}
-                <span className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-2 text-slate-500">MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) ?? "—"}</span>
+                <h1 className="mt-1.5 font-display text-[3.25rem] font-black uppercase leading-[.82] tracking-[-.05em] text-white md:text-[4.5rem] lg:text-[5.5rem]">
+                  La Gazette
+                </h1>
+                <p className="mt-3.5 font-mono text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">
+                  <span className="capitalize">
+                    {new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+                  </span>
+                  {currentJournee?.title ? <span className="text-slate-600"> · {currentJournee.title}</span> : null}
+                </p>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-3">
+                {liveCount > 0 && (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-red-400/40 bg-red-500/15 px-3.5 py-2 font-mono text-[10px] font-black uppercase tracking-[.14em] text-red-300">
+                    <span className="relative flex size-2">
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
+                      <span className="relative size-2 rounded-full bg-red-400" />
+                    </span>
+                    {liveCount} match{liveCount > 1 ? "s" : ""} en direct
+                  </span>
+                )}
+                <span className="font-mono text-[9px] uppercase tracking-[.14em] text-slate-600">
+                  MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) ?? "—"}
+                </span>
               </div>
             </div>
           </header>
 
-          {/* Direct compact */}
+          {/* Le direct, tout de suite apres le titre — c'est la seule chose
+              qui merite de passer avant l'analyse. */}
           {liveMatches.length > 0 && (
-            <section className="border-b border-red-400/20 bg-gradient-to-r from-red-500/[.10] via-slate-950/70 to-emerald-500/[.06] px-5 py-4 md:px-10">
+            <section className="border-b border-red-400/20 bg-gradient-to-r from-red-500/[.10] via-slate-950/70 to-emerald-500/[.05] px-5 py-4 md:px-10">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full bg-red-400 px-2.5 py-1 font-mono text-[9px] font-black uppercase text-slate-950">EN DIRECT</span>
+                <span className="rounded-full bg-red-400 px-2.5 py-1 font-mono text-[9px] font-black uppercase tracking-[.12em] text-slate-950">
+                  En direct
+                </span>
                 {liveMatches.map(({ match }) => (
-                  <div key={String(match.id)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                    <span className="flex items-center gap-2 font-display text-sm font-black text-white"><GazetteTeamLogo teams={teams} match={match} side="home" size="size-7" />{shortTeam(getTeamHome(match))} {getScoreHome(match) ?? 0}–{getScoreAway(match) ?? 0} {shortTeam(getTeamAway(match))}<GazetteTeamLogo teams={teams} match={match} side="away" size="size-7" /></span>
-                    <span className="ml-3 font-mono text-[9px] font-black text-red-300">{getDisplayedLiveMinute(match, clock)}</span>
+                  <div
+                    key={String(match.id)}
+                    className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2"
+                  >
+                    <span className="flex items-center gap-2 font-display text-sm font-black text-white">
+                      <GazetteTeamLogo teams={teams} match={match} side="home" size="size-7" />
+                      {shortTeam(getTeamHome(match))} {getScoreHome(match) ?? 0}–{getScoreAway(match) ?? 0}{" "}
+                      {shortTeam(getTeamAway(match))}
+                      <GazetteTeamLogo teams={teams} match={match} side="away" size="size-7" />
+                    </span>
+                    <span className="font-mono text-[10px] font-black text-red-300">
+                      {getDisplayedLiveMinute(match, clock)}
+                    </span>
                   </div>
                 ))}
               </div>
             </section>
           )}
 
-          {/* 2 — ANALYSE ÉVOLUTIVE */}
-          <section className="border-b border-slate-800 px-5 py-8 md:px-10 md:py-10">
-            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
-              <div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-[9px] font-black uppercase tracking-[.22em] text-emerald-300">{analysis.kicker}</span>
-                  <div className="h-px flex-1 bg-slate-800" />
-                </div>
-                <h2 className="mt-4 max-w-5xl font-display text-3xl font-black uppercase leading-[.98] tracking-[-.035em] text-white md:text-5xl">{analysis.title}</h2>
-                <p className="mt-5 max-w-4xl border-l-2 border-emerald-300 pl-4 font-display text-base font-bold leading-7 text-slate-200 md:text-lg">{analysis.intro}</p>
-                <div className="mt-7 max-w-4xl space-y-5 text-[14px] leading-7 text-slate-400 md:text-[15px] md:leading-8">
-                  {analysis.paragraphs.map((paragraph, index) => <p key={`${lastFinishedId}-${index}`}>{paragraph}</p>)}
-                </div>
+          {/* ============================================================
+              2 — L'ANALYSE
+              ============================================================
+              Le texte complet s'etalait d'emblee : quatre a cinq paragraphes
+              avant d'atteindre quoi que ce soit d'autre. Le chapeau et le
+              premier paragraphe restent visibles, la suite se deplie. Le
+              contenu, lui, est exactement celui que produit `analysis`. */}
+          <section className="border-b border-slate-800 px-5 py-9 md:px-10 md:py-12">
+            <div className="flex items-center gap-3">
+              <Flame className="size-4 shrink-0 text-emerald-300" />
+              <span className="font-mono text-[9px] font-black uppercase tracking-[.22em] text-emerald-300">
+                {analysis.kicker}
+              </span>
+              <div className="h-px flex-1 bg-slate-800" />
+            </div>
+
+            <h2 className="mt-5 max-w-4xl font-display text-[1.75rem] font-black uppercase leading-[.95] tracking-[-.035em] text-white md:text-[3.25rem]">
+              {analysis.title}
+            </h2>
+
+            <p className="mt-5 max-w-3xl border-l-2 border-emerald-300 pl-4 font-display text-base font-bold leading-7 text-slate-200 md:text-lg md:leading-8">
+              {analysis.intro}
+            </p>
+
+            {analysis.paragraphs.length > 0 && (
+              <div className="mt-7 max-w-3xl space-y-5 text-[14px] leading-7 text-slate-400 md:text-[15px] md:leading-8">
+                {(analyseDepliee ? analysis.paragraphs : analysis.paragraphs.slice(0, 1)).map((paragraph, index) => (
+                  <p key={`${lastFinishedId}-${index}`}>{paragraph}</p>
+                ))}
               </div>
-              <aside className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-                {/* 1 — LEADER */}
-                <div className="rounded-2xl border border-amber-400/25 bg-amber-400/[.06] p-4 shadow-[0_10px_35px_rgba(245,158,11,.05)]">
-                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-amber-300">LEADER</p>
-                  <p className="mt-2 font-display text-xl font-black leading-tight text-white">
-                    {gazetteDynamicBlocks.leader?.name ?? "—"}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {gazetteDynamicBlocks.leader?.points ?? 0} point{(gazetteDynamicBlocks.leader?.points ?? 0) > 1 ? "s" : ""}
-                  </p>
-                </div>
+            )}
 
-                {/* 2 — MEILLEURE JOURNÉE */}
-                <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[.05] p-4 shadow-[0_10px_35px_rgba(16,185,129,.05)]">
-                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-emerald-300">MEILLEURE JOURNÉE</p>
+            {analysis.paragraphs.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setAnalyseDepliee((v) => !v)}
+                className="tap mt-6 inline-flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/[0.07] px-4 py-2.5 font-mono text-[10px] font-black uppercase tracking-[.14em] text-emerald-300 transition-colors hover:bg-emerald-400/[0.12] hover:text-emerald-200"
+              >
+                {analyseDepliee ? "Replier l'analyse" : "Lire l'analyse complète"}
+                <ChevronRight
+                  size={13}
+                  className={`transition-transform ${analyseDepliee ? "-rotate-90" : ""}`}
+                />
+              </button>
+            )}
+          </section>
 
-                  {gazetteDynamicBlocks.bestMatchday ? (
-                    <>
-                      <div className="mt-2 flex items-baseline gap-2">
-                        <span className="font-display text-3xl font-black leading-none text-white">
-                          {gazetteDynamicBlocks.bestMatchday.points}
+          {/* ============================================================
+              3 — LES TROIS INFORMATIONS CLES
+              ============================================================
+              Elles vivaient dans une colonne laterale de 280 px, serrees
+              contre le texte. Elles prennent toute la largeur : ce sont les
+              trois chiffres qu'on vient chercher. */}
+          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
+            <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
+              {/* LEADER */}
+              <div className="relative overflow-hidden rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-400/[.10] to-transparent p-5">
+                <p className="font-mono text-[9px] font-black uppercase tracking-[.18em] text-amber-300">
+                  🏆 Leader
+                </p>
+                <p className="mt-3 truncate font-display text-2xl font-black leading-none text-white">
+                  {gazetteDynamicBlocks.leader?.name ?? "—"}
+                </p>
+                <p className="mt-2.5 font-display text-lg font-black tabular-nums text-amber-300">
+                  {gazetteDynamicBlocks.leader?.points ?? 0}
+                  <span className="ml-1 font-mono text-[10px] font-bold uppercase tracking-[.12em] text-amber-300/70">
+                    pts
+                  </span>
+                </p>
+              </div>
+
+              {/* RECORD DE LA SAISON */}
+              <div className="relative overflow-hidden rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-400/[.09] to-transparent p-5">
+                <p className="font-mono text-[9px] font-black uppercase tracking-[.18em] text-emerald-300">
+                  🎯 Record de la saison
+                </p>
+                {gazetteDynamicBlocks.bestMatchday ? (
+                  <>
+                    <p className="mt-3 truncate font-display text-2xl font-black leading-none text-white">
+                      {gazetteDynamicBlocks.bestMatchday.name}
+                    </p>
+                    <p className="mt-2.5 font-display text-lg font-black tabular-nums text-emerald-300">
+                      {gazetteDynamicBlocks.bestMatchday.points}
+                      <span className="ml-1 font-mono text-[10px] font-bold uppercase tracking-[.12em] text-emerald-300/70">
+                        pts · J{gazetteDynamicBlocks.bestMatchday.journeeNumber}
+                      </span>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 font-display text-2xl font-black text-white">—</p>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                      Le record apparaîtra après les premiers résultats.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* DERNIER COUP */}
+              <div className="relative overflow-hidden rounded-2xl border border-sky-400/25 bg-gradient-to-br from-sky-400/[.09] to-transparent p-5">
+                <p className="font-mono text-[9px] font-black uppercase tracking-[.18em] text-sky-300">
+                  🔥 Dernier coup
+                </p>
+                {gazetteDynamicBlocks.performance ? (
+                  <>
+                    <p className="mt-3 truncate font-display text-2xl font-black leading-none text-white">
+                      {gazetteDynamicBlocks.performance.profile.pseudo || "Joueur"}
+                    </p>
+                    <p className="mt-2 font-mono text-[11px] font-bold text-slate-400">
+                      {shortTeam(getTeamHome(lastFinished))} {getScoreHome(lastFinished)}–
+                      {getScoreAway(lastFinished)} {shortTeam(getTeamAway(lastFinished))}
+                    </p>
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      <span className="font-display text-lg font-black tabular-nums text-sky-300">
+                        +{gazetteDynamicBlocks.performance.points}
+                        <span className="ml-1 font-mono text-[10px] font-bold uppercase tracking-[.12em] text-sky-300/70">
+                          pts
                         </span>
-                        <span className="font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300">
-                          point{gazetteDynamicBlocks.bestMatchday.points > 1 ? "s" : ""} · J{gazetteDynamicBlocks.bestMatchday.journeeNumber}
+                      </span>
+                      {gazetteDynamicBlocks.performance.exact && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-sky-400/35 bg-sky-400/15 px-2 py-0.5 font-mono text-[8px] font-black uppercase tracking-[.12em] text-sky-200">
+                          <Target size={10} /> Score exact
                         </span>
-                      </div>
-                      <p className="mt-2 truncate font-display text-base font-black text-white">
-                        {gazetteDynamicBlocks.bestMatchday.name}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Record sur une journée cette saison
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="mt-2 font-display text-2xl font-black text-white">—</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Le record apparaîtra après les premiers résultats.
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                {/* 3 — DERNIER COUP */}
-                <div className="rounded-2xl border border-sky-400/25 bg-sky-400/[.05] p-4 shadow-[0_10px_35px_rgba(56,189,248,.05)]">
-                  <p className="font-mono text-[8px] font-black uppercase tracking-[.18em] text-sky-300">DERNIER COUP</p>
-
-                  {gazetteDynamicBlocks.performance ? (
-                    <>
-                      <div className="mt-2 flex items-center gap-2">
-                        <Target className="size-4 text-sky-300" />
-                        <span className="font-mono text-[9px] font-black uppercase tracking-[.12em] text-sky-300">
-                          {gazetteDynamicBlocks.performance.exact ? "SCORE EXACT" : "BON PRONO"}
-                        </span>
-                      </div>
-                      <p className="mt-2 truncate font-display text-base font-black text-white">
-                        {gazetteDynamicBlocks.performance.profile.pseudo || "Joueur"}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {shortTeam(getTeamHome(lastFinished))}{" "}
-                        {getScoreHome(lastFinished)}–{getScoreAway(lastFinished)}{" "}
-                        {shortTeam(getTeamAway(lastFinished))}
-                      </p>
-                      <p className="mt-1 font-mono text-[10px] font-black uppercase tracking-[.12em] text-white">
-                        +{gazetteDynamicBlocks.performance.points} point{gazetteDynamicBlocks.performance.points > 1 ? "s" : ""}
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="mt-2 font-display text-2xl font-black text-white">—</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        En attente du prochain résultat.
-                      </p>
-                    </>
-                  )}
-                </div>
-              </aside>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 font-display text-2xl font-black text-white">—</p>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                      En attente du prochain résultat.
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
           </section>
 
-          {/* 3 — MATCHS DU JOUR */}
+          {/* ============================================================
+              4 — LE DIRECT
+              ============================================================
+              Les trois etats etaient melanges dans une seule liste : on
+              cherchait le match en cours au milieu des matchs a venir. Ils
+              sont desormais groupes — en direct, termines, a venir — sans
+              qu'aucune donnee ni aucun tri ne change : `getMatchState` est la
+              meme fonction qu'avant. */}
           <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-            <div className="flex items-end justify-between gap-4"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">3 · LE DIRECT</p><h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">Les matchs du jour</h2><p className="mt-1 text-xs font-bold capitalize text-slate-500">{new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</p></div><span className="font-mono text-[9px] font-bold uppercase text-slate-600">{totalMatches} match{totalMatches > 1 ? "s" : ""} aujourd’hui · {todaysMatches.filter((x) => !x.isBonus).length} L1 + {todaysMatches.filter((x) => x.isBonus).length} bonus</span></div>
-            <div className="mt-5 grid gap-2">
-              {allCurrentMatches.map(({ match, isBonus }) => {
-                const state = getMatchState(match);
-                const finished = state === "finished" || hasScore(match);
-                const live = state === "live";
-                return <div key={String(match.id)} className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border px-4 py-4 ${live ? "border-red-400/30 bg-red-400/[.06]" : finished ? "border-emerald-400/15 bg-emerald-400/[.025]" : "border-slate-800 bg-slate-950/30"}`}>
-                  <div className="w-14 text-center"><p className={`font-mono text-[9px] font-black ${live ? "text-red-300" : finished ? "text-emerald-300" : "text-slate-500"}`}>{matchStatusLabel(match)}</p><p className="mt-1 font-mono text-[7px] uppercase tracking-[.12em] text-slate-600">{isBonus ? "BONUS" : "L1"}</p></div>
-                  <div className="flex min-w-0 items-center justify-center gap-2 font-display text-sm font-black text-white md:gap-4 md:text-base">
-                    <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-                      <span className="truncate text-right">{shortTeam(getTeamHome(match))}</span>
-                      <GazetteTeamLogo teams={teams} match={match} side="home" size="size-9 md:size-10" />
+            <div className="flex items-end justify-between gap-4">
+              <div className="min-w-0">
+                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">Le direct</p>
+                <h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
+                  Les matchs du jour
+                </h2>
+              </div>
+              <span className="shrink-0 font-mono text-[9px] font-bold uppercase tracking-[.1em] text-slate-600">
+                {totalMatches} match{totalMatches > 1 ? "s" : ""}
+              </span>
+            </div>
+
+            {allCurrentMatches.length === 0 ? (
+              <div className="mt-5">
+                <EditorialEmptyState
+                  compact
+                  icon={Calendar}
+                  title="Aucun match aujourd'hui"
+                  description="Les rencontres du jour apparaîtront ici dès qu'il y en aura."
+                />
+              </div>
+            ) : (
+              <div className="mt-5 space-y-6">
+                {([
+                  { cle: "live", titre: "En direct", couleur: "text-red-300" },
+                  { cle: "finished", titre: "Terminés", couleur: "text-emerald-300" },
+                  { cle: "upcoming", titre: "À venir", couleur: "text-slate-400" },
+                ] as const).map(({ cle, titre, couleur }) => {
+                  const groupe = allCurrentMatches.filter(({ match }) => {
+                    const etat = getMatchState(match);
+                    if (cle === "live") return etat === "live";
+                    if (cle === "finished") return etat === "finished" || (etat !== "live" && hasScore(match));
+                    return etat === "upcoming" && !hasScore(match);
+                  });
+                  if (groupe.length === 0) return null;
+
+                  return (
+                    <div key={cle}>
+                      <div className="flex items-center gap-3">
+                        <span className={`font-mono text-[9px] font-black uppercase tracking-[.2em] ${couleur}`}>
+                          {titre}
+                        </span>
+                        <span className="font-mono text-[9px] font-bold text-slate-600">{groupe.length}</span>
+                        <div className="h-px flex-1 bg-slate-800/70" />
+                      </div>
+
+                      <div className="mt-3 grid gap-2">
+                        {groupe.map(({ match, isBonus }) => {
+                          const live = cle === "live";
+                          const termine = cle === "finished";
+                          return (
+                            <div
+                              key={String(match.id)}
+                              className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border px-2.5 py-3 sm:grid sm:grid-cols-[58px_minmax(0,1fr)_66px] sm:px-4 sm:py-4 ${
+                                live
+                                  ? "border-red-400/35 bg-red-400/[.07]"
+                                  : termine
+                                    ? "border-emerald-400/15 bg-emerald-400/[.025]"
+                                    : "border-slate-800 bg-slate-950/30"
+                              }`}
+                            >
+                              <div className="order-1 w-[58px] shrink-0 text-center sm:order-none sm:w-auto">
+                                <p
+                                  className={`font-mono text-[10px] font-black ${
+                                    live ? "animate-pulse text-red-300" : termine ? "text-emerald-300" : "text-slate-500"
+                                  }`}
+                                >
+                                  {matchStatusLabel(match)}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[7px] uppercase tracking-[.12em] text-slate-600">
+                                  {isBonus ? "BONUS" : "L1"}
+                                </p>
+                              </div>
+
+                              <div className="order-2 flex min-w-0 flex-1 basis-full items-center justify-center gap-1.5 font-display text-[13px] font-black text-white sm:order-none sm:basis-auto sm:gap-2 sm:text-sm md:gap-4 md:text-base">
+                                <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 sm:gap-2">
+                                  <span className="truncate text-right">{shortTeam(getTeamHome(match))}</span>
+                                  <GazetteTeamLogo teams={teams} match={match} side="home" size="size-7 sm:size-9 md:size-11" />
+                                </div>
+                                <span
+                                  className={`min-w-[48px] shrink-0 rounded-lg px-1.5 py-1 text-center tabular-nums sm:min-w-[58px] sm:px-2 ${
+                                    live
+                                      ? "bg-red-400 text-slate-950"
+                                      : termine
+                                        ? "bg-slate-800 text-white"
+                                        : "text-slate-500"
+                                  }`}
+                                >
+                                  {live || termine
+                                    ? `${getScoreHome(match) ?? "—"} – ${getScoreAway(match) ?? "—"}`
+                                    : "VS"}
+                                </span>
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+                                  <GazetteTeamLogo teams={teams} match={match} side="away" size="size-7 sm:size-9 md:size-11" />
+                                  <span className="truncate">{shortTeam(getTeamAway(match))}</span>
+                                </div>
+                              </div>
+
+                              <div className="order-1 ml-auto text-right sm:order-none sm:ml-0">
+                                <p className="font-mono text-[8px] text-slate-600">
+                                  {formatKickoff(match.kickoff ?? match.kickoff_time)}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <span className={`min-w-14 shrink-0 rounded-lg px-2 py-1 text-center ${live ? "bg-red-400 text-slate-950" : finished ? "bg-slate-800 text-white" : "text-slate-500"}`}>{finished || live ? `${getScoreHome(match) ?? "—"} – ${getScoreAway(match) ?? "—"}` : "VS"}</span>
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                      <GazetteTeamLogo teams={teams} match={match} side="away" size="size-9 md:size-10" />
-                      <span className="truncate">{shortTeam(getTeamAway(match))}</span>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* ============================================================
+              5 — LE CLASSEMENT
+              ============================================================
+              Le mouvement etait CALCULE (evolution.previousRanks) mais
+              n'apparaissait nulle part. Il s'affiche enfin, avec la meme
+              regle que partout : rang precedent moins rang actuel. */}
+          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
+                  Dans notre compétition
+                </p>
+                <h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
+                  Le classement
+                </h2>
+              </div>
+              <div className="hidden h-px flex-1 bg-slate-800 sm:block" />
+              <Link
+                to="/classement"
+                className="tap shrink-0 basis-full whitespace-nowrap text-center sm:basis-auto sm:text-left rounded-xl border border-slate-700 px-3 py-2 font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
+              >
+                Voir le classement →
+              </Link>
+            </div>
+
+            {[leader, second, third].filter(Boolean).length === 0 ? (
+              <div className="mt-5">
+                <EditorialEmptyState
+                  compact
+                  icon={Trophy}
+                  title="Classement en construction"
+                  description="Le podium s'affichera dès les premiers points marqués."
+                />
+              </div>
+            ) : (
+            <div className="mt-5 grid gap-2.5 lg:grid-cols-3">
+              {[leader, second, third].filter(Boolean).map((player: any) => {
+                const rangAvant = evolution?.previousRanks.get(String(player.id));
+                const mouvement =
+                  typeof rangAvant === "number" ? rangAvant - Number(player.rank) : 0;
+                const medaille = player.rank === 1 ? "🥇" : player.rank === 2 ? "🥈" : "🥉";
+
+                return (
+                  <div
+                    key={player.id}
+                    className={`flex items-center gap-3 rounded-2xl border p-4 ${
+                      player.rank === 1
+                        ? "border-amber-400/45 bg-gradient-to-br from-amber-400/[.12] to-transparent shadow-[0_10px_35px_-12px_rgba(245,158,11,.35)]"
+                        : player.rank === 2
+                          ? "border-slate-300/25 bg-slate-300/[.045]"
+                          : "border-orange-400/25 bg-orange-400/[.05]"
+                    }`}
+                  >
+                    <span className="shrink-0 text-2xl leading-none" aria-hidden>
+                      {medaille}
+                    </span>
+
+                    {player.avatar ? (
+                      <img
+                        src={player.avatar}
+                        alt=""
+                        className="size-10 shrink-0 rounded-full border border-white/10 object-cover"
+                      />
+                    ) : (
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-800 font-display text-xs font-black text-slate-300">
+                        {player.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-display text-sm font-black text-white">{player.name}</p>
+                      <p className="mt-0.5 font-mono text-[9px] uppercase tracking-[.1em] text-slate-500">
+                        {player.exactScores} score{player.exactScores > 1 ? "s" : ""} exact
+                        {player.exactScores > 1 ? "s" : ""}
+                      </p>
+                    </div>
+
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={`font-display text-xl font-black tabular-nums ${
+                          player.rank === 1 ? "text-amber-300" : "text-white"
+                        }`}
+                      >
+                        {player.points}
+                      </p>
+                      <p
+                        className={`font-mono text-[9px] font-black ${
+                          mouvement > 0
+                            ? "text-emerald-400"
+                            : mouvement < 0
+                              ? "text-red-400"
+                              : "text-slate-600"
+                        }`}
+                      >
+                        {mouvement > 0 ? `↑${mouvement}` : mouvement < 0 ? `↓${Math.abs(mouvement)}` : "="}
+                      </p>
                     </div>
                   </div>
-                  <div className="hidden text-right sm:block"><p className="font-mono text-[8px] text-slate-600">{formatKickoff(match.kickoff ?? match.kickoff_time)}</p></div>
-                </div>;
+                );
               })}
             </div>
+            )}
           </section>
 
-          {/* 4 — CLASSEMENT */}
-          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-            <div className="flex items-center gap-3"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">4 · DANS NOTRE COMPÉTITION</p><h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">Le classement</h2></div><div className="h-px flex-1 bg-slate-800" /><Link to="/classement" className="font-mono text-[9px] font-black uppercase text-emerald-300">Voir tout</Link></div>
-            <div className="mt-5 grid gap-2 md:grid-cols-3">
-              {[leader, second, third].filter(Boolean).map((player: any) => <div key={player.id} className={`flex items-center gap-3 rounded-2xl border p-4 ${player.rank===1?"border-amber-400/40 bg-amber-400/[.08]":player.rank===2?"border-slate-300/30 bg-slate-300/[.05]":"border-orange-400/30 bg-orange-400/[.06]"}`}>
-                <span className={`font-display text-xl font-black ${player.rank===1?"text-amber-300":player.rank===2?"text-slate-200":"text-orange-300"}`}>#{player.rank}</span>
-                {player.avatar ? <img src={player.avatar} alt="" className="size-10 rounded-full border border-white/10 object-cover"/> : <div className="flex size-10 items-center justify-center rounded-full bg-slate-800 font-display text-xs font-black text-slate-300">{player.name.slice(0,2).toUpperCase()}</div>}
-                <div className="min-w-0 flex-1"><p className="truncate font-display text-sm font-black text-white">{player.name}</p><p className="font-mono text-[8px] text-slate-500">{player.exactScores} score{player.exactScores>1?"s":""} exact</p></div>
-                <div className="text-right"><p className="font-display text-xl font-black text-white">{player.points}</p><p className="font-mono text-[7px] uppercase text-slate-600">points</p></div>
-              </div>)}
+          {/* ============================================================
+              6 — LE CHIFFRE
+              ============================================================
+              Le chiffre etait relegue a droite, a la meme taille que le
+              titre. Il devient l'element, seul au centre. La phrase qui
+              l'explique reste petite, dessous — c'est elle qui commente, pas
+              l'inverse. */}
+          <section className="border-b border-slate-800 px-5 py-10 md:px-10 md:py-14">
+            <div className="relative overflow-hidden rounded-[26px] border border-sky-400/15 bg-gradient-to-b from-sky-400/[.07] via-slate-950/40 to-transparent px-6 py-10 text-center md:py-14">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute left-1/2 top-0 size-72 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-400/10 blur-3xl"
+              />
+              <p className="relative font-mono text-[9px] font-black uppercase tracking-[.3em] text-sky-300">
+                Le chiffre
+              </p>
+              <p className="relative mt-4 font-display text-[5rem] font-black leading-[.8] tracking-[-.04em] text-white tabular-nums md:text-[8rem]">
+                {dynamicStat.value}
+              </p>
+              <p className="relative mx-auto mt-5 max-w-md font-display text-sm font-black uppercase tracking-[.12em] text-sky-200 md:text-base">
+                {dynamicStat.label}
+              </p>
+              <p className="relative mx-auto mt-3 max-w-lg text-xs leading-relaxed text-slate-500 md:text-sm">
+                {dynamicStat.note}
+              </p>
             </div>
           </section>
 
-          {/* 5 — CHIFFRE DYNAMIQUE */}
-          <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-            <div className="rounded-[24px] border border-sky-400/15 bg-gradient-to-r from-sky-400/[.06] via-slate-950/40 to-emerald-400/[.04] p-6 md:p-8">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-sky-300">5 · LE CHIFFRE</p><p className="mt-1 text-sm text-slate-500">{dynamicStat.note}</p></div><div className="text-left sm:text-right"><p className="font-display text-6xl font-black leading-none text-white md:text-7xl">{dynamicStat.value}</p><p className="mt-2 max-w-[240px] text-xs font-bold uppercase tracking-[.08em] text-slate-400 sm:text-right">{dynamicStat.label}</p></div></div>
-            </div>
-          </section>
-
-          {/* 6 + 7 */}
+          {/* ============================================================
+              7 + 8 — L'AFFICHE ET LA PERF
+              ============================================================ */}
           <section className="grid gap-0 md:grid-cols-2">
             <div className="border-b border-slate-800 p-5 md:border-b-0 md:border-r md:p-10">
-              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-orange-300">6 · GROS MATCH DU WEEK-END</p>
-              <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">{weekendMatch && weekendMatch.joue ? "L'affiche de la journée" : "Le rendez-vous à suivre"}</h2>
-              {weekendMatch ? <div className="mt-5 rounded-[24px] border border-orange-400/20 bg-orange-400/[.05] p-6 text-center"><div className="flex items-center justify-center gap-4 md:gap-7"><div className="flex min-w-0 flex-1 items-center justify-end gap-3"><p className="truncate font-display text-xl font-black text-white">{shortTeam(getTeamHome(weekendMatch.match))}</p><GazetteTeamLogo teams={teams} match={weekendMatch.match} side="home" size="size-12 md:size-14" /></div><span className="shrink-0 font-display text-2xl font-black text-orange-300">{hasScore(weekendMatch.match)?`${getScoreHome(weekendMatch.match)}–${getScoreAway(weekendMatch.match)}`:"VS"}</span><div className="flex min-w-0 flex-1 items-center gap-3"><GazetteTeamLogo teams={teams} match={weekendMatch.match} side="away" size="size-12 md:size-14" /><p className="truncate text-left font-display text-xl font-black text-white">{shortTeam(getTeamAway(weekendMatch.match))}</p></div></div><p className="mt-4 font-mono text-[9px] uppercase tracking-[.15em] text-slate-500">{matchStatusLabel(weekendMatch.match)} · {formatKickoff(weekendMatch.match.kickoff ?? weekendMatch.match.kickoff_time)}</p></div> : <EditorialEmptyState compact icon={Flame} title="Affiche à venir" description="Le gros match apparaîtra dès que le calendrier sera disponible."/>}
+              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-orange-300">🔥 L'affiche</p>
+              <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">
+                {weekendMatch && weekendMatch.joue ? "L'affiche de la journée" : "Le rendez-vous à suivre"}
+              </h2>
+
+              {weekendMatch ? (
+                <div className="mt-5 rounded-[24px] border border-orange-400/20 bg-gradient-to-b from-orange-400/[.08] to-transparent p-6 text-center">
+                  <div className="flex items-center justify-center gap-3 md:gap-6">
+                    <div className="flex min-w-0 flex-1 flex-col items-center gap-2.5">
+                      <GazetteTeamLogo
+                        teams={teams}
+                        match={weekendMatch.match}
+                        side="home"
+                        size="size-16 md:size-20"
+                      />
+                      <p className="w-full truncate font-display text-base font-black text-white md:text-lg">
+                        {shortTeam(getTeamHome(weekendMatch.match))}
+                      </p>
+                    </div>
+
+                    <span className="shrink-0 font-display text-2xl font-black tabular-nums text-orange-300 md:text-3xl">
+                      {hasScore(weekendMatch.match)
+                        ? `${getScoreHome(weekendMatch.match)}–${getScoreAway(weekendMatch.match)}`
+                        : "VS"}
+                    </span>
+
+                    <div className="flex min-w-0 flex-1 flex-col items-center gap-2.5">
+                      <GazetteTeamLogo
+                        teams={teams}
+                        match={weekendMatch.match}
+                        side="away"
+                        size="size-16 md:size-20"
+                      />
+                      <p className="w-full truncate font-display text-base font-black text-white md:text-lg">
+                        {shortTeam(getTeamAway(weekendMatch.match))}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-5 font-mono text-[9px] uppercase tracking-[.15em] text-slate-500">
+                    {matchStatusLabel(weekendMatch.match)} ·{" "}
+                    {formatKickoff(weekendMatch.match.kickoff ?? weekendMatch.match.kickoff_time)}
+                  </p>
+                </div>
+              ) : (
+                <EditorialEmptyState
+                  compact
+                  icon={Flame}
+                  title="Affiche à venir"
+                  description="Le gros match apparaîtra dès que le calendrier sera disponible."
+                />
+              )}
             </div>
+
             <div className="p-5 md:p-10">
-              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-fuchsia-300">7 · GROSSE PERF DU WEEK-END</p>
+              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-fuchsia-300">⚡ La perf</p>
               <h2 className="mt-2 font-display text-2xl font-black uppercase text-white">La performance</h2>
-              {bigPerformance ? <div className="mt-5 rounded-[24px] border border-fuchsia-400/20 bg-fuchsia-400/[.05] p-6"><div className="flex items-center gap-4">{bigPerformance.player.avatar ? <img src={bigPerformance.player.avatar} alt="" className="size-12 rounded-full object-cover"/> : <div className="flex size-12 items-center justify-center rounded-full bg-slate-800 font-display font-black text-white">{bigPerformance.player.name.slice(0,2).toUpperCase()}</div>}<div className="min-w-0 flex-1"><p className="font-display text-lg font-black text-white">{bigPerformance.player.name}</p><p className="mt-1 font-mono text-[9px] uppercase tracking-[.12em] text-slate-500">{shortTeam(getTeamHome(bigPerformance.match))} {getScoreHome(bigPerformance.match)}–{getScoreAway(bigPerformance.match)} {shortTeam(getTeamAway(bigPerformance.match))}</p></div><div className="text-right"><p className="font-display text-3xl font-black text-fuchsia-300">+{bigPerformance.points}</p><p className="font-mono text-[8px] uppercase text-slate-600">points</p></div></div><p className="mt-4 text-sm font-bold leading-6 text-slate-300">{bigPerformance.exact ? "Score exact : une lecture parfaite du match." : "Une des meilleures performances enregistrées sur les matchs déjà terminés."}</p></div> : <EditorialEmptyState compact icon={Zap} title="Performance en attente" description="La grosse performance apparaîtra après les premiers résultats."/>}
+
+              {bigPerformance ? (
+                <div className="mt-5 rounded-[24px] border border-fuchsia-400/20 bg-gradient-to-b from-fuchsia-400/[.08] to-transparent p-6">
+                  <div className="flex items-center gap-4">
+                    {bigPerformance.player.avatar ? (
+                      <img
+                        src={bigPerformance.player.avatar}
+                        alt=""
+                        className="size-14 shrink-0 rounded-full border border-white/10 object-cover"
+                      />
+                    ) : (
+                      <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-slate-800 font-display font-black text-white">
+                        {bigPerformance.player.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-display text-lg font-black text-white">
+                        {bigPerformance.player.name}
+                      </p>
+                      <p className="mt-1 font-mono text-[10px] uppercase tracking-[.12em] text-slate-400">
+                        {shortTeam(getTeamHome(bigPerformance.match))} {getScoreHome(bigPerformance.match)}–
+                        {getScoreAway(bigPerformance.match)} {shortTeam(getTeamAway(bigPerformance.match))}
+                      </p>
+                      {bigPerformance.exact && (
+                        <span className="mt-2 inline-flex items-center gap-1 rounded-full border border-fuchsia-400/35 bg-fuchsia-400/15 px-2 py-0.5 font-mono text-[8px] font-black uppercase tracking-[.12em] text-fuchsia-200">
+                          <Target size={10} /> Score exact
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="shrink-0 text-right">
+                      <p className="font-display text-4xl font-black tabular-nums text-fuchsia-300">
+                        +{bigPerformance.points}
+                      </p>
+                      <p className="font-mono text-[8px] uppercase tracking-[.12em] text-slate-600">points</p>
+                    </div>
+                  </div>
+
+                  <p className="mt-5 text-sm font-bold leading-6 text-slate-300">
+                    {bigPerformance.exact
+                      ? "Score exact : une lecture parfaite du match."
+                      : "Une des meilleures performances enregistrées sur les matchs déjà terminés."}
+                  </p>
+                </div>
+              ) : (
+                <EditorialEmptyState
+                  compact
+                  icon={Zap}
+                  title="Performance en attente"
+                  description="La grosse performance apparaîtra après les premiers résultats."
+                />
+              )}
             </div>
           </section>
         </article>
