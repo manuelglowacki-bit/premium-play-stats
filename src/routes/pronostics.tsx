@@ -22,7 +22,7 @@ import {
   repartitionVide,
   type RepartitionMatch,
 } from "@/lib/repartition1N2";
-import { fetchAllRowsIn } from "@/lib/supabaseFetchAll";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/supabaseFetchAll";
 import {
   choisirJournee,
   dateVerrouillage,
@@ -576,13 +576,24 @@ function PronosticsPage() {
           // Or un match absent d'ici fait echouer isOpen(), et la sauvegarde
           // du bonus est alors refusee SANS AUCUN MESSAGE — le joueur croit
           // avoir valide, rien n'est enregistre.
-          supabase
-            .from("matches")
-            .select(
-              "id, matchday_id, home_team_id, away_team_id, home_team, away_team, api_fixture_id, kickoff, status, finished, home_score, away_score",
-            )
-            .order("kickoff", { ascending: true })
-            .limit(20000),
+          // `.limit(20000)` NE SERT A RIEN : PostgREST plafonne toute reponse
+          // a 1000 lignes, et ce plafond ne se leve pas depuis le navigateur.
+          // Cette table contient les cinq championnats (Ligue 1 + les quatre
+          // du bonus), soit plus de 1700 rencontres sur une saison : au-dela
+          // de la millieme par ordre de coup d'envoi, les matchs
+          // DISPARAISSAIENT SANS ERREUR. Un match absent d'ici n'a ni score,
+          // ni points, ni verrouillage — et rien ne le signalait.
+          //
+          // fetchAllRows pagine jusqu'a epuisement (13 verifications,
+          // npm run verif-pagination). L'ordre porte aussi sur `id` : sans
+          // second critere, deux matchs au meme coup d'envoi peuvent changer
+          // de place entre deux pages, et l'un se retrouve compte deux fois
+          // pendant que l'autre est saute.
+          fetchAllRows<MatchRow>(
+            "matches",
+            "id, matchday_id, home_team_id, away_team_id, home_team, away_team, api_fixture_id, kickoff, status, finished, home_score, away_score",
+            ["kickoff", "id"],
+          ),
         ]);
 
         if (cancelled) return;
