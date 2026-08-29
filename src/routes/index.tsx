@@ -1141,16 +1141,14 @@ setLeaderboard(rankedRankings);
                   les trois colonnes de droite prenaient 144 px fixes sur les
                   325 disponibles. Elles se resserrent sous sm:, et retrouvent
                   leur largeur d'origine au-dela. */}
-              <div className="grid grid-cols-[24px_minmax(0,1fr)_42px_52px] items-center gap-1.5 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500 sm:grid-cols-[28px_minmax(0,1fr)_52px_64px] sm:gap-2">
+              <div className="grid grid-cols-[24px_minmax(0,1fr)_46px] items-center gap-1.5 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500 sm:grid-cols-[28px_minmax(0,1fr)_56px] sm:gap-2">
                 <span>#</span>
                 <span>Joueur</span>
                 <span className="text-right">Pts</span>
-                <span className="text-right">Gain</span>
               </div>
 
               {leaderboard.slice(0, 5).map((player, index) => {
                 const place = index + 1;
-                const prize = homePrizeByRank[place] ?? 0;
                 const isMe = myStats.rank === place;
 
                 return (
@@ -1159,7 +1157,7 @@ setLeaderboard(rankedRankings);
                     /* MA LIGNE SE REPERE SANS LA CHERCHER : liseré vert à
                        gauche, fond et bordure plus francs. Le contenu, l'ordre
                        et le calcul du classement ne bougent pas. */
-                    className={`dash-fade-up relative grid grid-cols-[24px_minmax(0,1fr)_42px_52px] items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-2.5 transition-colors sm:grid-cols-[28px_minmax(0,1fr)_52px_64px] sm:gap-2 sm:px-2.5 ${
+                    className={`dash-fade-up relative grid grid-cols-[24px_minmax(0,1fr)_46px] items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-2.5 transition-colors sm:grid-cols-[28px_minmax(0,1fr)_56px] sm:gap-2 sm:px-2.5 ${
                       isMe
                         ? "border-emerald-400/45 bg-emerald-400/[.10] ring-1 ring-emerald-400/20 before:absolute before:inset-y-1 before:left-0 before:w-[3px] before:rounded-full before:bg-emerald-400"
                         : place === 1
@@ -1206,14 +1204,6 @@ setLeaderboard(rankedRankings);
 
                     <span className="text-right font-display text-[17px] font-black tabular-nums text-white">
                       {Number(player?.total_points || 0)}
-                    </span>
-
-                    <span
-                      className={`text-right font-mono text-xs font-bold ${
-                        prize > 0 ? "text-amber-300" : "text-slate-700"
-                      }`}
-                    >
-                      {prize > 0 ? `${prize} €` : "—"}
                     </span>
                   </div>
                 );
@@ -1280,9 +1270,9 @@ setLeaderboard(rankedRankings);
               </Link>
             </div>
 
-            <div className="relative z-10 grid grid-cols-2 gap-3.5 sm:gap-4">
+            <div className="relative z-10 grid flex-1 grid-cols-2 content-stretch gap-3.5 sm:gap-4">
               <div
-                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex h-full min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-bons-pronos.png')" }}
               >
                 <div className="absolute inset-0 bg-black/55" />
@@ -1298,7 +1288,7 @@ setLeaderboard(rankedRankings);
               </div>
 
               <div
-                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex h-full min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-scores-exacts.png')" }}
               >
                 <div className="absolute inset-0 bg-black/55" />
@@ -1318,7 +1308,7 @@ setLeaderboard(rankedRankings);
               </div>
 
               <div
-                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex h-full min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-points-moyens.png')" }}
               >
                 <div className="absolute inset-0 bg-black/55" />
@@ -1343,7 +1333,7 @@ setLeaderboard(rankedRankings);
               </div>
 
               <div
-                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex h-full min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-meilleure-journee.png')" }}
               >
                 <div className="absolute inset-0 bg-black/55" />
