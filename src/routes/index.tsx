@@ -39,6 +39,20 @@ export const Route = createFileRoute("/")({
   component: IndexPage,
 });
 
+/**
+ * Libelles de la repartition des gains. Les MONTANTS, eux, viennent de
+ * computePrizeByRank (src/lib/prizePool.ts) et ne sont pas recalcules ici :
+ * cette table ne fait que nommer les trois places.
+ *
+ * Hors du composant : elle ne depend de rien et n'a aucune raison d'etre
+ * reconstruite a chaque rendu.
+ */
+const PODIUM_CAGNOTTE = [
+  { rang: 1, medaille: "\u{1F947}", part: "50 %" },
+  { rang: 2, medaille: "\u{1F948}", part: "30 %" },
+  { rang: 3, medaille: "\u{1F949}", part: "20 %" },
+] as const;
+
 function IndexPage() {
   const { favoriteTeamId, saveFavoriteTeam } = useFavoriteTeam();
   const { user, profile, refreshProfile } = useAuth();
@@ -854,13 +868,18 @@ setLeaderboard(rankedRankings);
               <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:gap-4">
                 <Link
                   to="/pronostics"
-                  className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-display text-sm font-bold text-slate-950 shadow-[0_0_25px_rgba(16,185,129,0.35)] transition-all hover:bg-emerald-500"
+                  /* ACTION PRINCIPALE. Les deux boutons avaient exactement le
+                     meme poids : meme taille, meme graisse, deux cadres pleins
+                     cote a cote. L'oeil ne savait pas lequel etait l'action du
+                     jour. Celui-ci gagne en taille et en presence, l'autre
+                     s'efface — sans rien changer a ce qu'ils font. */
+                  className="tap flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-7 py-3.5 font-display text-[15px] font-black tracking-wide text-slate-950 shadow-[0_10px_30px_-8px_rgba(16,185,129,0.65)] ring-1 ring-emerald-200/50 transition-all hover:bg-emerald-300 active:scale-[.98]"
                 >
                   <Medal size={18} /> Faire mes pronos <ArrowRight size={16} />
                 </Link>
                 <Link
                   to="/classement"
-                  className="tap flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 px-6 py-3 font-display text-sm font-bold text-white transition-all hover:bg-slate-800"
+                  className="tap flex items-center justify-center gap-2 rounded-2xl border border-slate-700/60 bg-white/[0.02] px-6 py-3 font-display text-sm font-bold text-slate-300 transition-all hover:border-slate-600 hover:bg-white/[0.05] hover:text-white active:scale-[.98]"
                 >
                   <Trophy size={18} className="text-amber-400" /> Voir le classement
                 </Link>
@@ -924,7 +943,7 @@ setLeaderboard(rankedRankings);
                 masqué dès md: donc aucun changement du rendu desktop. */}
             <div className="pointer-events-none absolute inset-0 z-0 bg-[#070c16]/50 md:hidden" />
 
-            <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center md:pr-[30%] lg:pr-[34%]">
+            <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-center md:gap-6 md:pr-[30%] lg:pr-[34%]">
               <div className="flex min-w-0 flex-1 items-center gap-4 sm:gap-5">
                 <div className="relative shrink-0">
                   {/* Avatar nettement réduit sur mobile (96px au lieu de 144px) :
@@ -974,7 +993,7 @@ setLeaderboard(rankedRankings);
                     {profile?.pseudo || user?.email?.split("@")[0] || "Joueur"}
                   </h3>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-2.5">
+                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 font-mono text-xs font-bold text-emerald-400 sm:text-sm">
                       <Trophy size={14} /> #{myStats.rank || "—"} du classement
                     </span>
@@ -1106,7 +1125,7 @@ setLeaderboard(rankedRankings);
               </div>
               <Link
                 to="/classement"
-                className="tap shrink-0 whitespace-nowrap rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-2 font-mono text-xs text-slate-200 hover:text-white hover:border-amber-500/50 transition-all shadow-md"
+                className="tap shrink-0 whitespace-nowrap rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-2.5 font-mono text-xs text-slate-200 shadow-md transition-all hover:border-amber-500/50 hover:text-white"
               >
                 Complet →
               </Link>
@@ -1117,7 +1136,12 @@ setLeaderboard(rankedRankings);
                 points, gain. Trois cartes empilées disaient moins que cinq
                 lignes, et n'affichaient pas les gains. */}
             <div className="relative z-10 space-y-1.5">
-              <div className="grid grid-cols-[28px_minmax(0,1fr)_52px_64px] items-center gap-2 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500">
+              {/* COLONNES PLUS SERREES SUR TELEPHONE. A 393 px, « Red Evils »
+                  s'affichait « Red … » des que la pastille « TOI » etait la :
+                  les trois colonnes de droite prenaient 144 px fixes sur les
+                  325 disponibles. Elles se resserrent sous sm:, et retrouvent
+                  leur largeur d'origine au-dela. */}
+              <div className="grid grid-cols-[24px_minmax(0,1fr)_42px_52px] items-center gap-1.5 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500 sm:grid-cols-[28px_minmax(0,1fr)_52px_64px] sm:gap-2">
                 <span>#</span>
                 <span>Joueur</span>
                 <span className="text-right">Pts</span>
@@ -1132,9 +1156,12 @@ setLeaderboard(rankedRankings);
                 return (
                   <div
                     key={player?.user_id || `place-${place}`}
-                    className={`dash-fade-up grid grid-cols-[28px_minmax(0,1fr)_52px_64px] items-center gap-2 rounded-xl border px-2 py-2 transition-colors ${
+                    /* MA LIGNE SE REPERE SANS LA CHERCHER : liseré vert à
+                       gauche, fond et bordure plus francs. Le contenu, l'ordre
+                       et le calcul du classement ne bougent pas. */
+                    className={`dash-fade-up relative grid grid-cols-[24px_minmax(0,1fr)_42px_52px] items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-2.5 transition-colors sm:grid-cols-[28px_minmax(0,1fr)_52px_64px] sm:gap-2 sm:px-2.5 ${
                       isMe
-                        ? "border-emerald-400/30 bg-emerald-400/[.07]"
+                        ? "border-emerald-400/45 bg-emerald-400/[.10] ring-1 ring-emerald-400/20 before:absolute before:inset-y-1 before:left-0 before:w-[3px] before:rounded-full before:bg-emerald-400"
                         : place === 1
                           ? "border-amber-500/30 bg-amber-500/[.06]"
                           : "border-slate-800/70 bg-slate-900/40 hover:bg-slate-900/70"
@@ -1142,7 +1169,7 @@ setLeaderboard(rankedRankings);
                     style={{ animationDelay: `${180 + index * 60}ms` }}
                   >
                     <span
-                      className={`grid size-6 place-items-center rounded-lg font-mono text-[10px] font-black ${
+                      className={`grid size-[22px] place-items-center rounded-lg font-mono text-[10px] font-black sm:size-6 ${
                         place === 1
                           ? "bg-amber-400 text-slate-950"
                           : place === 2
@@ -1155,15 +1182,15 @@ setLeaderboard(rankedRankings);
                       {place}
                     </span>
 
-                    <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                       {player?.avatar_url ? (
                         <img
                           src={player.avatar_url}
                           alt=""
-                          className="size-7 shrink-0 rounded-full border border-white/10 object-cover"
+                          className="size-6 shrink-0 rounded-full border border-white/10 object-cover sm:size-7"
                         />
                       ) : (
-                        <span className="grid size-7 shrink-0 place-items-center rounded-full border border-white/10 bg-slate-800 font-mono text-[9px] font-black text-slate-300">
+                        <span className="grid size-6 shrink-0 place-items-center rounded-full border border-white/10 bg-slate-800 font-mono text-[9px] font-black text-slate-300 sm:size-7">
                           {String(player?.name || "?").slice(0, 2).toUpperCase()}
                         </span>
                       )}
@@ -1171,13 +1198,13 @@ setLeaderboard(rankedRankings);
                         {player?.name || "En attente"}
                       </span>
                       {isMe && (
-                        <span className="shrink-0 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[8px] font-black uppercase text-emerald-300">
+                        <span className="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-400/15 px-1 py-0.5 font-mono text-[8px] font-black uppercase text-emerald-200 sm:px-1.5">
                           Toi
                         </span>
                       )}
                     </div>
 
-                    <span className="text-right font-display text-base font-black text-white">
+                    <span className="text-right font-display text-[17px] font-black tabular-nums text-white">
                       {Number(player?.total_points || 0)}
                     </span>
 
@@ -1199,9 +1226,39 @@ setLeaderboard(rankedRankings);
               )}
             </div>
 
-            <div className="relative z-10 mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between font-mono">
-              <span className="text-[13px] text-slate-300 font-medium">Ligue ultra serrée en tête !</span>
-              <span className="text-sm text-amber-400 font-black">Cagnotte : {potAmount.toFixed(0)} €</span>
+            {/* LA CAGNOTTE, ET CE QU'ELLE DEVIENT.
+                Une seule ligne annoncait le total, a cote d'une phrase
+                d'ambiance ecrite en dur (« Ligue ultra serree en tete ! »)
+                qui ne disait rien du classement reel. Le total prend la place
+                qu'il merite, et la repartition 50/30/20 devient lisible —
+                elle vient de `homePrizeByRank`, exactement la meme valeur que
+                celle affichee sur chaque ligne du classement ci-dessus.
+                Aucun calcul touche : computePrizeByRank est inchange. */}
+            <div className="relative z-10 mt-6 rounded-2xl border border-amber-500/25 bg-gradient-to-br from-amber-500/[0.09] to-transparent p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-mono text-[10px] font-bold uppercase tracking-[.2em] text-amber-400/90">
+                  La cagnotte
+                </span>
+                <span className="font-display text-2xl font-black tabular-nums text-amber-300 sm:text-[26px]">
+                  {potAmount.toFixed(0)} €
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {PODIUM_CAGNOTTE.map(({ rang, medaille, part }) => (
+                  <div
+                    key={rang}
+                    className="rounded-xl border border-white/[0.06] bg-black/25 px-2 py-2 text-center"
+                  >
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+                      <span aria-hidden>{medaille}</span> {part}
+                    </div>
+                    <div className="mt-0.5 font-display text-base font-black tabular-nums text-white">
+                      {homePrizeByRank[rang] ?? 0} €
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1218,20 +1275,20 @@ setLeaderboard(rankedRankings);
                 <span className="font-mono text-[10px] font-semibold uppercase tracking-[.16em] text-emerald-400">Tes performances</span>
                 <h3 className="font-display text-2xl font-semibold text-white mt-0.5">Statistiques personnelles</h3>
               </div>
-              <Link to="/stats" className="tap shrink-0 whitespace-nowrap rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2 font-mono text-xs text-slate-300 hover:text-white">
+              <Link to="/stats" className="tap shrink-0 whitespace-nowrap rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2.5 font-mono text-xs text-slate-300 transition-colors hover:border-emerald-500/40 hover:text-white">
                 Tout voir →
               </Link>
             </div>
 
             <div className="relative z-10 grid grid-cols-2 gap-3.5 sm:gap-4">
               <div
-                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-bons-pronos.png')" }}
               >
-                <div className="absolute inset-0 bg-black/45" />
+                <div className="absolute inset-0 bg-black/55" />
                 <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Bons pronos</span>
                 <strong
-                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  className="relative block font-display text-[28px] font-black tabular-nums text-white sm:text-3xl"
                   style={{ filter: "drop-shadow(0 0 14px rgba(110,231,183,.35))" }}
                 >
                   {myStats.successRate}
@@ -1241,13 +1298,13 @@ setLeaderboard(rankedRankings);
               </div>
 
               <div
-                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-scores-exacts.png')" }}
               >
-                <div className="absolute inset-0 bg-black/45" />
+                <div className="absolute inset-0 bg-black/55" />
                 <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Scores exacts</span>
                 <strong
-                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  className="relative block font-display text-[28px] font-black tabular-nums text-white sm:text-3xl"
                   style={{ filter: "drop-shadow(0 0 14px rgba(96,165,250,.35))" }}
                 >
                   {myStats.exactScores}
@@ -1261,17 +1318,17 @@ setLeaderboard(rankedRankings);
               </div>
 
               <div
-                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-points-moyens.png')" }}
               >
-                <div className="absolute inset-0 bg-black/45" />
+                <div className="absolute inset-0 bg-black/55" />
                 {/* "Points moyens" affichait le meme chiffre que "Meilleure
                     journee" tant qu'une seule journee etait jouee. Remplace par
                     la REGULARITE, qui manquait a l'Accueil alors qu'elle sert
                     desormais a departager le classement. */}
                 <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Régularité</span>
                 <strong
-                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  className="relative block font-display text-[28px] font-black tabular-nums text-white sm:text-3xl"
                   style={{ filter: "drop-shadow(0 0 14px rgba(252,211,77,.35))" }}
                 >
                   {myStats.participationTotal
@@ -1286,13 +1343,13 @@ setLeaderboard(rankedRankings);
               </div>
 
               <div
-                className="relative flex min-h-[112px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
+                className="relative flex min-h-[104px] flex-col justify-center overflow-hidden rounded-2xl border border-slate-800 bg-[#060b16]/90 p-4 bg-cover bg-center bg-no-repeat sm:p-5"
                 style={{ backgroundImage: "url('/images/stats/stat-meilleure-journee.png')" }}
               >
-                <div className="absolute inset-0 bg-black/45" />
+                <div className="absolute inset-0 bg-black/55" />
                 <span className="relative font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-slate-300 block mb-1">Meilleure journée</span>
                 <strong
-                  className="relative block font-display text-[28px] text-white sm:text-3xl"
+                  className="relative block font-display text-[28px] font-black tabular-nums text-white sm:text-3xl"
                   style={{ filter: "drop-shadow(0 0 14px rgba(129,140,248,.35))" }}
                 >
                   {myStats.bestDayPoints}
