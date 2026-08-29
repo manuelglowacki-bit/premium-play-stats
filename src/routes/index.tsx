@@ -27,6 +27,7 @@ import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { fetchLiveApiMatches, reconcileMatchesWithLive, markLiveMatchesScorable } from "@/lib/liveMatches";
+import { fermetureEnCours } from "@/lib/journeeCourante";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -80,7 +81,14 @@ function IndexPage() {
   // visait jusqu'ici une date figee dans Countdown.tsx (21 aout 2026) : une
   // fois passee, il affichait 00 00 00 00 indefiniment, sous un libelle
   // "Prochaine journee · J1 • 21 aout 2026" lui aussi ecrit en dur.
-  const [nextKickoff, setNextKickoff] = useState<{ at: number; label: string; day: string } | null>(null);
+  // `mode` distingue les deux echeances possibles : l'ouverture d'une journee
+  // a venir, ou la fermeture du prochain match d'une journee deja entamee.
+  const [nextKickoff, setNextKickoff] = useState<{
+    at: number;
+    label: string;
+    day: string;
+    mode: "ouverture" | "fermeture";
+  } | null>(null);
   const [potAmount, setPotAmount] = useState(0);
   // Saison affichee dans le bandeau. Elle etait ecrite en dur
   // ("SAISON 2026—2027") : elle serait restee identique l'an prochain.
@@ -183,12 +191,21 @@ function IndexPage() {
             .maybeSingle(),
           supabase
             .from("matchdays")
-            .select("id,season_id,season,competition_id"),
+            // `number`, `deadline` et `deadline_mode` servent au compte a
+            // rebours de la journee EN COURS (voir fermetureEnCours).
+            .select("id,season_id,season,competition_id,number,deadline,deadline_mode"),
           supabase.from("competitions").select("id, code, external_code"),
           // Actives ET historiques — même raison que classement.tsx : un
           // pronostic bonus reste valable même si l'admin a changé la
           // sélection depuis.
-          supabase.from("bonus_options").select("matchday_id, match_id"),
+          // `is_active` et `created_at` NE SONT PAS DECORATIFS : ce sont les
+          // deux departages de computeLeagueStats quand un meme match bonus
+          // porte plusieurs lignes (un tirage rejoue). Sans eux, l'Accueil
+          // tombait sur le departage de secours — la comparaison textuelle des
+          // identifiants de journee, qui n'a aucun sens metier — pendant que le
+          // Classement, lui, prenait bien le tirage actif. Deux pages, le meme
+          // moteur, mais pas les memes entrees : des points pouvaient differer.
+          supabase.from("bonus_options").select("matchday_id, match_id, is_active, created_at"),
           // Équipe favorite historisée par saison (Lot 4) — voir
           // computeLeagueStats() dans leaderboardStats.ts.
           supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
@@ -285,8 +302,7 @@ function IndexPage() {
           .filter(([, at]) => at > now)
           .sort((a, b) => a[1] - b[1])[0];
 
-        if (nextDay) {
-          const [journee, at] = nextDay;
+        const quand = (at: number) => {
           const dateLabel = new Date(at).toLocaleDateString("fr-FR", {
             day: "numeric",
             month: "long",
@@ -297,7 +313,36 @@ function IndexPage() {
           });
           // `label` ne porte QUE la date : le libelle affiche deja la journee
           // juste avant, les deux se repeteraient.
-          setNextKickoff({ at, label: `${dateLabel} à ${timeLabel}`, day: `J${journee}` });
+          return `${dateLabel} à ${timeLabel}`;
+        };
+
+        // LA JOURNEE EN COURS PASSE AVANT LA SUIVANTE.
+        //
+        // `nextDay` ci-dessus ne retient que les journees PAS ENCORE
+        // COMMENCEES. Vendredi 20 h 46, la J2 en disparaissait donc — et la
+        // page annoncait « ouverture de la J3 dans 6 jours » alors que les
+        // joueurs avaient encore neuf matchs a remplir le week-end. Pire, si
+        // la J3 n'etait pas encore synchronisee : « Aucun match programme ».
+        //
+        // Tant qu'un match de la journee entamee peut encore etre joue, c'est
+        // LUI l'echeance qui compte. Voir fermetureEnCours
+        // (npm run verif-journee-courante).
+        const enCours = fermetureEnCours(
+          (matchdays ?? []) as any[],
+          reconciledMatches as any[],
+          now,
+        );
+
+        if (enCours) {
+          setNextKickoff({
+            at: enCours.at,
+            label: quand(enCours.at),
+            day: `J${enCours.journee}`,
+            mode: "fermeture",
+          });
+        } else if (nextDay) {
+          const [journee, at] = nextDay;
+          setNextKickoff({ at, label: quand(at), day: `J${journee}`, mode: "ouverture" });
         } else {
           setNextKickoff(null);
         }
@@ -781,8 +826,14 @@ setLeaderboard(rankedRankings);
               {nextKickoff ? (
                 <div className="max-w-md rounded-2xl border border-slate-800 bg-[#060b16]/70 px-4 py-3">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-400">
-                      Ouverture de la {nextKickoff.day || "journée"} · {nextKickoff.label}
+                    <span
+                      className={`font-mono text-[10px] font-bold uppercase tracking-widest ${
+                        nextKickoff.mode === "fermeture" ? "text-amber-300" : "text-emerald-400"
+                      }`}
+                    >
+                      {nextKickoff.mode === "fermeture"
+                        ? `${nextKickoff.day} · fermeture du prochain match`
+                        : `Ouverture de la ${nextKickoff.day || "journée"} · ${nextKickoff.label}`}
                     </span>
                   </div>
                   <CountdownBlocks target={nextKickoff.at} />

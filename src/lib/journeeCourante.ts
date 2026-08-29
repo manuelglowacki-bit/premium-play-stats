@@ -124,3 +124,60 @@ export function choisirJournee(
 
   return triees[triees.length - 1].id;
 }
+
+/**
+ * LA JOURNÉE EN COURS A-T-ELLE ENCORE UNE ÉCHÉANCE ?
+ *
+ * L'Accueil annonçait « ouverture de la J3 dans 6 jours » dès le coup d'envoi
+ * du premier match de la J2, parce qu'il cherchait la première journée PAS
+ * ENCORE COMMENCÉE. Vendredi 20 h 46, la J2 disparaissait donc de la page —
+ * alors que les joueurs avaient encore neuf matchs à remplir le week-end, et
+ * que le bouton « Faire mes pronos » n'a jamais été aussi utile qu'à ce
+ * moment-là. Pire : si la journée suivante n'était pas encore synchronisée,
+ * la page affichait « Aucun match programmé ».
+ *
+ * Cette fonction répond à l'autre question, celle qui compte pour le joueur :
+ * « ai-je encore quelque chose à jouer, et jusqu'à quand ? »
+ *
+ * @returns La prochaine fermeture d'un match sur une journée DÉJÀ COMMENCÉE,
+ *   ou `null` — auquel cas l'appelant retombe sur l'ouverture de la journée
+ *   suivante, comme avant.
+ */
+export function fermetureEnCours(
+  journees: JourneeChoisissable[],
+  matchs: MatchChoisissable[],
+  maintenant: number = Date.now(),
+): { journee: number; at: number } | null {
+  let meilleure: { journee: number; at: number } | null = null;
+
+  for (const journee of journees) {
+    const siens = matchs.filter(
+      (match) => String(match.matchday_id ?? "") === String(journee.id),
+    );
+    if (siens.length === 0) continue;
+
+    // « Commencée » veut dire : son premier coup d'envoi est passé. Une
+    // journée entièrement à venir relève de l'ouverture, pas de la fermeture.
+    const coupsDEnvoi = siens
+      .map((match) => (match.kickoff ? new Date(match.kickoff).getTime() : NaN))
+      .filter((t) => Number.isFinite(t));
+    if (coupsDEnvoi.length === 0) continue;
+    if (Math.min(...coupsDEnvoi) > maintenant) continue;
+
+    for (const match of siens) {
+      const fermeture = dateVerrouillage(match, journee);
+      if (fermeture === null) continue;
+
+      const at = fermeture.getTime();
+      if (at <= maintenant) continue;
+
+      // La plus proche l'emporte : c'est le prochain moment où le joueur ne
+      // pourra plus jouer quelque chose.
+      if (!meilleure || at < meilleure.at) {
+        meilleure = { journee: journee.number, at };
+      }
+    }
+  }
+
+  return meilleure;
+}

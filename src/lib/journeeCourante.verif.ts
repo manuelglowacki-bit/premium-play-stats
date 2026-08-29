@@ -10,6 +10,7 @@ import {
   DUREE_MEMOIRE,
   choisirJournee,
   dateVerrouillage,
+  fermetureEnCours,
   journeeOuverte,
   type JourneeChoisissable,
   type MatchChoisissable,
@@ -233,6 +234,55 @@ verifier(
     MAINTENANT,
   ),
 );
+
+console.log("\n=== 6. Accueil : l'echeance de la journee en cours ===\n");
+
+{
+  // Vendredi 20h46 : le premier match de la J2 vient de commencer, il en
+  // reste trois. L'Accueil annoncait la J3 « dans 6 jours ».
+  const vendrediSoir = new Date("2026-08-28T18:46:00Z").getTime();
+  const e = fermetureEnCours(JOURNEES, MATCHS, vendrediSoir);
+  egal("Journee 2 entamee : c'est elle qu'on annonce", e?.journee, 2);
+  egal(
+    "...et l'echeance est la fermeture du PROCHAIN match, pas du dernier",
+    e ? new Date(e.at).toISOString() : null,
+    "2026-08-29T14:59:00.000Z",
+  );
+}
+
+{
+  // Jeudi : rien n'a commence, l'Accueil garde son « ouverture de la J2 ».
+  const jeudi = new Date("2026-08-27T10:00:00Z").getTime();
+  egal("Aucune journee commencee : rien a annoncer ici", fermetureEnCours(JOURNEES, MATCHS, jeudi), null);
+}
+
+{
+  // Lundi : la J2 est finie, la J3 n'a pas commence.
+  const lundi = new Date("2026-08-31T10:00:00Z").getTime();
+  egal("Journee terminee : plus d'echeance", fermetureEnCours(JOURNEES, MATCHS, lundi), null);
+}
+
+{
+  // Le dernier match de la J2 est a 19h45 : il se ferme a 19h44 pile.
+  const dimanche = new Date("2026-08-30T19:43:59Z").getTime();
+  const e = fermetureEnCours(JOURNEES, MATCHS, dimanche);
+  egal("Une seconde avant la derniere fermeture : on l'annonce encore", e?.journee, 2);
+  const apres = fermetureEnCours(JOURNEES, MATCHS, dimanche + 62_000);
+  egal("Une seconde apres la fermeture : plus rien", apres, null);
+}
+
+{
+  // Mode manuel sans date limite : aucune fermeture connue, donc rien a
+  // annoncer — plutot qu'une date inventee.
+  const sansVerrou = JOURNEES.map((j) => (j.id === "j2" ? { ...j, deadline_mode: "manual" } : j));
+  const vendrediSoir = new Date("2026-08-28T18:46:00Z").getTime();
+  egal("Journee sans date limite : rien a annoncer", fermetureEnCours(sansVerrou, MATCHS, vendrediSoir), null);
+}
+
+{
+  egal("Aucun match synchronise : rien, aucune erreur", fermetureEnCours(JOURNEES, [], MAINTENANT), null);
+  egal("Aucune journee : rien", fermetureEnCours([], MATCHS, MAINTENANT), null);
+}
 
 console.log("\n" + "=".repeat(60));
 if (echecs === 0) {
