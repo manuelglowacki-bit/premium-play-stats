@@ -1,8 +1,6 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
-import { useControlesSaison } from "@/hooks/useControlesSaison";
-import { type Controle } from "@/lib/controlesSaison";
 import { nomFichier, versCSV, type LigneClassement } from "@/lib/exportClassement";
 import { preparerAnnonce, resumerEnvoi, LONGUEUR_MAX } from "@/lib/annonce";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -105,9 +103,6 @@ import {
   KeyRound,
   Copy,
   BarChart3,
-  ShieldCheck,
-  AlertCircle,
-  Info,
   Megaphone,
   Send,
   FileDown,
@@ -121,7 +116,7 @@ import {
 /** Onglets de l'espace admin, adressables via le search param `tab`
  * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
  * partageable/bookmarkable. */
-const ADMIN_TAB_VALUES = ["controles", "joueurs", "paiements", "matchs", "bonus", "suivi", "audience", "verrouillage", "reglages"] as const;
+const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "suivi", "audience", "verrouillage", "reglages"] as const;
 export type AdminTab = (typeof ADMIN_TAB_VALUES)[number];
 
 function isAdminTab(value: unknown): value is AdminTab {
@@ -423,7 +418,6 @@ function addError(bag: Record<string, string>, key: string, message: string) {
 // AdminTab est défini plus haut, à côté de la Route.
 
 const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
-  { id: "controles", label: "Contrôles", icon: ShieldCheck },
   { id: "joueurs", label: "Joueurs", icon: Users },
   { id: "paiements", label: "Paiements", icon: Wallet },
   { id: "matchs", label: "Matchs", icon: Calendar },
@@ -483,18 +477,6 @@ function AdminPage() {
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [adminPredictions, setAdminPredictions] = useState<AdminPredictionRow[]>([]);
-
-  // CONTRÔLES DE LA SAISON — calculés ici, et pas seulement dans leur onglet :
-  // c'est ce qui permet à la pastille rouge d'apparaître sur l'onglet sans
-  // qu'on ait besoin de l'ouvrir. Tout ce qui suit est du calcul sur des
-  // données déjà chargées ; seuls les tirages bonus et la liste des joueurs
-  // joignables font une requête, mise en cache cinq minutes.
-  const { controles, alertes, pret: controlesPrets } = useControlesSaison({
-    joueurs: players,
-    journees: matchdays,
-    matchs: matches,
-    paiements: payments,
-  });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -776,19 +758,6 @@ function AdminPage() {
                 >
                   <Icon size={14} />
                   {tab.label}
-                  {/* Pastille des controles : le nombre de vrais problemes,
-                      visible SANS ouvrir l'onglet. C'est tout l'interet — les
-                      anomalies de cette saison etaient invisibles jusqu'a ce
-                      qu'un joueur les signale. */}
-                  {tab.id === "controles" && alertes > 0 && (
-                    <span
-                      className={`ml-0.5 grid min-w-[18px] place-items-center rounded-full px-1 font-mono text-[10px] font-black ${
-                        isActive ? "bg-slate-950 text-emerald-400" : "bg-red-500 text-white"
-                      }`}
-                    >
-                      {alertes}
-                    </span>
-                  )}
                   {hasError && (
                     <span className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-400" />
                   )}
@@ -877,10 +846,6 @@ function AdminPage() {
               error={errors.suivi}
               notify={notify}
             />
-          )}
-
-          {activeTab === "controles" && (
-            <ControlesTab controles={controles} pret={controlesPrets} onAller={setActiveTab} />
           )}
 
           {activeTab === "audience" && <AudienceTab players={players} />}
@@ -6309,139 +6274,6 @@ function AudienceTab({ players }: { players: Player[] }) {
         un joueur, une page, un jour. Les données sont gardées 90 jours.
       </div>
     </Card>
-  );
-}
-
-/* ============================================================
-   CONTRÔLES — ce qui cloche, avant qu'un joueur ne le signale
-   ============================================================
-   Le calcul est dans src/lib/controlesSaison.ts (npm run verif-controles) ;
-   cet onglet ne fait que l'afficher. Il ne déclenche aucune requête de son
-   côté : tout vient de ce que la page Admin a déjà chargé.
-   ============================================================ */
-
-const GRAVITES = {
-  critique: {
-    libelle: "À corriger",
-    bordure: "border-red-500/30",
-    fond: "bg-red-500/[0.05]",
-    texte: "text-red-300",
-    pastille: "bg-red-500/15 text-red-300 border-red-500/30",
-    Icone: AlertTriangle,
-  },
-  attention: {
-    libelle: "À surveiller",
-    bordure: "border-amber-500/25",
-    fond: "bg-amber-500/[0.04]",
-    texte: "text-amber-300",
-    pastille: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-    Icone: AlertCircle,
-  },
-  info: {
-    libelle: "Pour information",
-    bordure: "border-slate-700/60",
-    fond: "",
-    texte: "text-slate-300",
-    pastille: "bg-slate-700/30 text-slate-300 border-slate-600/50",
-    Icone: Info,
-  },
-} as const;
-
-/** Au-delà, on annonce le reste plutôt que de dérouler cent noms. */
-const ELEMENTS_AFFICHES = 12;
-
-function ControlesTab({
-  controles,
-  pret,
-  onAller,
-}: {
-  controles: Controle[];
-  pret: boolean;
-  onAller: (tab: AdminTab) => void;
-}) {
-  if (controles.length === 0) {
-    return (
-      <Card className="p-8 text-center sm:p-12">
-        <div className="mx-auto grid size-14 place-items-center rounded-2xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-300">
-          <ShieldCheck size={26} />
-        </div>
-        <div className="mt-4 font-display text-xl font-black text-white">Tout est en ordre</div>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-400">
-          Aucun résultat manquant, aucune journée sans date limite, aucun bonus oublié.
-          {!pret && " (Bonus et notifications encore en cours de vérification.)"}
-        </p>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {controles.map((controle) => {
-        const style = GRAVITES[controle.gravite];
-        const Icone = style.Icone;
-        const visibles = controle.elements.slice(0, ELEMENTS_AFFICHES);
-        const reste = controle.elements.length - visibles.length;
-
-        return (
-          <Card key={controle.id} className={`${style.bordure} ${style.fond} p-4 sm:p-5`}>
-            <div className="flex items-start gap-3">
-              <span
-                className={`grid size-9 shrink-0 place-items-center rounded-xl border ${style.pastille}`}
-              >
-                <Icone size={17} />
-              </span>
-
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                  <span className="font-display text-base font-black text-white">
-                    {controle.titre}
-                  </span>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest ${style.pastille}`}
-                  >
-                    {style.libelle}
-                  </span>
-                </div>
-
-                {/* La conséquence AVANT la marche à suivre : on ne corrige
-                    bien que ce dont on a compris l'effet. */}
-                <p className={`mt-1.5 text-sm leading-relaxed ${style.texte}`}>
-                  {controle.consequence}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-400">{controle.quoiFaire}</p>
-
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {visibles.map((element) => (
-                    <span
-                      key={element}
-                      className="rounded-lg border border-slate-700/70 bg-[#0d1322] px-2 py-1 font-mono text-[11px] text-slate-300"
-                    >
-                      {element}
-                    </span>
-                  ))}
-                  {reste > 0 && (
-                    <span className="rounded-lg px-2 py-1 font-mono text-[11px] text-slate-500">
-                      + {reste} autre{reste > 1 ? "s" : ""}
-                    </span>
-                  )}
-                </div>
-
-                {controle.onglet && (
-                  <button
-                    type="button"
-                    onClick={() => onAller(controle.onglet as AdminTab)}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-slate-300 transition hover:border-emerald-500/40 hover:text-white"
-                  >
-                    Corriger
-                    <ChevronRight size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </Card>
-        );
-      })}
-    </div>
   );
 }
 
