@@ -2083,7 +2083,7 @@ function GazettePage() {
                           return (
                             <div
                               key={String(match.id)}
-                              className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border px-2.5 py-3 sm:grid sm:grid-cols-[58px_minmax(0,1fr)_66px] sm:px-4 sm:py-4 ${
+                              className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border px-2.5 py-3 sm:grid sm:grid-cols-[58px_minmax(0,1fr)_66px] sm:px-4 sm:py-4 ${
                                 live
                                   ? "border-red-400/35 bg-red-400/[.07]"
                                   : termine
@@ -2104,13 +2104,45 @@ function GazettePage() {
                                 </p>
                               </div>
 
-                              <div className="order-2 flex min-w-0 flex-1 basis-full items-center justify-center gap-1.5 font-display text-[13px] font-black text-white sm:order-none sm:basis-auto sm:gap-2 sm:text-sm md:gap-4 md:text-base">
-                                <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 sm:gap-2">
+                              {/* Les noms de clubs etrangers (matchs bonus) ne tiennent
+                                  pas cote a cote sur un telephone : "Borussia
+                                  Monchengladbach" demande 213 px, la colonne en
+                                  fait 102. Sous `sm` on empile les deux equipes,
+                                  chacune avec son score en bout de ligne ; a
+                                  partir de `sm` on retrouve exactement la ligne
+                                  centree. Deux rendus, une seule source de
+                                  donnees : les memes getScoreHome/getScoreAway. */}
+
+                              {/* Telephone : un vrai tableau de scores. */}
+                              <div className="order-2 flex min-w-0 basis-full flex-col gap-2 font-display text-sm font-black text-white sm:hidden">
+                                {([
+                                  { cote: "home" as const, nom: getTeamHome(match), score: getScoreHome(match) },
+                                  { cote: "away" as const, nom: getTeamAway(match), score: getScoreAway(match) },
+                                ]).map(({ cote, nom, score }) => (
+                                  <div key={cote} className="flex min-w-0 items-center gap-2">
+                                    <GazetteTeamLogo teams={teams} match={match} side={cote} size="size-8" />
+                                    <span className="min-w-0 flex-1 truncate">{shortTeam(nom)}</span>
+                                    {(live || termine) && (
+                                      <span
+                                        className={`shrink-0 tabular-nums ${
+                                          live ? "text-red-300" : "text-white"
+                                        }`}
+                                      >
+                                        {score ?? "—"}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Tablette et ordinateur : la ligne centree. */}
+                              <div className="order-2 hidden min-w-0 flex-1 basis-full items-center justify-center gap-2 font-display text-sm font-black text-white sm:order-none sm:flex sm:basis-auto md:gap-4 md:text-base">
+                                <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
                                   <span className="truncate text-right">{shortTeam(getTeamHome(match))}</span>
-                                  <GazetteTeamLogo teams={teams} match={match} side="home" size="size-7 sm:size-9 md:size-11" />
+                                  <GazetteTeamLogo teams={teams} match={match} side="home" size="size-9 md:size-11" />
                                 </div>
                                 <span
-                                  className={`min-w-[48px] shrink-0 rounded-lg px-1.5 py-1 text-center tabular-nums sm:min-w-[58px] sm:px-2 ${
+                                  className={`min-w-[58px] shrink-0 rounded-lg px-2 py-1 text-center tabular-nums ${
                                     live
                                       ? "bg-red-400 text-slate-950"
                                       : termine
@@ -2122,8 +2154,8 @@ function GazettePage() {
                                     ? `${getScoreHome(match) ?? "—"} – ${getScoreAway(match) ?? "—"}`
                                     : "VS"}
                                 </span>
-                                <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
-                                  <GazetteTeamLogo teams={teams} match={match} side="away" size="size-7 sm:size-9 md:size-11" />
+                                <div className="flex min-w-0 flex-1 items-center gap-2">
+                                  <GazetteTeamLogo teams={teams} match={match} side="away" size="size-9 md:size-11" />
                                   <span className="truncate">{shortTeam(getTeamAway(match))}</span>
                                 </div>
                               </div>
