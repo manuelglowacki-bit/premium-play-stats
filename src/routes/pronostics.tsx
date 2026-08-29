@@ -955,6 +955,27 @@ function PronosticsPage() {
     return String(live?.statut ?? live?.status ?? match.status ?? "SCHEDULED").toUpperCase();
   };
 
+  /**
+   * LE MATCH EST JOUE, MAIS LA BASE N'A PAS SON SCORE.
+   *
+   * `getLiveScore` renvoie null dans ce cas, et la carte n'affichait alors
+   * PLUS RIEN : ni score, ni points, ni explication. Le joueur voit un match
+   * du week-end dernier comme s'il n'avait jamais eu lieu et croit a un bug
+   * de l'application, alors que le probleme est en amont — le resultat n'a
+   * pas ete synchronise. Autant le dire.
+   *
+   * Le meme constat alimente l'onglet Admin « Controles » : c'est le premier
+   * de la liste, parce que tant que ces scores manquent le classement est
+   * faux pour tout le monde.
+   */
+  const resultatEnAttente = (match: MatchRow): boolean => {
+    const coupDEnvoi = match.kickoff ? new Date(match.kickoff).getTime() : NaN;
+    if (!Number.isFinite(coupDEnvoi)) return false;
+    // Trois heures : un match dure 105 minutes prolongations comprises, la
+    // synchronisation a le droit d'etre un peu en retard sans qu'on alarme.
+    return liveTick - coupDEnvoi > 3 * 60 * 60_000;
+  };
+
   const getLiveScore = (
     match: MatchRow,
   ): { home: number; away: number; status: string; live: boolean; finished: boolean } | null => {
@@ -2604,7 +2625,14 @@ function PronosticsPage() {
                                 ? getLivePoints(match, current)
                                 : getMainMatchPoints(match, current);
 
-                              if (!currentScore) return null;
+                              if (!currentScore) {
+                                if (!resultatEnAttente(match)) return null;
+                                return (
+                                  <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                    Résultat en attente
+                                  </span>
+                                );
+                              }
 
                               return (
                                 <div className="flex flex-col items-center gap-1 font-mono text-[10px] font-black uppercase tracking-wider">
@@ -2888,7 +2916,14 @@ function PronosticsPage() {
 
                             {(() => {
                               const currentScore = getLiveScore(match);
-                              if (!currentScore) return null;
+                              if (!currentScore) {
+                                if (!resultatEnAttente(match)) return null;
+                                return (
+                                  <span className="mt-2 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                    Résultat en attente
+                                  </span>
+                                );
+                              }
 
                               const displayPoints =
                                 score.home !== "" && score.away !== ""
@@ -3213,7 +3248,14 @@ function PronosticsPage() {
                     calculés que pour le bonus effectivement sélectionné par le joueur. */}
                 {(() => {
                   const currentScore = getLiveScore(match);
-                  if (!currentScore) return null;
+                  if (!currentScore) {
+                    if (!resultatEnAttente(match)) return null;
+                    return (
+                      <p className="relative mt-4 border-t border-white/10 pt-3 text-center font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Résultat en attente
+                      </p>
+                    );
+                  }
 
                   const hasPrediction = score.home !== "" && score.away !== "";
                   const displayPoints =
