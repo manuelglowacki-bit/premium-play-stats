@@ -1,6 +1,12 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
+import { useControlesSaison } from "@/hooks/useControlesSaison";
+import { type Controle } from "@/lib/controlesSaison";
+import { nomFichier, versCSV, type LigneClassement } from "@/lib/exportClassement";
+import { preparerAnnonce, resumerEnvoi, LONGUEUR_MAX } from "@/lib/annonce";
+import { computeLeagueStats } from "@/lib/leaderboardStats";
+import { rankPlayers } from "@/lib/leaderboardRanking";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import AdminRoute from "@/components/auth/AdminRoute";
@@ -99,6 +105,12 @@ import {
   KeyRound,
   Copy,
   BarChart3,
+  ShieldCheck,
+  AlertCircle,
+  Info,
+  Megaphone,
+  Send,
+  FileDown,
 } from "lucide-react";
 import {
   genererCodeInvitation,
@@ -109,7 +121,7 @@ import {
 /** Onglets de l'espace admin, adressables via le search param `tab`
  * (`/admin?tab=...`) plutôt que par un simple state local, pour rester
  * partageable/bookmarkable. */
-const ADMIN_TAB_VALUES = ["joueurs", "paiements", "matchs", "bonus", "suivi", "audience", "verrouillage", "reglages"] as const;
+const ADMIN_TAB_VALUES = ["controles", "joueurs", "paiements", "matchs", "bonus", "suivi", "audience", "verrouillage", "reglages"] as const;
 export type AdminTab = (typeof ADMIN_TAB_VALUES)[number];
 
 function isAdminTab(value: unknown): value is AdminTab {
@@ -411,6 +423,7 @@ function addError(bag: Record<string, string>, key: string, message: string) {
 // AdminTab est défini plus haut, à côté de la Route.
 
 const TABS: { id: AdminTab; label: string; icon: typeof Users }[] = [
+  { id: "controles", label: "Contrôles", icon: ShieldCheck },
   { id: "joueurs", label: "Joueurs", icon: Users },
   { id: "paiements", label: "Paiements", icon: Wallet },
   { id: "matchs", label: "Matchs", icon: Calendar },
@@ -470,6 +483,18 @@ function AdminPage() {
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [adminPredictions, setAdminPredictions] = useState<AdminPredictionRow[]>([]);
+
+  // CONTRÔLES DE LA SAISON — calculés ici, et pas seulement dans leur onglet :
+  // c'est ce qui permet à la pastille rouge d'apparaître sur l'onglet sans
+  // qu'on ait besoin de l'ouvrir. Tout ce qui suit est du calcul sur des
+  // données déjà chargées ; seuls les tirages bonus et la liste des joueurs
+  // joignables font une requête, mise en cache cinq minutes.
+  const { controles, alertes, pret: controlesPrets } = useControlesSaison({
+    joueurs: players,
+    journees: matchdays,
+    matchs: matches,
+    paiements: payments,
+  });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -751,6 +776,19 @@ function AdminPage() {
                 >
                   <Icon size={14} />
                   {tab.label}
+                  {/* Pastille des controles : le nombre de vrais problemes,
+                      visible SANS ouvrir l'onglet. C'est tout l'interet — les
+                      anomalies de cette saison etaient invisibles jusqu'a ce
+                      qu'un joueur les signale. */}
+                  {tab.id === "controles" && alertes > 0 && (
+                    <span
+                      className={`ml-0.5 grid min-w-[18px] place-items-center rounded-full px-1 font-mono text-[10px] font-black ${
+                        isActive ? "bg-slate-950 text-emerald-400" : "bg-red-500 text-white"
+                      }`}
+                    >
+                      {alertes}
+                    </span>
+                  )}
                   {hasError && (
                     <span className="absolute -right-1 -top-1 size-2 rounded-full bg-amber-400" />
                   )}
@@ -772,6 +810,15 @@ function AdminPage() {
           )}
 
           {activeTab === "paiements" && (
+            <div className="space-y-4">
+              <ExportClassement
+                players={players}
+                matches={matches}
+                predictions={adminPredictions}
+                teams={teams}
+                saison={settings?.season ?? null}
+                notify={notify}
+              />
             <PaymentsTab
               players={players}
               payments={payments}
@@ -784,6 +831,7 @@ function AdminPage() {
               onChanged={async () => setPayments(await getPayments())}
               notify={notify}
             />
+            </div>
           )}
 
           {activeTab === "matchs" && (
@@ -829,6 +877,10 @@ function AdminPage() {
               error={errors.suivi}
               notify={notify}
             />
+          )}
+
+          {activeTab === "controles" && (
+            <ControlesTab controles={controles} pret={controlesPrets} onAller={setActiveTab} />
           )}
 
           {activeTab === "audience" && <AudienceTab players={players} />}
@@ -1361,6 +1413,12 @@ function PronoFollowUpTab({
 
   return (
     <div className="space-y-4">
+      {/* ANNONCE À TOUS — à sa place ici, au milieu des outils qui parlent aux
+          joueurs. Le bouton « Rappeler » n'envoie qu'un texte figé sur les
+          pronos, et seulement aux retardataires ; celui-ci dit ce qu'on veut,
+          à tout le monde. */}
+      <AnnonceATous players={players} joignables={joignables} notify={notify} />
+
       {/* scroll-mt : marge de sécurité pour que le titre ne se retrouve
           jamais juste sous le header sticky d'AppShell, quel que soit le
           point de défilement d'où l'on arrive sur cet onglet. */}
@@ -6249,6 +6307,438 @@ function AudienceTab({ players }: { players: Player[] }) {
         Une visite est comptée une fois par page et par demi-heure, jamais quand
         l'application est en arrière-plan. Aucune adresse IP, aucun paramètre d'URL :
         un joueur, une page, un jour. Les données sont gardées 90 jours.
+      </div>
+    </Card>
+  );
+}
+
+/* ============================================================
+   CONTRÔLES — ce qui cloche, avant qu'un joueur ne le signale
+   ============================================================
+   Le calcul est dans src/lib/controlesSaison.ts (npm run verif-controles) ;
+   cet onglet ne fait que l'afficher. Il ne déclenche aucune requête de son
+   côté : tout vient de ce que la page Admin a déjà chargé.
+   ============================================================ */
+
+const GRAVITES = {
+  critique: {
+    libelle: "À corriger",
+    bordure: "border-red-500/30",
+    fond: "bg-red-500/[0.05]",
+    texte: "text-red-300",
+    pastille: "bg-red-500/15 text-red-300 border-red-500/30",
+    Icone: AlertTriangle,
+  },
+  attention: {
+    libelle: "À surveiller",
+    bordure: "border-amber-500/25",
+    fond: "bg-amber-500/[0.04]",
+    texte: "text-amber-300",
+    pastille: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+    Icone: AlertCircle,
+  },
+  info: {
+    libelle: "Pour information",
+    bordure: "border-slate-700/60",
+    fond: "",
+    texte: "text-slate-300",
+    pastille: "bg-slate-700/30 text-slate-300 border-slate-600/50",
+    Icone: Info,
+  },
+} as const;
+
+/** Au-delà, on annonce le reste plutôt que de dérouler cent noms. */
+const ELEMENTS_AFFICHES = 12;
+
+function ControlesTab({
+  controles,
+  pret,
+  onAller,
+}: {
+  controles: Controle[];
+  pret: boolean;
+  onAller: (tab: AdminTab) => void;
+}) {
+  if (controles.length === 0) {
+    return (
+      <Card className="p-8 text-center sm:p-12">
+        <div className="mx-auto grid size-14 place-items-center rounded-2xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-300">
+          <ShieldCheck size={26} />
+        </div>
+        <div className="mt-4 font-display text-xl font-black text-white">Tout est en ordre</div>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-400">
+          Aucun résultat manquant, aucune journée sans date limite, aucun bonus oublié.
+          {!pret && " (Bonus et notifications encore en cours de vérification.)"}
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {controles.map((controle) => {
+        const style = GRAVITES[controle.gravite];
+        const Icone = style.Icone;
+        const visibles = controle.elements.slice(0, ELEMENTS_AFFICHES);
+        const reste = controle.elements.length - visibles.length;
+
+        return (
+          <Card key={controle.id} className={`${style.bordure} ${style.fond} p-4 sm:p-5`}>
+            <div className="flex items-start gap-3">
+              <span
+                className={`grid size-9 shrink-0 place-items-center rounded-xl border ${style.pastille}`}
+              >
+                <Icone size={17} />
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <span className="font-display text-base font-black text-white">
+                    {controle.titre}
+                  </span>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-widest ${style.pastille}`}
+                  >
+                    {style.libelle}
+                  </span>
+                </div>
+
+                {/* La conséquence AVANT la marche à suivre : on ne corrige
+                    bien que ce dont on a compris l'effet. */}
+                <p className={`mt-1.5 text-sm leading-relaxed ${style.texte}`}>
+                  {controle.consequence}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-400">{controle.quoiFaire}</p>
+
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {visibles.map((element) => (
+                    <span
+                      key={element}
+                      className="rounded-lg border border-slate-700/70 bg-[#0d1322] px-2 py-1 font-mono text-[11px] text-slate-300"
+                    >
+                      {element}
+                    </span>
+                  ))}
+                  {reste > 0 && (
+                    <span className="rounded-lg px-2 py-1 font-mono text-[11px] text-slate-500">
+                      + {reste} autre{reste > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                {controle.onglet && (
+                  <button
+                    type="button"
+                    onClick={() => onAller(controle.onglet as AdminTab)}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-[#0d1322] px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-slate-300 transition hover:border-emerald-500/40 hover:text-white"
+                  >
+                    Corriger
+                    <ChevronRight size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ============================================================
+   ANNONCE À TOUS LES JOUEURS
+   ============================================================
+   Les règles (message vide, trop long, résumé honnête de l'envoi) sont dans
+   src/lib/annonce.ts — npm run verif-annonce.
+
+   Aucune Edge Function à redéployer : le mode `manual_reminder` accepte déjà
+   un titre et un corps libres pour UN joueur, l'annonce est le même appel
+   répété. Plus de requêtes qu'un envoi groupé, mais cela évite de redéployer
+   500 lignes de fonction depuis un téléphone.
+   ============================================================ */
+
+function AnnonceATous({
+  players,
+  joignables,
+  notify,
+}: {
+  players: Player[];
+  joignables: Set<string> | null;
+  notify: (message: string, type?: "success" | "error") => void;
+}) {
+  const [ouvert, setOuvert] = useState(false);
+  const [message, setMessage] = useState("");
+  const [envoi, setEnvoi] = useState(false);
+
+  // Le nombre annoncé est celui des joueurs qui recevront VRAIMENT quelque
+  // chose. Écrire « 23 joueurs » quand huit n'ont pas activé les
+  // notifications ne servirait personne.
+  const cibles = useMemo(
+    () => (joignables ? players.filter((joueur) => joignables.has(String(joueur.id))) : players),
+    [players, joignables],
+  );
+  const injoignables = players.length - cibles.length;
+
+  const restants = LONGUEUR_MAX - message.replace(/\s+/g, " ").trim().length;
+
+  async function envoyer() {
+    const preparee = preparerAnnonce(message);
+    if (!preparee.ok) {
+      notify(preparee.erreur, "error");
+      return;
+    }
+
+    if (cibles.length === 0) {
+      notify("Aucun joueur n'a activé les notifications.", "error");
+      return;
+    }
+
+    const avertissement =
+      injoignables > 0
+        ? `\n\n${injoignables} joueur(s) ne recevront rien : notifications désactivées.`
+        : "";
+
+    if (
+      !window.confirm(
+        `Envoyer cette notification à ${cibles.length} joueur(s) ?\n\n« ${preparee.corps} »${avertissement}`,
+      )
+    ) {
+      return;
+    }
+
+    setEnvoi(true);
+    try {
+      const resultats = await Promise.allSettled(
+        cibles.map((joueur) =>
+          sendManualReminder({
+            userId: joueur.id,
+            title: preparee.titre,
+            body: preparee.corps,
+          }),
+        ),
+      );
+
+      const reussis = resultats.filter(
+        (r) => r.status === "fulfilled" && r.value.ok && r.value.sent > 0,
+      ).length;
+
+      notify(
+        resumerEnvoi({
+          demandes: cibles.length,
+          reussis,
+          echoues: players.length - reussis,
+        }),
+        reussis > 0 ? "success" : "error",
+      );
+
+      if (reussis > 0) {
+        setMessage("");
+        setOuvert(false);
+      }
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <Card className="overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOuvert((v) => !v)}
+        className="flex w-full items-center gap-3 p-4 text-left transition hover:bg-white/[0.02] sm:p-5"
+      >
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-sky-500/30 bg-sky-500/10 text-sky-300">
+          <Megaphone size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-base font-black text-white">Annonce à tous</div>
+          <div className="mt-0.5 text-xs text-slate-400">
+            Un message libre, envoyé à tout le monde — pas seulement aux retardataires.
+          </div>
+        </div>
+        <ChevronRight
+          size={16}
+          className={`shrink-0 text-slate-500 transition-transform ${ouvert ? "rotate-90" : ""}`}
+        />
+      </button>
+
+      {ouvert && (
+        <div className="border-t border-slate-800 p-4 sm:p-5">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={3}
+            placeholder="La J2 est ouverte, pensez à vos pronos avant vendredi 20h45 !"
+            className="w-full resize-none rounded-xl border border-slate-700 bg-[#080e1a] p-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-sky-500/50"
+          />
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <span
+              className={`font-mono text-[10px] uppercase tracking-widest ${
+                restants < 0 ? "text-red-400" : "text-slate-500"
+              }`}
+            >
+              {restants} caractère{Math.abs(restants) > 1 ? "s" : ""} restant
+              {Math.abs(restants) > 1 ? "s" : ""}
+            </span>
+
+            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              {cibles.length} destinataire{cibles.length > 1 ? "s" : ""}
+              {injoignables > 0 && (
+                <span className="text-amber-400/80"> · {injoignables} injoignable{injoignables > 1 ? "s" : ""}</span>
+              )}
+            </span>
+          </div>
+
+          <PrimaryButton onClick={() => void envoyer()} disabled={envoi} className="mt-3 w-full">
+            {envoi ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
+            {envoi ? "Envoi en cours…" : "Envoyer l'annonce"}
+          </PrimaryButton>
+
+          <p className="mt-2.5 text-[11px] leading-relaxed text-slate-500">
+            La notification s'affiche sur l'écran verrouillé : court et clair. Elle part
+            immédiatement, il n'y a pas d'annulation possible.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ============================================================
+   EXPORT DU CLASSEMENT
+   ============================================================
+   Le classement affiché à l'écran ne prouve rien six mois plus tard. Ce
+   bouton en sort un tableau daté, ouvrable dans Excel — utile à la remise des
+   gains, et indispensable côté Leroy Merlin où il faudra montrer noir sur
+   blanc qui termine où pour attribuer les lots.
+
+   POINT IMPORTANT : les points ne sont PAS recalculés ici avec une formule
+   maison. C'est computeLeagueStats + rankPlayers, exactement le moteur du
+   Classement (24 vérifications, npm run verif-points). Le fichier exporté ne
+   peut donc pas contredire ce que les joueurs voient.
+
+   Les tirages bonus ne sont chargés qu'au clic : tant que personne n'exporte,
+   cet écran ne coûte rien.
+   ============================================================ */
+
+function ExportClassement({
+  players,
+  matches,
+  predictions,
+  teams,
+  saison,
+  notify,
+}: {
+  players: Player[];
+  matches: Match[];
+  predictions: AdminPredictionRow[];
+  teams: Team[];
+  saison: string | null;
+  notify: (message: string, type?: "success" | "error") => void;
+}) {
+  const [enCours, setEnCours] = useState(false);
+
+  async function exporter() {
+    setEnCours(true);
+    try {
+      const { data: options, error } = await supabase
+        .from("bonus_options")
+        .select("matchday_id, match_id, is_active, created_at");
+
+      if (error) {
+        notify("Impossible de lire les matchs bonus. Export annulé.", "error");
+        return;
+      }
+
+      const nomEquipeParId: Record<string, string | undefined> = {};
+      for (const equipe of teams) nomEquipeParId[String(equipe.id)] = equipe.name;
+
+      // Même partage que le Classement : Ligue 1 d'un côté, matchs bonus de
+      // l'autre, et seulement ceux dont le résultat est connu.
+      const joues = (match: Match) =>
+        match.finished && match.home_score != null && match.away_score != null;
+
+      const idsBonus = new Set((options ?? []).map((o: any) => String(o.match_id)));
+      const ligue1 = matches.filter((m) => joues(m) && !idsBonus.has(String(m.id)) && !m.is_bonus);
+      const bonus = matches.filter((m) => joues(m) && idsBonus.has(String(m.id)));
+
+      const stats = computeLeagueStats(
+        ligue1 as any,
+        bonus as any,
+        (options ?? []) as any,
+        predictions as any,
+        players as any,
+        nomEquipeParId,
+      );
+
+      const classes = rankPlayers(
+        players.map((joueur) => ({
+          id: joueur.id,
+          points: stats.pointsByUser[joueur.id] ?? 0,
+          exactScores: stats.exactScoresByUser[joueur.id] ?? 0,
+          regularitySuccess: stats.regularitySuccessByUser[joueur.id] ?? 0,
+        })) as any,
+      );
+
+      const lignes: LigneClassement[] = classes.map((classe: any) => {
+        const joueur = players.find((j) => String(j.id) === String(classe.id));
+        return {
+          rang: classe.rank,
+          pseudo: joueur?.pseudo ?? null,
+          points: classe.points,
+          scoresExacts: classe.exactScores,
+          pronosticsJoues: stats.participationByUser[classe.id] ?? 0,
+          pronosticsAttendus: stats.participationTotalByUser[classe.id] ?? 0,
+          equipeCoeur: joueur?.favorite_team_id
+            ? (nomEquipeParId[String(joueur.favorite_team_id)] ?? null)
+            : null,
+        };
+      });
+
+      const contenu = versCSV(lignes);
+      const fichier = nomFichier(saison);
+
+      const lien = document.createElement("a");
+      lien.href = URL.createObjectURL(new Blob([contenu], { type: "text/csv;charset=utf-8" }));
+      lien.download = fichier;
+      document.body.appendChild(lien);
+      lien.click();
+      document.body.removeChild(lien);
+      // Le navigateur garde l'objet en mémoire tant qu'on ne le libère pas.
+      setTimeout(() => URL.revokeObjectURL(lien.href), 1000);
+
+      notify(`Classement exporté — ${lignes.length} joueur(s).`);
+    } finally {
+      setEnCours(false);
+    }
+  }
+
+  return (
+    <Card className="p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-emerald-400/25 bg-emerald-400/10 text-emerald-300">
+          <FileDown size={17} />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-base font-black text-white">Exporter le classement</div>
+          <div className="mt-0.5 text-xs leading-relaxed text-slate-400">
+            Rang, points, scores exacts et participation de chaque joueur, dans un tableau
+            ouvrable avec Excel. Calculé avec le moteur du Classement : les chiffres ne
+            peuvent pas différer de ce que voient les joueurs.
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void exporter()}
+          disabled={enCours}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-wide text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-60"
+        >
+          {enCours ? <RefreshCw size={14} className="animate-spin" /> : <FileDown size={14} />}
+          {enCours ? "Préparation…" : "Exporter"}
+        </button>
       </div>
     </Card>
   );

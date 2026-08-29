@@ -23,7 +23,10 @@
     "verif-pagination": "tsx src/lib/pagination.verif.ts",
     "verif-version": "tsx src/lib/versionSite.verif.ts",
     "verif-audience": "tsx src/lib/suiviPages.verif.ts",
-    "verif-journee-courante": "tsx src/lib/journeeCourante.verif.ts"
+    "verif-journee-courante": "tsx src/lib/journeeCourante.verif.ts",
+    "verif-controles": "tsx src/lib/controlesSaison.verif.ts",
+    "verif-export": "tsx src/lib/exportClassement.verif.ts",
+    "verif-annonce": "tsx src/lib/annonce.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
