@@ -26,7 +26,8 @@
     "verif-journee-courante": "tsx src/lib/journeeCourante.verif.ts",
     "verif-export": "tsx src/lib/exportClassement.verif.ts",
     "verif-annonce": "tsx src/lib/annonce.verif.ts",
-    "verif-cron": "tsx scripts/appelCron.verif.ts"
+    "verif-cron": "tsx scripts/appelCron.verif.ts",
+    "verif-score": "tsx src/lib/scoreAffiche.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

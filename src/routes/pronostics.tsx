@@ -23,6 +23,7 @@ import {
   type RepartitionMatch,
 } from "@/lib/repartition1N2";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/supabaseFetchAll";
+import { scoreApi, scoreTermine } from "@/lib/scoreAffiche";
 import {
   choisirJournee,
   dateVerrouillage,
@@ -312,14 +313,6 @@ function derivePick(home: number, away: number): Pick {
 }
 
 /** Retourne les points du pronostic 1N2 une fois le match terminé. */
-function getMainMatchPoints(match: MatchRow, pick: Pick | undefined): number | null {
-  if (!match.finished || match.home_score == null || match.away_score == null || !pick) {
-    return null;
-  }
-
-  const finalResult = derivePick(match.home_score, match.away_score);
-  return pick === finalResult ? 1 : 0;
-}
 
 /**
  * Calcul du score affiché uniquement à l'écran.
@@ -997,14 +990,21 @@ function PronosticsPage() {
       FINISHED_STATUSES.has(status);
 
     if (finished) {
-      if (match.home_score == null || match.away_score == null) return null;
-      return {
-        home: Number(match.home_score),
-        away: Number(match.away_score),
-        status,
-        live: false,
-        finished: true,
-      };
+      // LA BASE D'ABORD, L'API ENSUITE.
+      //
+      // Cette branche ne lisait QUE Supabase : dès qu'un match passait
+      // « terminé », le score de l'API n'était plus jamais consulté. Un match
+      // joué mais pas encore synchronisé n'affichait donc ni score ni points,
+      // alors que l'API les donnait — et que le Classement, lui, les utilisait
+      // déjà (reconcileMatchWithLive, src/lib/liveMatches.ts). Les deux pages
+      // se contredisaient.
+      //
+      // L'ordre compte : un score saisi à la main par l'admin doit l'emporter
+      // sur l'API, c'est lui qui fait foi au classement.
+      const officiel = scoreTermine(match, live);
+      if (!officiel) return null;
+
+      return { home: officiel.home, away: officiel.away, status, live: false, finished: true };
     }
 
     const kickoffMs = match.kickoff ? new Date(match.kickoff).getTime() : NaN;
@@ -1013,29 +1013,12 @@ function PronosticsPage() {
 
     if (!apiLive && !kickoffStarted) return null;
 
-    const apiHome =
-      live?.scoreDomicile ??
-      live?.scoreHome ??
-      live?.homeScore ??
-      null;
-    const apiAway =
-      live?.scoreExterieur ??
-      live?.scoreAway ??
-      live?.awayScore ??
-      null;
+    const apiHome = scoreApi(live, "home");
+    const apiAway = scoreApi(live, "away");
 
-    const home =
-      apiHome == null
-        ? match.home_score == null
-          ? 0
-          : Number(match.home_score)
-        : Number(apiHome);
-    const away =
-      apiAway == null
-        ? match.away_score == null
-          ? 0
-          : Number(match.away_score)
-        : Number(apiAway);
+
+    const home = apiHome ?? (match.home_score == null ? 0 : Number(match.home_score));
+    const away = apiAway ?? (match.away_score == null ? 0 : Number(match.away_score));
 
     return {
       home: Number.isFinite(home) ? home : 0,
@@ -2632,9 +2615,16 @@ function PronosticsPage() {
                             {(() => {
                               const currentScore = getLiveScore(match);
                               const isLive = Boolean(currentScore?.live);
-                              const points = isLive
-                                ? getLivePoints(match, current)
-                                : getMainMatchPoints(match, current);
+                              // Les points découlent du score AFFICHÉ, quelle
+                              // que soit sa provenance. getMainMatchPoints
+                              // relisait la base de son côté : sur un match
+                              // dont le score venait de l'API, la carte
+                              // montrait le bon score et « 0 pt ».
+                              // getLivePoints part de getLiveScore, donc des
+                              // deux la même source. Barème identique pour un
+                              // match de Ligue 1 : 1 point si le résultat est
+                              // bon, 0 sinon.
+                              const points = getLivePoints(match, current);
 
                               if (!currentScore) {
                                 if (!resultatEnAttente(match)) return null;
