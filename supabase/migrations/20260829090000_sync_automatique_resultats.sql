@@ -8,9 +8,33 @@
 -- des jours — et la page Pronos affichait un blanc à la place du score.
 --
 -- CE QUE CE SCRIPT NE FAIT PAS : il ne touche ni au calcul des points, ni au
--- classement. Il remplit seulement les colonnes home_score / away_score que
--- l'admin remplissait à la main. Le barème et le moteur de points restent
--- exactement les mêmes.
+-- classement, ni au barème. Il remplit seulement les colonnes home_score /
+-- away_score que l'admin remplissait à la main.
+--
+-- ------------------------------------------------------------
+-- LE POINT IMPORTANT : RÉVEIL FRÉQUENT, APPEL RARE
+-- ------------------------------------------------------------
+-- La tâche se réveille toutes les 10 minutes, mais elle n'appelle la fonction
+-- QUE s'il y a réellement un résultat à aller chercher. Le réveil coûte une
+-- petite requête sur `matches` ; l'appel, lui, réveille une Edge Function et
+-- interroge football-data.org, dont le quota gratuit est limité.
+--
+-- Résultat : pendant un match, le score se met à jour toutes les 10 minutes.
+-- Un mardi après-midi, la tâche se réveille, ne trouve rien, et n'appelle
+-- personne.
+--
+-- La fenêtre couvre DEUX situations :
+--   * un match en cours ou tout juste fini — de 5 minutes avant le coup
+--     d'envoi à 4 heures après (105 minutes de jeu, plus la marge pour un
+--     match interrompu et pour le délai de publication du résultat) ;
+--   * un match dont le RÉSULTAT MANQUE ENCORE, jusqu'à 3 jours après. C'est
+--     le filet de sécurité : si l'API était en panne le soir du match, on
+--     réessaie tout seul au lieu d'attendre un clic. Les 3 jours évitent
+--     qu'un match annulé ou jamais renseigné ne relance la tâche
+--     indéfiniment.
+--
+-- Ligue 1 uniquement : la fonction ne synchronise que FL1, un match de
+-- Premier League sans score ne doit donc pas la déclencher.
 --
 -- PRÉALABLE : la fonction sync-ligue1-matches doit avoir été redéployée avec
 -- le chemin cron (en-tête x-cron-secret). Sans cela, l'appel repartira en 401
@@ -55,29 +79,55 @@ begin
 end
 $verif$;
 
--- ---------- 2. Repartir d'une base propre ----------
--- Rejouable : on retire une éventuelle version précédente avant de replanifier.
+-- ---------- 2. La question « y a-t-il un résultat à chercher ? » ----------
+-- Isolée dans une fonction plutôt que noyée dans la commande de la tâche :
+-- on peut la lire, la tester à la main, et voir tout de suite pourquoi la
+-- synchronisation part ou ne part pas.
+--
+--   select public.sync_resultats_necessaire();
+--
+create or replace function public.sync_resultats_necessaire()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $fn$
+  select exists (
+    select 1
+    from public.matches m
+    join public.matchdays d on d.id = m.matchday_id
+    join public.competitions c on c.id = d.competition_id
+    where c.external_code = 'FL1'
+      and m.kickoff is not null
+      and (
+        -- Match en cours, ou fini depuis moins de 4 heures.
+        (now() >= m.kickoff - interval '5 minutes' and now() <= m.kickoff + interval '4 hours')
+        -- Ou match joué dont le score manque toujours : on réessaie.
+        or (
+          m.kickoff < now()
+          and m.kickoff > now() - interval '3 days'
+          and (m.home_score is null or m.away_score is null)
+        )
+      )
+  );
+$fn$;
+
+revoke all on function public.sync_resultats_necessaire() from public, anon;
+grant execute on function public.sync_resultats_necessaire() to authenticated;
+
+-- ---------- 3. Repartir d'une base propre ----------
 select cron.unschedule(jobid)
 from cron.job
 where jobname like 'prono-ligue1-sync%';
 
--- ---------- 3. Programmer ----------
--- TOUTES LES HEURES, À LA MINUTE 5.
---
--- Pourquoi l'heure et pas plus souvent : un résultat n'a pas besoin d'arriver
--- à la seconde. Un match se termine vers 22 h 35 ; il est en base au plus tard
--- à 23 h 05, avant que quiconque regarde. Plus fréquent multiplierait les
--- appels à football-data.org (dont le quota gratuit est limité) sans rien
--- apporter.
---
--- Pourquoi la minute 5 et pas 0 : les rappels tournent toutes les 5 minutes,
--- donc à chaque heure pile. Décaler évite que les deux tâches réveillent les
--- fonctions au même instant.
---
--- 24 réveils par jour, 720 par mois — à comparer aux 8 640 des rappels.
+-- ---------- 4. Programmer ----------
+-- Toutes les 10 minutes, décalé de 5 minutes par rapport aux rappels (qui
+-- tournent à */5, donc à chaque dizaine pile) : les deux tâches ne réveillent
+-- pas les fonctions au même instant.
 select cron.schedule(
-  'prono-ligue1-sync-resultats-horaire',
-  '5 * * * *',
+  'prono-ligue1-sync-resultats',
+  '5,15,25,35,45,55 * * * *',
   $job$
     select net.http_post(
       url := replace(
@@ -90,13 +140,18 @@ select cron.schedule(
         'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'prono_reminder_cron_secret')
       ),
       body := jsonb_build_object('source', 'supabase-cron')
-    );
+    )
+    where public.sync_resultats_necessaire();
   $job$
 );
 
--- ---------- 4. Contrôle ----------
--- Doit afficher une ligne, active, avec le programme 5 * * * *
+-- ---------- 5. Contrôle ----------
+-- Deux lignes actives : les rappels et la synchronisation.
 select jobid, jobname, schedule, active
 from cron.job
 where jobname like 'prono-ligue1-%'
 order by jobname;
+
+-- Et la réponse du moment : true s'il y a un match en cours ou un résultat
+-- manquant, false sinon.
+select public.sync_resultats_necessaire() as synchronisation_necessaire_maintenant;
