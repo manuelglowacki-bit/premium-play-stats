@@ -6,9 +6,16 @@
 //
 // - La clé API football-data.org (FOOTBALL_DATA_API_TOKEN) reste un
 //   secret côté serveur : jamais envoyée au navigateur.
-// - Réservé aux admins : vérifie profiles.is_admin pour l'utilisateur
-//   qui appelle la fonction (le JWT est transmis automatiquement par
-//   supabase.functions.invoke côté client).
+// - DEUX APPELANTS POSSIBLES, et un seul chemin de code ensuite :
+//     * l'admin, depuis le bouton « Synchroniser » — on vérifie
+//       profiles.is_admin pour l'utilisateur qui appelle (le JWT est transmis
+//       automatiquement par supabase.functions.invoke côté client) ;
+//     * la tâche programmée, qui n'a aucune session utilisateur et présente à
+//       la place l'en-tête `x-cron-secret`. Ce secret ne vit que côté serveur,
+//       le navigateur n'y a jamais accès.
+//   Sans ce second chemin, les résultats n'entraient en base QUE si quelqu'un
+//   cliquait : un match joué le vendredi soir ne rapportait aucun point à
+//   personne jusqu'au prochain passage manuel.
 // - Les équipes football-data.org ne correspondent pas aux uuid de la
 //   table `teams` : la correspondance passe par `team_api_mapping`
 //   (clé de recherche : external_id numérique). Une équipe sans
@@ -20,8 +27,14 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { estAppelCron } from "../_shared/appelCron.ts";
 
 const FOOTBALL_DATA_URL = "https://api.football-data.org/v4/competitions/FL1/matches";
+
+// MÊME SECRET QUE LES RAPPELS, volontairement : les secrets d'Edge Function
+// sont partagés par tout le projet Supabase. Réutiliser celui qui existe déjà
+// évite d'en créer, d'en stocker et d'en faire fuiter un second.
+const CRON_SECRET = Deno.env.get("PRONO_REMINDER_CRON_SECRET") ?? "";
 const EXTERNAL_COMPETITION_CODE = "FL1";
 const UPSERT_CHUNK_SIZE = 100;
 const FETCH_TIMEOUT_MS = 20_000;
@@ -94,43 +107,57 @@ async function handleSync(req: Request): Promise<Response> {
     return json({ ok: false, error: "Configuration Supabase manquante côté fonction." }, 500);
   }
 
-  // --- 1. Vérification admin (ne jamais faire confiance au client) ---
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader) {
-    return json({ ok: false, error: "Authentification requise." }, 401);
-  }
+  // --- 1. Qui appelle ? ---
+  //
+  // La tâche programmée n'a pas de session utilisateur : elle présente le
+  // secret cron. La comparaison exige que le secret soit RÉELLEMENT configuré
+  // (`Boolean(CRON_SECRET)`) — sans cela, un projet mal configuré aurait une
+  // chaîne vide des deux côtés, et n'importe quel appel sans en-tête serait
+  // accepté comme venant du cron.
+  // La règle est isolée dans _shared/appelCron.ts et vérifiée par
+  // npm run verif-cron : c'est elle qui décide si l'appelant peut sauter la
+  // vérification admin, elle mérite ses propres tests.
+  const isCronCall = estAppelCron(CRON_SECRET, req.headers.get("x-cron-secret"));
 
-  const callerClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-
-  const {
-    data: { user },
-    error: userError,
-  } = await callerClient.auth.getUser();
-
-  if (userError || !user) {
-    return json({ ok: false, error: "Session invalide ou expirée." }, 401);
-  }
-
-  // Toutes les lectures/écritures suivantes passent par la clé service_role
-  // (contourne la RLS) : on vient de vérifier que l'appelant est admin.
+  // Toutes les lectures/écritures passent par la clé service_role (contourne
+  // la RLS) — après, et seulement après, que l'appelant a été identifié.
   const db = createClient(supabaseUrl, serviceRoleKey);
 
-  const { data: profile, error: profileError } = await db
-    .from("profiles")
-    .select("is_admin")
-    .eq("id", user.id)
-    .maybeSingle();
+  if (!isCronCall) {
+    // --- Appel humain : vérification admin (ne jamais faire confiance au client) ---
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return json({ ok: false, error: "Authentification requise." }, 401);
+    }
 
-  if (profileError) {
-    return json(
-      { ok: false, error: `Impossible de vérifier les droits admin : ${profileError.message}` },
-      500,
-    );
-  }
-  if (!profile?.is_admin) {
-    return json({ ok: false, error: "Réservé aux administrateurs." }, 403);
+    const callerClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const {
+      data: { user },
+      error: userError,
+    } = await callerClient.auth.getUser();
+
+    if (userError || !user) {
+      return json({ ok: false, error: "Session invalide ou expirée." }, 401);
+    }
+
+    const { data: profile, error: profileError } = await db
+      .from("profiles")
+      .select("is_admin")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      return json(
+        { ok: false, error: `Impossible de vérifier les droits admin : ${profileError.message}` },
+        500,
+      );
+    }
+    if (!profile?.is_admin) {
+      return json({ ok: false, error: "Réservé aux administrateurs." }, 403);
+    }
   }
 
   // --- 2. Appel football-data.org ---
