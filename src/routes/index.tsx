@@ -17,7 +17,8 @@ import {
   Check,
   ChevronRight,
   Sparkles,
-  Star
+  Star,
+  Target
 } from "lucide-react";
 import { CountdownBlocks } from "@/components/prono/Countdown";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
@@ -1141,23 +1142,33 @@ setLeaderboard(rankedRankings);
                   les trois colonnes de droite prenaient 144 px fixes sur les
                   325 disponibles. Elles se resserrent sous sm:, et retrouvent
                   leur largeur d'origine au-dela. */}
-              <div className="grid grid-cols-[24px_minmax(0,1fr)_46px] items-center gap-1.5 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500 sm:grid-cols-[28px_minmax(0,1fr)_56px] sm:gap-2">
+              {/* MEME LECTURE QUE LA PAGE CLASSEMENT, EN MINIATURE.
+                  Medaille pour le podium, blason du club sur l'avatar, points,
+                  scores exacts et barre de regularite. Toutes ces valeurs sont
+                  DEJA portees par chaque ligne de `leaderboard` (favorite_logo,
+                  exact_scores, participation / participationTotal) : rien n'est
+                  recalcule ici, rien n'est demande a Supabase en plus.
+                  Le mouvement et le niveau de carriere, eux, ne sont pas
+                  disponibles sur cette page — ils ne sont donc pas inventes. */}
+              <div className="hidden grid-cols-[30px_minmax(0,1fr)_44px_44px_88px] items-center gap-2.5 px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[.16em] text-slate-500 sm:grid">
                 <span>#</span>
                 <span>Joueur</span>
                 <span className="text-right">Pts</span>
+                <span className="text-center">Exacts</span>
+                <span className="text-right">Régularité</span>
               </div>
 
               {leaderboard.slice(0, 5).map((player, index) => {
                 const place = index + 1;
                 const isMe = myStats.rank === place;
+                const joues = Number(player?.participation || 0);
+                const jouables = Number(player?.participationTotal || 0);
+                const regularite = jouables > 0 ? Math.round((joues / jouables) * 100) : 0;
 
                 return (
                   <div
                     key={player?.user_id || `place-${place}`}
-                    /* MA LIGNE SE REPERE SANS LA CHERCHER : liseré vert à
-                       gauche, fond et bordure plus francs. Le contenu, l'ordre
-                       et le calcul du classement ne bougent pas. */
-                    className={`dash-fade-up relative grid grid-cols-[24px_minmax(0,1fr)_46px] items-center gap-1.5 overflow-hidden rounded-xl border px-2 py-2.5 transition-colors sm:grid-cols-[28px_minmax(0,1fr)_56px] sm:gap-2 sm:px-2.5 ${
+                    className={`dash-fade-up relative flex flex-wrap items-center gap-x-2.5 gap-y-1.5 overflow-hidden rounded-xl border px-2 py-2 transition-colors sm:grid sm:grid-cols-[30px_minmax(0,1fr)_44px_44px_88px] sm:gap-2.5 sm:px-2.5 sm:py-2.5 ${
                       isMe
                         ? "border-emerald-400/45 bg-emerald-400/[.10] ring-1 ring-emerald-400/20 before:absolute before:inset-y-1 before:left-0 before:w-[3px] before:rounded-full before:bg-emerald-400"
                         : place === 1
@@ -1166,32 +1177,47 @@ setLeaderboard(rankedRankings);
                     }`}
                     style={{ animationDelay: `${180 + index * 60}ms` }}
                   >
+                    {/* MEDAILLE pour le podium, simple numero ensuite — comme
+                        sur la page Classement. */}
                     <span
-                      className={`grid size-[22px] place-items-center rounded-lg font-mono text-[10px] font-black sm:size-6 ${
+                      className={`order-1 grid size-[26px] shrink-0 place-items-center rounded-full font-mono text-[11px] font-black sm:order-none sm:size-[30px] ${
                         place === 1
-                          ? "bg-amber-400 text-slate-950"
+                          ? "bg-gradient-to-br from-amber-200 via-amber-400 to-amber-600 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,.45)]"
                           : place === 2
-                            ? "bg-slate-400 text-slate-950"
+                            ? "bg-gradient-to-br from-slate-100 via-slate-300 to-slate-500 text-slate-900"
                             : place === 3
-                              ? "bg-amber-900/70 text-amber-200"
-                              : "bg-slate-800 text-slate-400"
+                              ? "bg-gradient-to-br from-amber-500/80 via-amber-700 to-amber-900 text-amber-50"
+                              : "border border-slate-700 bg-slate-900 text-slate-400"
                       }`}
                     >
                       {place}
                     </span>
 
-                    <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
-                      {player?.avatar_url ? (
-                        <img
-                          src={player.avatar_url}
-                          alt=""
-                          className="size-6 shrink-0 rounded-full border border-white/10 object-cover sm:size-7"
-                        />
-                      ) : (
-                        <span className="grid size-6 shrink-0 place-items-center rounded-full border border-white/10 bg-slate-800 font-mono text-[9px] font-black text-slate-300 sm:size-7">
-                          {String(player?.name || "?").slice(0, 2).toUpperCase()}
-                        </span>
-                      )}
+                    <div className="order-2 flex min-w-0 flex-1 items-center gap-2 sm:order-none sm:flex-none">
+                      {/* AVATAR + BLASON, comme sur la page Classement : le
+                          club se lit sans quitter la ligne. */}
+                      <span className="relative shrink-0">
+                        {player?.avatar_url ? (
+                          <img
+                            src={player.avatar_url}
+                            alt=""
+                            className="size-7 rounded-full border border-white/10 object-cover sm:size-8"
+                          />
+                        ) : (
+                          <span className="grid size-7 place-items-center rounded-full border border-white/10 bg-slate-800 font-mono text-[9px] font-black text-slate-300 sm:size-8">
+                            {String(player?.name || "?").slice(0, 2).toUpperCase()}
+                          </span>
+                        )}
+                        {player?.favorite_logo && (
+                          <img
+                            src={player.favorite_logo}
+                            alt=""
+                            aria-hidden
+                            className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full border border-[#0d1322] bg-[#0d1322] object-contain sm:size-4"
+                          />
+                        )}
+                      </span>
+
                       <span className="truncate font-display text-sm font-bold text-white">
                         {player?.name || "En attente"}
                       </span>
@@ -1202,8 +1228,33 @@ setLeaderboard(rankedRankings);
                       )}
                     </div>
 
-                    <span className="text-right font-display text-[17px] font-black tabular-nums text-white">
+                    <span
+                      className={`order-3 shrink-0 font-display text-[17px] font-black tabular-nums sm:order-none sm:text-right ${
+                        place === 1 ? "text-amber-300" : "text-white"
+                      }`}
+                    >
                       {Number(player?.total_points || 0)}
+                    </span>
+
+                    {/* Saut de ligne : sur telephone, les deux mesures passent
+                        sous le nom plutot que de l'ecraser. */}
+                    <div aria-hidden className="order-4 h-0 basis-full sm:hidden" />
+
+                    <span className="order-5 inline-flex shrink-0 items-center gap-1 font-mono text-[11px] font-bold text-slate-300 sm:order-none sm:justify-center">
+                      <Target size={11} className="text-sky-400" />
+                      {Number(player?.exact_scores || 0)}
+                    </span>
+
+                    <span className="order-6 flex flex-1 items-center gap-1.5 sm:order-none sm:flex-none">
+                      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-800">
+                        <span
+                          className={`block h-full rounded-full ${place === 1 ? "bg-amber-400" : "bg-emerald-400/80"}`}
+                          style={{ width: `${regularite}%` }}
+                        />
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] font-bold tabular-nums text-slate-400">
+                        {jouables > 0 ? `${regularite}%` : "—"}
+                      </span>
                     </span>
                   </div>
                 );
