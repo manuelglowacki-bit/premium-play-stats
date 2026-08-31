@@ -15,6 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { ongletVisible } from "@/lib/ongletVisible";
+import { journeeParMatchBonus } from "@/lib/journeeBonus";
 import { computeLeagueStats, type LeagueMatch, type LeagueProfile, type LeagueBonusOption } from "@/lib/leaderboardStats";
 import { fetchAllRowsCache } from "@/lib/supabaseFetchAll";
 import { rankPlayers } from "@/lib/leaderboardRanking";
@@ -379,7 +380,7 @@ function StatsPage() {
         // competition_id en plus : nécessaire pour isoler les vraies journées
         // Ligue 1 des journées bonus (PL/PD/SA/BL1), même logique que
         // index.tsx / profil.tsx / classement.tsx.
-        supabase.from("matchdays").select("id, season_id, season, competition_id"),
+        supabase.from("matchdays").select("id, number, season_id, season, competition_id"),
         supabase.from("competitions").select("id, code, external_code"),
         supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
         // Même fetcher que toutes les autres pages (src/lib/liveMatches.ts).
@@ -553,23 +554,28 @@ function StatsPage() {
       // résolution que pointsByUserAndMatchday côté moteur, même logique que
       // le Profil (voir "Meilleure journée").
       // ------------------------------------------------------------------
-      const bonusMatchdayByMatchId = new Map<string, string>();
-      bonusOptions.forEach((option) => {
-        bonusMatchdayByMatchId.set(String(option.match_id), String(option.matchday_id));
-      });
+      // Rattachement d'un match bonus a sa journee de Ligue 1 : la ligne
+      // active tranche, la plus recente departage. Meme regle que le moteur,
+      // et une seule implementation partagee (src/lib/journeeBonus.ts) — la
+      // version locale d'avant prenait la derniere ligne lue, donc au hasard.
+      const bonusMatchdayByMatchId = journeeParMatchBonus(bonusOptions);
 
+      // ETIQUETTE D'UNE JOURNEE — depuis `matchdays.number`, la seule source
+      // qui fasse autorite.
+      //
+      // BUG CORRIGE : l'etiquette etait auparavant deduite du champ `matchday`
+      // du premier match rencontre pour cette journee. Or pour un match BONUS,
+      // ce champ porte le numero de journee de SON championnat (Premier
+      // League, Liga...), pas celui de la Ligue 1. Un bonus tire pendant la
+      // 1re journee de Premier League etiquetait donc la journee 2 de Ligue 1
+      // en "J1". Comme `byDay` regroupe par etiquette, les journees 1 et 2
+      // fusionnaient : "1 journee jouee", un seul barre dans le graphique, et
+      // tous les points sur J1 — alors que le total, lui, etait juste.
       const dayLabelById = new Map<string, string>();
-      liveScoringMatches.forEach((match) => {
-        const matchdayId = bonusMatchdayByMatchId.get(String(match.id)) ?? match.matchday_id;
-        if (!matchdayId || dayLabelById.has(String(matchdayId))) return;
-        if (match.matchday == null) return;
-        // Selon les lignes, `matchday` vaut "1" ou deja "J1" : prefixer sans
-        // regarder donnait "JJ1" sous Meilleure journee.
-        const brut = String(match.matchday).trim();
-        dayLabelById.set(
-          String(matchdayId),
-          /^j/i.test(brut) ? `J${brut.slice(1)}` : `J${brut}`,
-        );
+      (matchdaysData ?? []).forEach((md: any) => {
+        if (!md?.id || md.number == null) return;
+        if (!ligue1MatchdayIds.has(String(md.id))) return;
+        dayLabelById.set(String(md.id), `J${Number(md.number)}`);
       });
 
       const monProfil = allProfilesForStats.find((profile: any) => profile.id === user.id) as any;
@@ -587,7 +593,11 @@ function StatsPage() {
         const match = matchById.get(String(prediction.match_id));
         const matchdayId = bonusMatchdayByMatchId.get(String(prediction.match_id)) ?? match?.matchday_id;
         if (!matchdayId) return;
-        const day = dayLabelById.get(String(matchdayId)) ?? String(matchdayId);
+        // On regroupe par IDENTIFIANT de journee, pas par etiquette : deux
+        // journees differentes mal etiquetees ne doivent jamais retomber dans
+        // le meme panier.
+        const dayId = String(matchdayId);
+        const day = dayLabelById.get(dayId) ?? dayId;
 
         const points = realPointsFor(prediction);
         const bonus = isBonusPrediction(match);
@@ -626,8 +636,8 @@ function StatsPage() {
         const exact =
           isExactPrediction(prediction, match) && (bonus ? points === 3 : points === 2);
 
-        if (!byDay.has(day)) {
-          byDay.set(day, {
+        if (!byDay.has(dayId)) {
+          byDay.set(dayId, {
             day,
             points: 0,
             predictions: 0,
@@ -637,7 +647,7 @@ function StatsPage() {
           });
         }
 
-        const current = byDay.get(day)!;
+        const current = byDay.get(dayId)!;
         current.points += points;
         current.predictions += 1;
         if (exact) current.exactScores += 1;
