@@ -343,9 +343,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       //
       // `--app-vh` (voir useAppViewportHeight) est deja la hauteur visible
       // mesuree, et `100dvh` sert de repli tant que le script n'a pas tourne.
-      // Les deux suffisent : un minimum en plus ne peut que les contredire.
+      //
+      // LE PLAFOND `min(..., 100dvh)` N'EST PAS DECORATIF. Dans un navigateur
+      // integre a une autre application (le lien ouvert depuis Snapchat, par
+      // exemple), `window.visualViewport.height` peut annoncer une hauteur
+      // PLUS GRANDE que la zone reellement visible : la barre de l'application
+      // hote n'est pas comptee. Le conteneur devient alors plus haut que
+      // l'ecran, et tout ce qui vit en bas — le champ de saisie du Vestiaire,
+      // son bouton Envoyer — passe sous le bord, hors d'atteinte. La nav, elle,
+      // est `fixed` : elle reste visible, ce qui donne l'impression trompeuse
+      // que la page est bien calee.
+      //
+      // Mesure sur 393x780 avec --app-vh force a 1200px : le champ de saisie
+      // se retrouvait a 1034px, soit 254px sous le bord de l'ecran. Avec le
+      // plafond, il revient a 614px. Quand `--app-vh` est juste, `min` ne
+      // change rien ; quand le clavier ouvre et le fait retrecir, c'est bien
+      // la petite valeur qui gagne.
       className="bg-[#030712] text-slate-100 relative flex flex-col font-sans"
-      style={{ height: "var(--app-vh, 100dvh)" }}
+      style={{ height: "min(var(--app-vh, 100dvh), 100dvh)" }}
     >
 
       {/* ================= ARRIÃˆRE-PLAN GLOBAL PREMIUM ================= */}
