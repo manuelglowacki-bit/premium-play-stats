@@ -1019,41 +1019,14 @@ function GazettePage() {
     ].sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
   }, [currentJournee]);
 
-  // CE QUE LA SECTION "LE DIRECT" AFFICHE.
-  //
-  // Un jour de match : les rencontres du jour, comme avant.
-  //
-  // Un jour sans : les PROCHAINES rencontres, jamais celles deja jouees.
-  // Reafficher les 13 resultats de la journee ecoulee faisait un mur que
-  // personne ne lit, et qui repete ce que l'article resume deja juste au
-  // dessus. Le bilan raconte le passe, cette liste annonce la suite.
+  // CE QUE LA SECTION "LE DIRECT" AFFICHE : les matchs DU JOUR, et rien
+  // d'autre. Pas la journee entiere (13 resultats deja joues font un mur que
+  // personne ne lit), pas le calendrier a venir. Un jour sans match, la
+  // section disparait entierement — l'article et le classement suffisent a
+  // remplir la page.
   //
   // Aucun calcul ne depend de cette liste : elle ne sert qu'a l'affichage.
-  const aDesMatchsAujourdhui = todaysMatches.length > 0;
-
-  const prochainsMatchs = useMemo<DayMatch[]>(() => {
-    if (aDesMatchsAujourdhui) return [];
-
-    const aVenir = journees
-      .flatMap((journee) => [
-        ...journee.matches.map((match: any) => ({ match, journee, isBonus: false })),
-        ...journee.bonus.map((match: any) => ({ match, journee, isBonus: true })),
-      ])
-      .filter(({ match }) => {
-        const coupDEnvoi = getKickoffTimestamp(match);
-        return Number.isFinite(coupDEnvoi) && coupDEnvoi > clock;
-      })
-      .sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
-
-    if (!aVenir.length) return [];
-
-    // Uniquement la prochaine journee : au-dela, ce n'est plus "ce qui
-    // arrive", c'est le calendrier complet de la saison.
-    const prochaineId = String(aVenir[0].journee.id);
-    return aVenir.filter(({ journee }) => String(journee.id) === prochaineId);
-  }, [aDesMatchsAujourdhui, journees, clock]);
-
-  const allCurrentMatches = aDesMatchsAujourdhui ? todaysMatches : prochainsMatchs;
+  const allCurrentMatches = todaysMatches;
 
   const journeeFinishedMatches = useMemo(() => {
     return currentJourneeAllMatches.filter(({ match }) => getMatchState(match) === "finished");
@@ -2091,14 +2064,15 @@ function GazettePage() {
               sont desormais groupes — en direct, termines, a venir — sans
               qu'aucune donnee ni aucun tri ne change : `getMatchState` est la
               meme fonction qu'avant. */}
+          {allCurrentMatches.length > 0 && (
           <section className="border-b border-slate-800 px-5 py-8 md:px-10">
             <div className="flex items-end justify-between gap-4">
               <div className="min-w-0">
                 <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">
-                  {aDesMatchsAujourdhui ? "Le direct" : "Ce qui arrive"}
+                  Le direct
                 </p>
                 <h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                  {aDesMatchsAujourdhui ? "Les matchs du jour" : "Les prochains matchs"}
+                  Les matchs du jour
                 </h2>
               </div>
               <span className="shrink-0 font-mono text-[9px] font-bold uppercase tracking-[.1em] text-slate-600">
@@ -2106,17 +2080,10 @@ function GazettePage() {
               </span>
             </div>
 
-            {allCurrentMatches.length === 0 ? (
-              <div className="mt-5">
-                <EditorialEmptyState
-                  compact
-                  icon={Calendar}
-                  title="Aucun match programmé"
-                  description="Les rencontres apparaîtront ici dès que le calendrier sera publié."
-                />
-              </div>
-            ) : (
-              <div className="mt-5 space-y-6">
+            {/* La section entiere ne s'affiche que s'il y a des matchs
+                aujourd'hui (voir la condition plus haut) : plus besoin d'un
+                encadre « aucun match » qui ne dirait rien a personne. */}
+            <div className="mt-5 space-y-6">
                 {([
                   { cle: "live", titre: "En direct", couleur: "text-red-300" },
                   { cle: "finished", titre: "Terminés", couleur: "text-emerald-300" },
@@ -2236,9 +2203,9 @@ function GazettePage() {
                     </div>
                   );
                 })}
-              </div>
-            )}
+            </div>
           </section>
+          )}
 
           {/* ============================================================
               5 — LE CLASSEMENT
