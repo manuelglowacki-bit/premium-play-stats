@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { choisirJourneeGazette } from "@/lib/journeeGazette";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/prono/AppShell";
 import {
@@ -943,10 +944,13 @@ function GazettePage() {
   const currentJournee = useMemo(() => {
     if (!journees.length) return null;
 
-    // La journée de la Gazette est déterminée par la DATE RÉELLE,
-    // jamais par "la dernière journée ayant un score". Ainsi J1 reste J1
-    // et, à 00:00, la Gazette passe automatiquement aux matchs du nouveau jour.
-    const datedDays = journees
+    // La journee racontee est choisie par choisirJourneeGazette()
+    // (src/lib/journeeGazette.ts) : un jour de match, celle du jour ; les
+    // jours creux, la derniere journee deja commencee — la Gazette continue
+    // ainsi de raconter le week-end ecoule au lieu d'afficher une page vide
+    // du lundi au jeudi. La regle vit dans une fonction pure pour etre
+    // verifiable jour par jour (npm run verif-journee-gazette).
+    const candidates = journees
       .map((journee) => {
         const all = [...journee.matches, ...journee.bonus];
         const timestamps = all
@@ -955,29 +959,24 @@ function GazettePage() {
           .sort((a, b) => a - b);
         return {
           journee,
-          firstKickoff: timestamps[0] ?? NaN,
-          lastKickoff: timestamps[timestamps.length - 1] ?? NaN,
-          matches: all,
+          candidate: {
+            id: String(journee.id),
+            numero: Number(journee.number) || 0,
+            premierCoupDEnvoi: timestamps[0] ?? NaN,
+            clesDeDate: all.map(localDateKeyFromMatch).filter(Boolean) as string[],
+          },
+          vide: all.length === 0,
         };
       })
-      .filter((x) => x.matches.length > 0);
+      .filter((x) => !x.vide);
 
-    // 1) S'il y a des matchs aujourd'hui, c'est la journée active.
-    const today = datedDays.find(({ matches }) =>
-      matches.some((match) => localDateKeyFromMatch(match) === todayKey)
+    const choisi = choisirJourneeGazette(
+      candidates.map((x) => x.candidate),
+      clock,
+      todayKey,
     );
-    if (today) return today.journee;
 
-    // 2) Si la journée du jour n'a pas encore de match programmé,
-    // on prend la prochaine journée à venir.
-    const now = clock;
-    const upcoming = datedDays
-      .filter(({ firstKickoff }) => Number.isFinite(firstKickoff) && firstKickoff >= now)
-      .sort((a, b) => a.firstKickoff - b.firstKickoff)[0];
-    if (upcoming) return upcoming.journee;
-
-    // 3) Fin de saison : on reste sur la dernière journée disponible.
-    return [...datedDays].sort((a, b) => Number(b.journee.number) - Number(a.journee.number))[0]?.journee ?? journees[0];
+    return candidates.find((x) => x.candidate.id === choisi)?.journee ?? journees[0];
   }, [journees, clock, todayKey]);
 
   // UNIQUEMENT les rencontres dont la date locale correspond à aujourd'hui.
@@ -1002,9 +1001,6 @@ function GazettePage() {
       .sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
   }, [currentJournee, todayKey, clock]);
 
-  // Compatibilité avec le rendu : "matchs du jour" = uniquement la date locale actuelle.
-  const allCurrentMatches = todaysMatches;
-
   const liveMatches = useMemo(() => {
     return todaysMatches.filter(({ match }) => getMatchState(match) === "live");
   }, [todaysMatches, clock]);
@@ -1022,6 +1018,14 @@ function GazettePage() {
       ...currentJournee.bonus.map((match) => ({ match, journee: currentJournee, isBonus: true })),
     ].sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
   }, [currentJournee]);
+
+  // CE QUE LA SECTION "LE DIRECT" AFFICHE.
+  // Un jour de match : les rencontres du jour, comme avant. Un jour sans :
+  // toute la journée en cours, pour que la page reste lisible entre deux
+  // journées au lieu de n'afficher qu'un encadré "aucun match aujourd'hui".
+  // Aucun calcul ne dépend de cette liste : elle ne sert qu'à l'affichage.
+  const aDesMatchsAujourdhui = todaysMatches.length > 0;
+  const allCurrentMatches = aDesMatchsAujourdhui ? todaysMatches : currentJourneeAllMatches;
 
   const journeeFinishedMatches = useMemo(() => {
     return currentJourneeAllMatches.filter(({ match }) => getMatchState(match) === "finished");
@@ -1555,6 +1559,36 @@ function GazettePage() {
     // au lieu de servir toujours les trois mêmes phrases.
     const angles = [operation, mouvement, surprise].filter(Boolean) as string[];
 
+    // BILAN DE LA JOURNEE — tous les matchs sont joues et plus rien n'est en
+    // direct. C'est l'article que lisent les joueurs entre deux journees,
+    // souvent du lundi au jeudi. Les phrases par defaut ouvrent sur une suite
+    // ("la journee n'a pas livre son dernier mot", "les prochains matchs
+    // peuvent encore tout changer") : elles sonnent faux une fois tout joue.
+    // Cette branche referme la journee et met en avant l'evolution des
+    // joueurs. Aucun chiffre n'est recalcule : ce sont les memes blocs.
+    const journeeTerminee = total > 0 && done === total && live === 0;
+
+    if (journeeTerminee) {
+      const titreBilan = !leader
+        ? `${currentJournee.title} : la journée est terminée`
+        : exAequo
+          ? `${leader.name} et ${second!.name} terminent la ${currentJournee.title} à égalité`
+          : `${leader.name} termine la ${currentJournee.title} en tête`;
+
+      return {
+        kicker: `${currentJournee.title} · BILAN`,
+        title: titreBilan,
+        intro: `${accord(total, "match")} ${total > 1 ? "joués" : "joué"}, la ${currentJournee.title} est close. ${resultText.charAt(0).toUpperCase()}${resultText.slice(1)} (${lastScore}) pour refermer la journée.`,
+        paragraphs: [
+          hierarchie,
+          // L'evolution des joueurs passe avant le reste : c'est ce qu'on
+          // vient lire quand la journee est finie.
+          ...([mouvement, operation, surprise].filter(Boolean) as string[]).slice(0, 2),
+          exacts,
+        ],
+      };
+    }
+
     return {
       kicker: `${currentJournee.title} · ${done}/${total} MATCH${total > 1 ? "S" : ""}`,
       title: titre,
@@ -2034,7 +2068,7 @@ function GazettePage() {
               <div className="min-w-0">
                 <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">Le direct</p>
                 <h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                  Les matchs du jour
+                  {aDesMatchsAujourdhui ? "Les matchs du jour" : (currentJournee?.title ?? "La journée")}
                 </h2>
               </div>
               <span className="shrink-0 font-mono text-[9px] font-bold uppercase tracking-[.1em] text-slate-600">
@@ -2047,8 +2081,8 @@ function GazettePage() {
                 <EditorialEmptyState
                   compact
                   icon={Calendar}
-                  title="Aucun match aujourd'hui"
-                  description="Les rencontres du jour apparaîtront ici dès qu'il y en aura."
+                  title="Aucun match programmé"
+                  description="Les rencontres apparaîtront ici dès que le calendrier sera publié."
                 />
               </div>
             ) : (
