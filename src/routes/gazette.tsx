@@ -1020,12 +1020,40 @@ function GazettePage() {
   }, [currentJournee]);
 
   // CE QUE LA SECTION "LE DIRECT" AFFICHE.
-  // Un jour de match : les rencontres du jour, comme avant. Un jour sans :
-  // toute la journée en cours, pour que la page reste lisible entre deux
-  // journées au lieu de n'afficher qu'un encadré "aucun match aujourd'hui".
-  // Aucun calcul ne dépend de cette liste : elle ne sert qu'à l'affichage.
+  //
+  // Un jour de match : les rencontres du jour, comme avant.
+  //
+  // Un jour sans : les PROCHAINES rencontres, jamais celles deja jouees.
+  // Reafficher les 13 resultats de la journee ecoulee faisait un mur que
+  // personne ne lit, et qui repete ce que l'article resume deja juste au
+  // dessus. Le bilan raconte le passe, cette liste annonce la suite.
+  //
+  // Aucun calcul ne depend de cette liste : elle ne sert qu'a l'affichage.
   const aDesMatchsAujourdhui = todaysMatches.length > 0;
-  const allCurrentMatches = aDesMatchsAujourdhui ? todaysMatches : currentJourneeAllMatches;
+
+  const prochainsMatchs = useMemo<DayMatch[]>(() => {
+    if (aDesMatchsAujourdhui) return [];
+
+    const aVenir = journees
+      .flatMap((journee) => [
+        ...journee.matches.map((match: any) => ({ match, journee, isBonus: false })),
+        ...journee.bonus.map((match: any) => ({ match, journee, isBonus: true })),
+      ])
+      .filter(({ match }) => {
+        const coupDEnvoi = getKickoffTimestamp(match);
+        return Number.isFinite(coupDEnvoi) && coupDEnvoi > clock;
+      })
+      .sort((a, b) => getKickoffTimestamp(a.match) - getKickoffTimestamp(b.match));
+
+    if (!aVenir.length) return [];
+
+    // Uniquement la prochaine journee : au-dela, ce n'est plus "ce qui
+    // arrive", c'est le calendrier complet de la saison.
+    const prochaineId = String(aVenir[0].journee.id);
+    return aVenir.filter(({ journee }) => String(journee.id) === prochaineId);
+  }, [aDesMatchsAujourdhui, journees, clock]);
+
+  const allCurrentMatches = aDesMatchsAujourdhui ? todaysMatches : prochainsMatchs;
 
   const journeeFinishedMatches = useMemo(() => {
     return currentJourneeAllMatches.filter(({ match }) => getMatchState(match) === "finished");
@@ -2066,9 +2094,11 @@ function GazettePage() {
           <section className="border-b border-slate-800 px-5 py-8 md:px-10">
             <div className="flex items-end justify-between gap-4">
               <div className="min-w-0">
-                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">Le direct</p>
+                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">
+                  {aDesMatchsAujourdhui ? "Le direct" : "Ce qui arrive"}
+                </p>
                 <h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                  {aDesMatchsAujourdhui ? "Les matchs du jour" : (currentJournee?.title ?? "La journée")}
+                  {aDesMatchsAujourdhui ? "Les matchs du jour" : "Les prochains matchs"}
                 </h2>
               </div>
               <span className="shrink-0 font-mono text-[9px] font-bold uppercase tracking-[.1em] text-slate-600">
