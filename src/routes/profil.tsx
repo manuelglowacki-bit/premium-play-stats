@@ -224,7 +224,11 @@ function ProfilPage() {
         ] = await Promise.all([
           supabase.from("competitions").select("id, code, external_code"),
           // Actives ET historiques — même raison que classement.tsx.
-          supabase.from("bonus_options").select("matchday_id, match_id"),
+          // is_active + created_at : indispensables au moteur pour
+          // rattacher un match bonus a la bonne journee de Ligue 1 (un meme
+          // match porte une ligne par tirage rejoue). Meme selection que
+          // classement.tsx, index.tsx et useMesPoints.
+          supabase.from("bonus_options").select("matchday_id, match_id, is_active, created_at"),
           // Équipe favorite historisée par saison (Lot 4).
           supabase.from("user_season_favorite_teams").select("user_id, season_id, favorite_team_id"),
         ]);

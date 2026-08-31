@@ -27,7 +27,8 @@
     "verif-export": "tsx src/lib/exportClassement.verif.ts",
     "verif-annonce": "tsx src/lib/annonce.verif.ts",
     "verif-cron": "tsx scripts/appelCron.verif.ts",
-    "verif-score": "tsx src/lib/scoreAffiche.verif.ts"
+    "verif-score": "tsx src/lib/scoreAffiche.verif.ts",
+    "verif-options-bonus": "tsx src/lib/optionsBonusColonnes.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

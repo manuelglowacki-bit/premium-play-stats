@@ -366,7 +366,15 @@ function StatsPage() {
         supabase
           .from("profiles")
           .select("id, pseudo, avatar_url, favorite_team_id, favorite_team"),
-        supabase.from("bonus_options").select("matchday_id, match_id"),
+        // is_active + created_at : le moteur en a BESOIN pour savoir a
+        // quelle journee de Ligue 1 un match bonus se rattache. Un meme match
+        // porte plusieurs lignes — une par tirage rejoue — et seule la ligne
+        // active dit laquelle compte, la plus recente departageant a defaut.
+        // Sans ces deux colonnes, aucune ligne n'etait "active" et le depart
+        // se faisait dans l'ordre, arbitraire, ou la base repond : le bonus
+        // partait sur une autre journee que celle du Classement. Meme
+        // selection que classement.tsx, index.tsx et useMesPoints.
+        supabase.from("bonus_options").select("matchday_id, match_id, is_active, created_at"),
         // Saison par journée + équipe favorite historisée par saison (Lot 4).
         // competition_id en plus : nécessaire pour isoler les vraies journées
         // Ligue 1 des journées bonus (PL/PD/SA/BL1), même logique que
