@@ -23,6 +23,7 @@ import {
 import { CountdownBlocks } from "@/components/prono/Countdown";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES } from "@/lib/careerLevel";
+import { lireNiveauMemorise, memoriserNiveau, niveauAAnnoncer } from "@/lib/annonceNiveau";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -112,6 +113,11 @@ function IndexPage() {
   // Classement (src/lib/prizePool.ts), appliquee a la cagnotte reelle.
   const homePrizeByRank = useMemo(() => computePrizeByRank(potAmount), [potAmount]);
   const [careerLevel, setCareerLevel] = useState(1);
+  // Niveau a feliciter, ou null. Rempli une seule fois, au moment ou le
+  // niveau REEL est calcule depuis les donnees (voir plus bas) — jamais
+  // depuis la valeur initiale de `careerLevel`, qui vaut 1 avant chargement
+  // et ferait clignoter une fausse annonce.
+  const [niveauFete, setNiveauFete] = useState<number | null>(null);
   const homeRequestSeq = useRef(0);
   // Les equipes arrivent par une requete separee. Sans ce temoin, on ne peut
   // pas distinguer « pas encore chargees » de « chargees, et il n'y en a
@@ -530,6 +536,19 @@ function IndexPage() {
 
           const career = calculateCareerScore(mineCareer);
           setCareerLevel(career.level);
+
+          // ANNONCE DE PASSAGE DE NIVEAU.
+          // Ici, et pas dans un effet separe : c'est le seul endroit ou le
+          // niveau vient des vraies donnees. Le niveau atteint est memorise
+          // des qu'il est affiche, pour ne pas revenir a chaque ouverture ;
+          // a la toute premiere visite, rien n'est annonce (voir
+          // src/lib/annonceNiveau.ts).
+          const dernierAnnonce = lireNiveauMemorise(user.id);
+          const aFeter = niveauAAnnoncer(career.level, dernierAnnonce);
+          if (aFeter !== null) setNiveauFete(aFeter);
+          if (dernierAnnonce === null || career.level !== dernierAnnonce) {
+            memoriserNiveau(user.id, career.level);
+          }
         }
 setLeaderboard(rankedRankings);
 
@@ -768,6 +787,52 @@ setLeaderboard(rankedRankings);
           clairement séparées, cohérent avec la demande de blocs "qui
           respirent" plutôt que compressés. */}
       <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
+
+        {/* PASSAGE DE NIVEAU — la premiere chose que le joueur voit en
+            ouvrant le site apres avoir gagne un niveau. Ne s'affiche qu'une
+            fois : le niveau atteint est memorise des l'affichage (voir
+            src/lib/annonceNiveau.ts). Le bouton ne fait que masquer, il n'y a
+            plus rien a enregistrer a ce moment-la. */}
+        {niveauFete !== null && (
+          <div
+            role="status"
+            className="relative overflow-hidden rounded-[26px] border border-amber-300/35 bg-gradient-to-br from-amber-400/[.16] via-amber-400/[.06] to-transparent p-5 shadow-[0_18px_60px_-20px_rgba(245,158,11,.45)] md:p-6"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -right-16 -top-16 size-56 rounded-full bg-amber-400/15 blur-3xl"
+            />
+            <div className="relative flex flex-wrap items-center gap-4">
+              <span className="text-4xl leading-none md:text-5xl" aria-hidden>
+                🎉
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[10px] font-black uppercase tracking-[.2em] text-amber-300">
+                  Nouveau niveau
+                </p>
+                <p className="mt-1 font-display text-2xl font-black uppercase leading-none text-white md:text-3xl">
+                  Niveau {niveauFete} atteint
+                </p>
+                <p className="mt-2 text-sm text-amber-100/80">
+                  Te voilà{" "}
+                  <span className="font-bold text-amber-200">
+                    {CAREER_LEVEL_TITLES[
+                      Math.max(0, Math.min(niveauFete - 1, CAREER_LEVEL_TITLES.length - 1))
+                    ]}
+                  </span>
+                  . Continue comme ça.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNiveauFete(null)}
+                className="tap shrink-0 rounded-xl border border-amber-300/30 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-[.12em] text-amber-200 transition-colors hover:border-amber-300/60 hover:text-amber-100"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Installation sur l'ecran d'accueil. Le bloc ne s'affiche que s'il
             y a quelque chose a proposer : ni sur une application deja
