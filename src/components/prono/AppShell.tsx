@@ -302,43 +302,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   // Sur un ecran de 390px, huit onglets donnent des libelles de 9px et des
-  // cibles trop serrees pour le pouce. Trois pages — Gazette, Stats, Profil —
-  // etaient donc rangees derriere un bouton « Plus » sur telephone.
+  // cibles trop serrees pour le pouce. Les quatre les plus utilises restent
+  // visibles ; les autres passent derriere un bouton « Plus ». Sur grand
+  // ecran, tout reste affiche — la place ne manque pas.
   //
-  // RETIRE, a la demande de l'organisateur : les joueurs n'allaient jamais
-  // jusque-la, et ces pages restaient donc invisibles pour eux. Toutes les
-  // pages sont maintenant des liens directs.
-  //
-  // La place suffit parce que l'espacement horizontal des liens a ete resserre
-  // en meme temps (px-0.5 au lieu de px-1). Mesure de la largeur necessaire
-  // contre la largeur disponible :
-  //
-  //            320px   360px   393px   412px
-  //   7 liens  serre   OK      OK      OK      (un joueur)
-  //   8 liens  serre   serre   OK      OK      (l'organisateur, avec Admin)
-  //
-  // En dessous, la barre se fait glisser du doigt (overflow-x sur <nav>) au
-  // lieu de couper un lien : le filet de securite etait deja en place.
-  //
-  // Admin reste reserve a l'organisateur : le lien n'existe que si
-  // profiles.is_admin est vrai, et la route est protegee de son cote.
-  //
-  // `principal` et le bouton « Plus » sont conserves : le bouton ne s'affiche
-  // que si quelque chose y est range (navSecondaires non vide), donc plus rien
-  // aujourd'hui. Le mecanisme reste disponible si une page s'ajoute un jour.
+  // `principal: true` marque ceux qui restent visibles sur telephone. Le
+  // Vestiaire en fait partie : c'est lui qui porte la pastille de messages non
+  // lus, la cacher la rendrait inutile.
   const navItems = [
     { label: "Accueil", to: "/", icon: Home, principal: true },
     { label: "Pronos", to: "/pronostics", icon: Target, principal: true },
     { label: "Classement", to: "/classement", icon: Trophy, principal: true },
-    { label: "Gazette", to: "/gazette", icon: Newspaper, principal: true },
+    { label: "Gazette", to: "/gazette", icon: Newspaper, principal: false },
     { label: "Vestiaire", to: "/trophees", icon: MessageCircle, principal: true },
     // La route /trophees contient actuellement le Vestiaire.
-    { label: "Stats", to: "/stats", icon: BarChart3, principal: true },
-    { label: "Profil", to: "/profil", icon: User, principal: true },
+    { label: "Stats", to: "/stats", icon: BarChart3, principal: false },
+    { label: "Profil", to: "/profil", icon: User, principal: false },
     // Invisible pour les joueurs : aucun lien/bouton Admin dans la nav tant
     // que profiles.is_admin n'est pas vrai. L'URL /admin reste en plus
     // protÃ©gÃ©e cÃ´tÃ© route par AdminRoute (voir src/routes/admin.tsx).
-    ...(isAdmin ? [{ label: "Admin", to: "/admin", icon: Shield, principal: true }] : []),
+    ...(isAdmin ? [{ label: "Admin", to: "/admin", icon: Shield, principal: false }] : []),
   ];
 
   const navSecondaires = navItems.filter((item) => !item.principal);
@@ -634,7 +617,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.to}
                 to={item.to}
-                className={`flex flex-shrink-0 flex-col items-center gap-0.5 px-0.5 py-2 rounded-xl transition-all ${
+                className={`flex flex-shrink-0 flex-col items-center gap-0.5 px-1 py-2 rounded-xl transition-all ${
                   item.principal ? "" : "hidden sm:flex"
                 } ${
                   isActive
@@ -660,7 +643,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setMenuPlusOuvert((ouvert) => !ouvert)}
-              className={`flex flex-shrink-0 flex-col items-center gap-0.5 rounded-xl px-0.5 py-2 transition-all sm:hidden ${
+              className={`flex flex-shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-2 transition-all sm:hidden ${
                 menuPlusOuvert || surUnePageSecondaire
                   ? "bg-emerald-500/10 text-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.28)]"
                   : "text-slate-400 hover:text-white"
