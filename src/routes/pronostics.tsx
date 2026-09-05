@@ -18,6 +18,7 @@ import {
 import { AppShell } from "@/components/prono/AppShell";
 import { repartitionBonus, repartirCent } from "@/lib/repartitionBonus";
 import {
+  issueDuScore,
   repartition1N2,
   repartitionVide,
   type RepartitionMatch,
@@ -3242,6 +3243,49 @@ function PronosticsPage() {
                   <span className="mx-1.5 text-slate-500">•</span>
                   {time}
                 </p>
+
+                {/* REPARTITION 1 / N / 2 — la meme que sous les matchs de
+                    Ligue 1, qui manquait ici. Le badge du dessus dit combien
+                    de joueurs ont CHOISI ce match bonus ; celui-ci dit ce
+                    qu'ils en ont pronostique.
+                    Denominateur : les joueurs ayant pronostique CE match,
+                    jamais l'effectif de la ligue — meme regle que partout
+                    ailleurs (src/lib/repartition1N2.ts). L'issue est deduite
+                    du score saisi, exactement comme pour le calcul des
+                    points. */}
+                {(() => {
+                  const repartition = repartitions[String(match.id)] ?? repartitionVide();
+                  if (repartition.joueurs === 0) return null;
+
+                  const monIssue =
+                    score.home !== "" && score.away !== ""
+                      ? issueDuScore(Number(score.home), Number(score.away))
+                      : null;
+
+                  return (
+                    <div
+                      title={`${repartition.joueurs} joueur${
+                        repartition.joueurs > 1 ? "s" : ""
+                      } ont pronostiqué ce match`}
+                      className="relative mt-2.5 flex items-center justify-center gap-3"
+                    >
+                      {(["1", "N", "2"] as const).map((k) => (
+                        <span
+                          key={k}
+                          title={`${repartition.comptes[k]} joueur${
+                            repartition.comptes[k] > 1 ? "s" : ""
+                          } sur ${repartition.joueurs}`}
+                          className={`font-mono text-[9px] font-bold tabular-nums ${
+                            monIssue === k ? "text-amber-300" : "text-slate-400"
+                          }`}
+                        >
+                          <span className="mr-1 opacity-60">{k}</span>
+                          {repartition.pourcentages[k]}%
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {/* SCORE DU MATCH + POINTS EN DIRECT
                     Affichés sous CHAQUE match bonus, comme pour les autres matchs.
