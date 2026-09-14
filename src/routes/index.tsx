@@ -26,6 +26,7 @@ import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES }
 import { lireNiveauMemorise, memoriserNiveau, niveauAAnnoncer } from "@/lib/annonceNiveau";
 import { debriefAAnnoncer, lireDebriefVu, memoriserDebriefVu } from "@/lib/annonceDebrief";
 import { journeeTerminee } from "@/lib/parcoursSaison";
+import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -456,14 +457,23 @@ function IndexPage() {
           const matchParId = new Map(
             ((reconciledMatches || []) as any[]).map((m: any) => [String(m.id), m]),
           );
-          for (const option of (bonusOptionsData || []) as any[]) {
-            const journeeId = String(option?.matchday_id ?? "");
-            const match = matchParId.get(String(option?.match_id ?? ""));
-            if (!journeeId || !match || !ligue1MatchdayIds.has(journeeId)) continue;
+          // UN SEUL match bonus par journee : celui du tirage en vigueur.
+          // Une journee peut porter plusieurs lignes `bonus_options` quand un
+          // retirage n'a pas desactive l'ancienne. Ces anciennes lignes
+          // gardent leurs points (c'est le moteur qui tranche, rien ne change
+          // ici), mais un match d'un tirage abandonne — qui ne sera
+          // peut-etre jamais joue — ne doit pas bloquer la journee pour
+          // toujours. Regle partagee avec le Debrief (src/lib/journeeBonus.ts).
+          const bonusEnVigueur = bonusEnVigueurParJournee(
+            (bonusOptionsData || []) as any[],
+          );
+          bonusEnVigueur.forEach((matchId, journeeId) => {
+            const match = matchParId.get(String(matchId));
+            if (!match || !ligue1MatchdayIds.has(journeeId)) return;
             const deja = parJournee.get(journeeId) ?? [];
-            if (deja.some((m: any) => String(m.id) === String(match.id))) continue;
+            if (deja.some((m: any) => String(m.id) === String(match.id))) return;
             parJournee.set(journeeId, [...deja, match]);
-          }
+          });
 
           const numeroParId = new Map(
             (matchdays || []).map((md: any) => [String(md.id), Number(md.number) || 0]),

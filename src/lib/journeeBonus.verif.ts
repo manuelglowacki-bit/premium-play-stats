@@ -2,7 +2,11 @@
  * Verification du rattachement d'un match bonus a sa journee de Ligue 1.
  *   npm run verif-journee-bonus
  */
-import { journeeParMatchBonus, type OptionBonus } from "./journeeBonus";
+import {
+  bonusEnVigueurParJournee,
+  journeeParMatchBonus,
+  type OptionBonus,
+} from "./journeeBonus";
 
 let total = 0;
 let echecs = 0;
@@ -104,6 +108,111 @@ const ancienne = new Map<string, string>();
 verifier("l'ancienne methode donnait bien deux fois la meme etiquette",
   new Set(ancienne.values()).size === 1,
   `obtenu ${JSON.stringify([...ancienne.values()])} — le scenario ne reproduit plus le defaut`);
+
+
+// ============================================================
+// LE MATCH BONUS EN VIGUEUR POUR UNE JOURNEE
+// ============================================================
+// L'enjeu : savoir si une journee est finie. Une ligne bonus abandonnee ne
+// doit jamais bloquer une journee dont tous les vrais matchs sont joues.
+
+console.log("\nLE TIRAGE EN VIGUEUR D'UNE JOURNEE");
+console.log("=".repeat(64));
+
+const A = "match-a";
+const B = "match-b";
+
+egal("aucune option : aucune journee",
+  [...bonusEnVigueurParJournee([]).entries()], []);
+
+egal("une seule ligne : c'est elle",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+  ]).entries()],
+  [[J1, A]]);
+
+egal("la ligne ACTIVE bat la ligne desactivee, meme plus recente",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: true,  created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J1, match_id: B, is_active: false, created_at: "2026-09-05T10:00:00Z" },
+  ]).entries()],
+  [[J1, A]]);
+
+egal("deux lignes actives : la plus recente gagne",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J1, match_id: B, is_active: true, created_at: "2026-09-05T10:00:00Z" },
+  ]).entries()],
+  [[J1, B]]);
+
+egal("l'ordre d'arrivee des lignes ne change rien",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: B, is_active: true, created_at: "2026-09-05T10:00:00Z" },
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+  ]).entries()],
+  [[J1, B]]);
+
+egal("aucune active : la plus recente gagne quand meme",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: false, created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J1, match_id: B, is_active: false, created_at: "2026-09-05T10:00:00Z" },
+  ]).entries()],
+  [[J1, B]]);
+
+egal("dates absentes et egalite parfaite : depart stable par match_id",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: B, is_active: true },
+    { matchday_id: J1, match_id: A, is_active: true },
+  ]).entries()],
+  [[J1, A]]);
+
+egal("depart stable : l'ordre inverse donne le meme resultat",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: true },
+    { matchday_id: J1, match_id: B, is_active: true },
+  ]).entries()],
+  [[J1, A]]);
+
+egal("chaque journee garde son propre tirage",
+  [...bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J2, match_id: B, is_active: true, created_at: "2026-09-08T10:00:00Z" },
+  ]).entries()].sort(),
+  [[J1, A], [J2, B]].sort());
+
+verifier("une journee ne ressort jamais avec plus d'un match bonus",
+  bonusEnVigueurParJournee([
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J1, match_id: B, is_active: true, created_at: "2026-09-05T10:00:00Z" },
+    { matchday_id: J1, match_id: M, is_active: false, created_at: "2026-09-06T10:00:00Z" },
+  ]).size === 1);
+
+// LE SCENARIO DE MANUEL, en clair : la J4 a ete retiree, l'ancienne ligne
+// est restee active, et son match n'a jamais ete joue. Avant, la J4 restait
+// bloquee et le Debrief racontait encore la J3.
+{
+  const options: OptionBonus[] = [
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J1, match_id: B, is_active: true, created_at: "2026-09-10T10:00:00Z" },
+  ];
+  const termine: Record<string, boolean> = { [A]: false, [B]: true };
+
+  const avant = options.every((o) => termine[String(o.match_id)]);
+  verifier("l'ancienne regle bloquait bien la journee (le defaut est reproduit)", avant === false);
+
+  const retenu = bonusEnVigueurParJournee(options).get(J1);
+  verifier("la nouvelle regle debloque la journee",
+    retenu !== undefined && termine[retenu] === true, `retenu ${retenu}`);
+}
+
+// GARDE-FOU : les points ne bougent pas. Le rattachement match -> journee,
+// celui que lit le moteur, est inchange par l'ajout ci-dessus.
+egal("le rattachement match -> journee reste intact",
+  [...journeeParMatchBonus([
+    { matchday_id: J1, match_id: A, is_active: true, created_at: "2026-09-01T10:00:00Z" },
+    { matchday_id: J1, match_id: B, is_active: true, created_at: "2026-09-10T10:00:00Z" },
+  ]).entries()].sort(),
+  [[A, J1], [B, J1]].sort());
 
 console.log("\n" + "=".repeat(64));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);

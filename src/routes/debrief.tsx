@@ -31,6 +31,7 @@ import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { ecrireRecit, morceaux } from "@/lib/recitDebrief";
+import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import {
   cheminLisible,
   journeeTerminee,
@@ -121,6 +122,14 @@ type Journee = {
   title: string;
   matches: any[];
   bonus: any[];
+  /**
+   * LE match bonus qui compte pour savoir si la journee est finie : le
+   * dernier tirage actif. `bonus` peut en contenir plusieurs (une ligne
+   * `bonus_options` oubliee active apres un retirage), et ces lignes-la
+   * restent dans `bonus` pour que les points ne bougent pas — mais elles
+   * ne doivent pas empecher la journee d'etre racontee.
+   */
+  bonusPrincipal: string | null;
 };
 
 type PlayerPronos = {
@@ -823,7 +832,12 @@ function DebriefPage() {
         supabase.from("competitions").select("id, external_code, code"),
         getMatchdays(),
         getMatches(),
-        supabase.from("bonus_options").select("matchday_id, match_id").eq("is_active", true),
+        supabase
+          .from("bonus_options")
+          // `is_active` et `created_at` servent a reconnaitre le tirage EN
+          // VIGUEUR quand une journee porte plusieurs lignes bonus (voir
+          // bonusEnVigueurParJournee). Meme requete que l'Accueil.
+          .select("matchday_id, match_id, is_active, created_at"),
         supabase.from("profiles").select("*").order("pseudo", { ascending: true, nullsFirst: false }),
         // Paginee : sans cela PostgREST tronque a 1000 lignes en silence et
         // le Debrief raconte la journee sur des chiffres incomplets.
@@ -877,10 +891,16 @@ function DebriefPage() {
       (bonusOptionsData ?? []).forEach((option: any) => {
         const match = matchesById.get(String(option.match_id));
         if (!match) return;
-        const list = bonusMatchesByMatchday.get(option.matchday_id) ?? [];
+        const matchdayId = String(option.matchday_id);
+        const list = bonusMatchesByMatchday.get(matchdayId) ?? [];
         list.push(match);
-        bonusMatchesByMatchday.set(option.matchday_id, list);
+        bonusMatchesByMatchday.set(matchdayId, list);
       });
+
+      // Le tirage EN VIGUEUR pour chaque journee. Regle partagee avec
+      // l'Accueil (src/lib/journeeBonus.ts) : deux implementations de la meme
+      // regle finissent toujours par diverger — c'est deja arrive a Stats.
+      const bonusEnVigueur = bonusEnVigueurParJournee((bonusOptionsData ?? []) as any[]);
 
       // Supabase reste la source du calendrier. Pour le direct, la fusion
       // (statut/score + garde anti-régression + cache sessionStorage) passe
@@ -894,6 +914,7 @@ function DebriefPage() {
           title: `J${matchday.number}`,
           matches: reconcileMatchesWithLive(matchesByMatchday.get(matchday.id) ?? [], apiLiveMatches),
           bonus: reconcileMatchesWithLive(bonusMatchesByMatchday.get(matchday.id) ?? [], apiLiveMatches),
+          bonusPrincipal: bonusEnVigueur.get(String(matchday.id)) ?? null,
         }))
         .sort((a, b) => Number(a.number) - Number(b.number));
 
@@ -1136,12 +1157,25 @@ function DebriefPage() {
     const toutesLesJournees = journees
       .map((journee) => {
         const tous = [...journee.matches, ...journee.bonus];
+
+        // CE QUI COMPTE POUR LA PORTE : les matchs de Ligue 1 et LE match
+        // bonus en vigueur (le dernier tirage). Une journee peut trainer une
+        // deuxieme ligne `bonus_options` restee active apres un retirage :
+        // ses points continuent d'etre comptes — le match reste dans `tous`,
+        // donc dans `matchIds` — mais un match d'un tirage abandonne, qui ne
+        // sera peut-etre jamais joue, ne doit pas empecher la journee d'etre
+        // racontee.
+        const bonusQuiCompte = journee.bonusPrincipal
+          ? journee.bonus.filter((match: any) => String(match.id) === journee.bonusPrincipal)
+          : journee.bonus;
+        const porte = [...journee.matches, ...bonusQuiCompte];
+
         const termines = tous.map((match: any) => isActuallyFinished(match));
         return {
           id: String(journee.id),
           numero: Number(journee.number) || 0,
           matchIds: tous.map((match: any) => String(match.id)),
-          terminee: journeeTerminee(termines),
+          terminee: journeeTerminee(porte.map((match: any) => isActuallyFinished(match))),
           joues: termines.filter(Boolean).length,
         };
       })
