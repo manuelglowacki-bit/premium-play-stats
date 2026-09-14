@@ -30,6 +30,7 @@ import { getForeignClubLogo } from "@/lib/clubLogos";
 import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
+import { ecrireRecit } from "@/lib/recitDebrief";
 import {
   cheminLisible,
   parcoursSaison,
@@ -1162,6 +1163,22 @@ function DebriefPage() {
     };
   }, [rankedPlayers, journees, pointsFor, predictionsByUser, matchesById]);
 
+  // LE TEXTE — ecrit a partir des chiffres du grand bilan.
+  const recit = useMemo(() => {
+    if (!grandBilan) return null;
+    return ecrireRecit({
+      journeesJouees: grandBilan.journeesJouees,
+      numeroDerniereJournee: grandBilan.derniereJournee,
+      fiches: grandBilan.fiches,
+      remontees: grandBilan.remontees,
+      chutes: grandBilan.chutes,
+      meilleureJournee: grandBilan.meilleureJournee,
+      densite: grandBilan.densite,
+      exAequoTete: grandBilan.exAequoTete,
+    });
+  }, [grandBilan]);
+
+
 
 
 
@@ -1278,311 +1295,124 @@ function DebriefPage() {
           )}
 
           {/* ============================================================
-              LE GRAND BILAN — TOUT L'ARTICLE
+              L'ARTICLE
               ============================================================
-              Le Debrief ne fait plus qu'une chose : raconter la saison, en
-              un seul recit suivi. Les blocs d'avant — les trois cartes, la
-              liste des matchs, le podium, le chiffre, l'affiche, la perf —
-              ont ete retires a la demande de l'organisateur : « un vrai gros
-              resume, mais que ca ».
-
-              Aucun chiffre n'est invente ni recalcule : les rangs viennent
-              de parcoursSaison() (qui rejoue `rankPlayers`, le classement
-              officiel), les points du moteur. Le texte ne fait que les
-              mettre en phrases. */}
-          {!grandBilan ? (
+              Un vrai texte, pas des blocs de donnees avec des etiquettes.
+              Les phrases sont ecrites par ecrireRecit() (src/lib/recitDebrief.ts),
+              qui ne calcule rien : il recoit des chiffres deja etablis et les
+              met en francais, accords compris. Ici on ne fait que la mise en
+              page — largeur de lecture, interlignage, hierarchie. */}
+          {!recit ? (
             <section className="px-5 py-10 md:px-10">
               <EditorialEmptyState
                 icon={Newspaper}
                 title="Le bilan arrive"
-                description="Dès les premiers résultats, la Gazette racontera la saison journée après journée."
+                description="Dès les premiers résultats, le Debrief racontera la saison journée après journée."
               />
             </section>
           ) : (
             <>
-              {/* L'ACCROCHE */}
-              <section className="border-b border-slate-800 px-5 py-8 md:px-10 md:py-10">
+              {/* LE CHAPEAU */}
+              <section className="border-b border-slate-800 px-5 py-9 md:px-10 md:py-12">
                 <p className="font-mono text-[10px] font-black uppercase tracking-[.24em] text-emerald-300">
-                  Le grand bilan après {grandBilan.journeesJouees} journée
-                  {grandBilan.journeesJouees > 1 ? "s" : ""}
+                  {recit.surtitre}
                 </p>
-                <h2 className="mt-2 max-w-3xl font-display text-[1.9rem] font-black uppercase leading-[.95] tracking-[-.03em] text-white md:text-[3rem]">
-                  {grandBilan.exAequoTete > 1
-                    ? `${grandBilan.exAequoTete} joueurs à égalité en tête`
-                    : `${grandBilan.fiches[0].name} prend le pouvoir`}
+                <h2 className="mt-3 max-w-[20ch] font-display text-[2rem] font-black uppercase leading-[.95] tracking-[-.03em] text-white md:text-[3.25rem]">
+                  {recit.titre}
                 </h2>
-                <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-slate-300 md:text-base">
-                  {grandBilan.densite ? (
-                    <>
-                      Après {grandBilan.journeesJouees} journée
-                      {grandBilan.journeesJouees > 1 ? "s" : ""}, rien n'est joué.{" "}
-                      <span className="font-bold text-white">
-                        {grandBilan.densite.joueurs} joueurs
-                      </span>{" "}
-                      se tiennent en{" "}
-                      <span className="font-bold text-white">
-                        {grandBilan.densite.points} point
-                        {grandBilan.densite.points > 1 ? "s" : ""}
-                      </span>
-                      , les leaders changent et certains réalisent des remontées
-                      spectaculaires. Une seule bonne journée peut tout renverser.
-                    </>
-                  ) : (
-                    <>
-                      Après {grandBilan.journeesJouees} journée
-                      {grandBilan.journeesJouees > 1 ? "s" : ""},{" "}
-                      <span className="font-bold text-white">{grandBilan.fiches[0].name}</span>{" "}
-                      mène la compétition avec {grandBilan.fiches[0].points} points.
-                    </>
-                  )}
+                {/* Le chapeau : plus gros que le corps, c'est lui qui donne
+                    envie de lire la suite. `max-w` en `ch` et non en pixels —
+                    une ligne de lecture confortable se mesure en caracteres. */}
+                <p className="mt-5 max-w-[62ch] text-[17px] font-medium leading-[1.65] text-slate-200 md:text-lg">
+                  {recit.chapeau}
                 </p>
               </section>
 
-              {/* LE PATRON */}
-              <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
-                  👑 En tête
-                </p>
-                <h3 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                  {grandBilan.fiches[0].name}
-                  {grandBilan.exAequoTete > 1 ? " ne lâche rien" : " prend le pouvoir"}
-                </h3>
-
-                <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
-                  <p className="font-display text-4xl font-black tabular-nums text-amber-300 md:text-5xl">
-                    {grandBilan.fiches[0].points}
-                    <span className="ml-2 font-mono text-xs font-bold uppercase tracking-[.14em] text-amber-300/70">
-                      points
-                    </span>
+              {/* LE CORPS DE L'ARTICLE */}
+              {recit.sections.map((section) => (
+                <section
+                  key={section.kicker}
+                  className="border-b border-slate-800 px-5 py-8 md:px-10 md:py-10"
+                >
+                  <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
+                    {section.kicker}
                   </p>
-                  {grandBilan.fiches[0].exactScores > 0 && (
-                    <p className="font-mono text-[11px] uppercase tracking-[.12em] text-slate-400">
-                      {grandBilan.fiches[0].exactScores} score
-                      {grandBilan.fiches[0].exactScores > 1 ? "s" : ""} exact
-                      {grandBilan.fiches[0].exactScores > 1 ? "s" : ""}
-                    </p>
-                  )}
-                </div>
-
-                {grandBilan.fiches[0].etapes.length > 1 && (
-                  <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-slate-300">
-                    Son parcours depuis la première journée :{" "}
-                    <span className="font-mono font-bold text-white">
-                      {grandBilan.fiches[0].chemin}
-                    </span>
-                    {grandBilan.fiches[0].progression > 0 ? (
-                      <>
-                        {" "}— soit{" "}
-                        <span className="font-bold text-emerald-300">
-                          {grandBilan.fiches[0].progression} place
-                          {grandBilan.fiches[0].progression > 1 ? "s" : ""} gagnée
-                          {grandBilan.fiches[0].progression > 1 ? "s" : ""}
-                        </span>
-                        .
-                      </>
-                    ) : (
-                      ". Il tient la corde depuis le début."
-                    )}
-                  </p>
-                )}
-
-                {grandBilan.exAequoTete > 1 && (
-                  <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-300">
-                    Mais il n'est pas seul :{" "}
-                    <span className="font-bold text-white">
-                      {grandBilan.exAequoTete} joueurs
-                    </span>{" "}
-                    comptent exactement le même nombre de points. Seuls les
-                    départages les séparent.
-                  </p>
-                )}
-
-                {grandBilan.meilleureJournee &&
-                  grandBilan.meilleureJournee.derniereJournee > 0 && (
-                    <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-300">
-                      La meilleure journée revient à{" "}
-                      <span className="font-bold text-white">
-                        {grandBilan.meilleureJournee.name}
-                      </span>
-                      , avec{" "}
-                      <span className="font-bold text-emerald-300">
-                        {grandBilan.meilleureJournee.derniereJournee} points
-                      </span>{" "}
-                      sur la J{grandBilan.derniereJournee}.
-                    </p>
-                  )}
-              </section>
-
-              {/* LES REMONTEES */}
-              {grandBilan.remontees.length > 0 && (
-                <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-                  <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-emerald-300">
-                    🚀 Les remontées
-                  </p>
-                  <h3 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                    Ils reviennent de loin
+                  <h3 className="mt-1.5 font-display text-xl font-black uppercase tracking-[-.02em] text-white md:text-2xl">
+                    {section.titre}
                   </h3>
-
-                  <div className="mt-5 space-y-4">
-                    {grandBilan.remontees.map((joueur) => (
-                      <div
-                        key={joueur.id}
-                        className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[.05] p-4 md:p-5"
+                  <div className="mt-4 max-w-[68ch] space-y-4">
+                    {section.paragraphes.map((paragraphe, index) => (
+                      <p
+                        key={index}
+                        className="text-[15px] leading-[1.75] text-slate-300 md:text-base"
                       >
-                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                          <span className="font-display text-xl font-black text-white md:text-2xl">
-                            {joueur.name}
-                          </span>
-                          <span className="rounded-lg bg-emerald-400/15 px-2 py-0.5 font-display text-sm font-black tabular-nums text-emerald-300">
-                            +{joueur.progression} place{joueur.progression > 1 ? "s" : ""}
-                          </span>
-                          <span className="font-mono text-[11px] tabular-nums text-slate-400">
-                            {joueur.points} pts · {joueur.rang}
-                            {joueur.rang === 1 ? "er" : "e"}
-                          </span>
-                        </div>
-                        <p className="mt-2 font-mono text-xs font-bold tabular-nums text-slate-300">
-                          {joueur.chemin}
-                        </p>
-                      </div>
+                        {paragraphe}
+                      </p>
                     ))}
                   </div>
                 </section>
-              )}
+              ))}
 
-              {/* LES CHUTES */}
-              {grandBilan.chutes.length > 0 && (
+              {/* LE CLASSEMENT — un journal a aussi ses tableaux. */}
+              {grandBilan && (
                 <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-                  <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-red-300">
-                    📉 Les dégringolades
+                  <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
+                    Le classement
                   </p>
-                  <h3 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                    La pente est raide
+                  <h3 className="mt-1.5 font-display text-xl font-black uppercase text-white md:text-2xl">
+                    Le top {grandBilan.top10.length}
                   </h3>
 
-                  <div className="mt-5 space-y-4">
-                    {grandBilan.chutes.map((joueur) => (
+                  <div className="mt-4 max-w-[68ch] space-y-1.5">
+                    {grandBilan.top10.map((joueur) => (
                       <div
                         key={joueur.id}
-                        className="rounded-2xl border border-red-400/20 bg-red-400/[.04] p-4 md:p-5"
+                        className={`flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2.5 ${
+                          joueur.rang === 1
+                            ? "border-amber-400/40 bg-amber-400/[.08]"
+                            : joueur.rang <= 3
+                              ? "border-slate-300/20 bg-white/[.03]"
+                              : "border-slate-800"
+                        }`}
                       >
-                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                          <span className="font-display text-xl font-black text-white md:text-2xl">
-                            {joueur.name}
+                        <span className="w-7 shrink-0 text-center font-display text-sm font-black tabular-nums text-slate-500">
+                          {joueur.rang === 1
+                            ? "🥇"
+                            : joueur.rang === 2
+                              ? "🥈"
+                              : joueur.rang === 3
+                                ? "🥉"
+                                : joueur.rang}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate font-display text-sm font-black text-white">
+                          {joueur.name}
+                        </span>
+                        {joueur.progression !== 0 && (
+                          <span
+                            className={`shrink-0 font-mono text-[10px] font-black tabular-nums ${
+                              joueur.progression > 0 ? "text-emerald-400" : "text-red-400"
+                            }`}
+                          >
+                            {joueur.progression > 0
+                              ? `↑${joueur.progression}`
+                              : `↓${Math.abs(joueur.progression)}`}
                           </span>
-                          <span className="rounded-lg bg-red-400/15 px-2 py-0.5 font-display text-sm font-black tabular-nums text-red-300">
-                            {joueur.progression} place
-                            {Math.abs(joueur.progression) > 1 ? "s" : ""}
-                          </span>
-                          <span className="font-mono text-[11px] tabular-nums text-slate-400">
-                            {joueur.points} pts · {joueur.rang}
-                            {joueur.rang === 1 ? "er" : "e"}
-                          </span>
-                        </div>
-                        <p className="mt-2 font-mono text-xs font-bold tabular-nums text-slate-300">
-                          {joueur.chemin}
-                        </p>
+                        )}
+                        <span className="w-10 shrink-0 text-right font-display text-base font-black tabular-nums text-white">
+                          {joueur.points}
+                        </span>
                       </div>
                     ))}
                   </div>
 
-                  {/* Reculer en marquant, c'est le sort de la moitie du
-                      classement quand tout le monde marque. Le taire
-                      laisserait croire a une mauvaise journee. */}
-                  <p className="mt-4 max-w-2xl text-sm leading-relaxed text-slate-400">
-                    Attention : reculer ne veut pas dire avoir mal joué. Quand
-                    tout le monde marque, il suffit que les autres marquent plus.
-                  </p>
-                </section>
-              )}
-
-              {/* LE CLASSEMENT COMPLET */}
-              <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
-                  📊 Le classement
-                </p>
-                <h3 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                  Le top {grandBilan.top10.length}
-                </h3>
-
-                <div className="mt-5 space-y-1.5">
-                  {grandBilan.top10.map((joueur) => (
-                    <div
-                      key={joueur.id}
-                      className={`flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2.5 ${
-                        joueur.rang === 1
-                          ? "border-amber-400/40 bg-amber-400/[.08]"
-                          : joueur.rang <= 3
-                            ? "border-slate-300/20 bg-white/[.03]"
-                            : "border-slate-800"
-                      }`}
-                    >
-                      <span className="w-7 shrink-0 text-center font-display text-sm font-black tabular-nums text-slate-500">
-                        {joueur.rang === 1
-                          ? "🥇"
-                          : joueur.rang === 2
-                            ? "🥈"
-                            : joueur.rang === 3
-                              ? "🥉"
-                              : joueur.rang}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-display text-sm font-black text-white">
-                        {joueur.name}
-                      </span>
-                      {joueur.progression !== 0 && (
-                        <span
-                          className={`shrink-0 font-mono text-[10px] font-black tabular-nums ${
-                            joueur.progression > 0 ? "text-emerald-400" : "text-red-400"
-                          }`}
-                        >
-                          {joueur.progression > 0
-                            ? `↑${joueur.progression}`
-                            : `↓${Math.abs(joueur.progression)}`}
-                        </span>
-                      )}
-                      <span className="w-10 shrink-0 text-right font-display text-base font-black tabular-nums text-white">
-                        {joueur.points}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-3">
                   <Link
                     to="/classement"
-                    className="tap rounded-xl border border-slate-700 px-3 py-2 font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
+                    className="tap mt-4 inline-block rounded-xl border border-slate-700 px-3 py-2 font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
                   >
                     Voir tout le classement →
                   </Link>
-                </div>
-              </section>
-
-              {/* LA CONCLUSION */}
-              <section className="px-5 py-10 md:px-10 md:py-12">
-                <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-cyan-300">
-                  ⏳ Et maintenant
-                </p>
-                <h3 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
-                  Tout est encore ouvert
-                </h3>
-                <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-slate-300">
-                  {grandBilan.densite ? (
-                    <>
-                      {grandBilan.densite.joueurs} joueurs dans{" "}
-                      {grandBilan.densite.points} point
-                      {grandBilan.densite.points > 1 ? "s" : ""}. Le moindre score
-                      exact, une bonne journée, et l'ordre change. La prochaine
-                      journée promet déjà d'être explosive.
-                    </>
-                  ) : (
-                    <>
-                      La prochaine journée peut encore tout changer : un score
-                      exact vaut trois points sur le match bonus, et les écarts
-                      se comblent vite.
-                    </>
-                  )}
-                </p>
-              </section>
+                </section>
+              )}
             </>
           )}
 

@@ -33,7 +33,8 @@
     "verif-journee-gazette": "tsx src/lib/journeeGazette.verif.ts",
     "verif-annonce-niveau": "tsx src/lib/annonceNiveau.verif.ts",
     "verif-mail-rappel": "tsx src/lib/mailRappel.verif.ts",
-    "verif-parcours": "tsx src/lib/parcoursSaison.verif.ts"
+    "verif-parcours": "tsx src/lib/parcoursSaison.verif.ts",
+    "verif-recit": "tsx src/lib/recitDebrief.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
