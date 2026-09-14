@@ -1263,11 +1263,6 @@ function DebriefPage() {
       .sort((a, b) => a.mouvement - b.mouvement || a.rang - b.rang)
       .slice(0, 3);
 
-    // La plus belle trajectoire DEPUIS LE DEBUT, gardee a part : c'est une
-    // autre histoire que celle de la journee, et elle merite sa phrase.
-    const trajectoire = [...fiches]
-      .filter((f) => f.progression > 0 && f.etapes.length >= 3)
-      .sort((a, b) => b.progression - a.progression || a.rang - b.rang)[0] ?? null;
 
     // La meilleure journee du groupe, celle dont on parle le lendemain.
     const meilleureJournee = [...fiches]
@@ -1291,7 +1286,6 @@ function DebriefPage() {
       top10: fiches.slice(0, 10),
       remontees,
       chutes,
-      trajectoire,
       meilleureJournee,
       densite,
       exAequoTete,
@@ -1307,7 +1301,6 @@ function DebriefPage() {
       fiches: grandBilan.fiches,
       remontees: grandBilan.remontees,
       chutes: grandBilan.chutes,
-      trajectoire: grandBilan.trajectoire,
       meilleureJournee: grandBilan.meilleureJournee,
       densite: grandBilan.densite,
       exAequoTete: grandBilan.exAequoTete,

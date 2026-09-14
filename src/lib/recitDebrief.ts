@@ -43,8 +43,6 @@ export type EntreesRecit = {
   remontees: FicheRecit[];
   /** Ceux qui en ont perdu SUR la journee racontee. */
   chutes: FicheRecit[];
-  /** La plus belle trajectoire depuis la 1re journee — une autre histoire. */
-  trajectoire?: FicheRecit | null;
   meilleureJournee: FicheRecit | null;
   densite: { joueurs: number; points: number } | null;
   exAequoTete: number;
@@ -362,18 +360,11 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
       );
     });
 
-    // LA SAISON, en une phrase et a part. Un joueur peut avoir la plus belle
-    // trajectoire depuis la J1 sans avoir bouge ce week-end : les deux
-    // histoires sont vraies, mais ce ne sont pas les memes.
-    const t = e.trajectoire;
-    if (t && t.progression > 0 && t.id !== premier.id) {
-      p.push(
-        `Sur l'ensemble de la saison, la plus belle trajectoire reste celle de **${t.name}** : ` +
-          `${rangEcrit(t.etapes[0]?.rang ?? t.rang)} après la première journée, ` +
-          `**${rangEcrit(t.rang)}** aujourd'hui, soit **${placesGagnees(t.progression)}** ` +
-          `(**${parcoursEcrit(t.etapes)}**).`,
-      );
-    }
+    // PAS DE DIGRESSION SUR LA SAISON ICI. Le brief est un point sur
+    // l'evolution du classement SUR LA JOURNEE : la plus belle trajectoire
+    // depuis la premiere journee est une autre histoire, et l'organisateur a
+    // demande qu'elle n'y figure pas. Le parcours complet de chaque joueur
+    // cite reste visible dans son echelle, ce qui suffit.
 
     sections.push({
       kicker: "Les remontées",

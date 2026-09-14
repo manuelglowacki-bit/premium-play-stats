@@ -145,7 +145,7 @@ verifier("et au pluriel quand il le faut",
     ...entrees,
     fiches: [fiche("A", 1, 10, [5, 1]), fiche("B", 2, 9, [1, 2])],
     remontees: [fiche("A", 1, 10, [5, 1])],
-    chutes: [], trajectoire: null, meilleureJournee: null, exAequoTete: 1,
+    chutes: [], meilleureJournee: null, exAequoTete: 1,
   })!.sections.flatMap((x) => x.paragraphes).join(" ")).includes("quatre places gagnées"));
 verifier("un seul point : singulier", texteUne.includes("1 point") && !texteUne.includes("1 points"), texteUne);
 
@@ -239,7 +239,6 @@ console.log("\nL'article parle de LA JOURNEE, pas de la saison");
     fiches: [fcs, lulu, sanji, marseillais, chris],
     remontees: [marseillais],
     chutes: [chris],
-    trajectoire: marseillais,
   })!;
   const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
 
@@ -277,7 +276,7 @@ console.log("\nLe retard du bas de tableau");
   const art = ecrireRecit({
     ...entrees,
     fiches: [tete, ...bas.slice(3)],
-    remontees: [], chutes: [], trajectoire: null,
+    remontees: [], chutes: [],
   })!;
   const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
 
@@ -326,7 +325,6 @@ console.log("\nDeux superlatifs sur la meme journee : dire ce qu'on mesure");
     fiches: [fcs, lulu, sanji, bouge, gros],
     remontees: [bouge],
     chutes: [],
-    trajectoire: null,
     meilleureJournee: gros,
   })!;
   const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
@@ -346,13 +344,18 @@ console.log("\nDeux superlatifs sur la meme journee : dire ce qu'on mesure");
   const art = ecrireRecit({
     ...entrees,
     fiches: [fcs, lulu, sanji, a, b],
-    remontees: [], chutes: [], trajectoire: null,
+    remontees: [], chutes: [],
     meilleureJournee: a,
   })!;
   const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
   verifier("les ex aequo de la journee sont tous nommes",
     texte.includes("revient à A et B") && texte.includes("marqués chacun"), texte.slice(0, 900));
 }
+
+
+verifier("le brief ne digresse pas sur la saison",
+  !sansAccents(ecrireRecit(entrees)!.sections.flatMap((x) => x.paragraphes).join(" "))
+    .includes("Sur l'ensemble de la saison"));
 
 console.log("\n" + "=".repeat(62));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);
