@@ -27,6 +27,7 @@ import { lireNiveauMemorise, memoriserNiveau, niveauAAnnoncer } from "@/lib/anno
 import { debriefAAnnoncer, lireDebriefVu, memoriserDebriefVu } from "@/lib/annonceDebrief";
 import { journeeTerminee } from "@/lib/parcoursSaison";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
+import { journeesDeLaSaison } from "@/lib/perimetreClassement";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -442,12 +443,20 @@ function IndexPage() {
         // `reconciledMatches` et non la base brute : un score arrive par
         // l'API compte, exactement comme sur le Debrief.
         const journeeDuDebrief = (() => {
+          // MEME PERIMETRE QUE LE DEBRIEF, saison comprise. Sans ce filtre,
+          // la banniere comptait les journees de toutes les saisons : elle
+          // pouvait annoncer une journee que le Debrief ne raconte pas.
+          // Regle partagee — src/lib/perimetreClassement.ts.
+          const perimetreSaison = journeesDeLaSaison(
+            (matchdays || []) as any[],
+            String((settingsRow as any)?.season ?? ""),
+          );
           const parJournee = new Map<string, any[]>();
 
           for (const match of (reconciledMatches || []) as any[]) {
             if (match.is_bonus) continue;
             const id = String(match.matchday_id ?? "");
-            if (!id || !ligue1MatchdayIds.has(id)) continue;
+            if (!id || !ligue1MatchdayIds.has(id) || !perimetreSaison.has(id)) continue;
             parJournee.set(id, [...(parJournee.get(id) ?? []), match]);
           }
 
@@ -469,7 +478,7 @@ function IndexPage() {
           );
           bonusEnVigueur.forEach((matchId, journeeId) => {
             const match = matchParId.get(String(matchId));
-            if (!match || !ligue1MatchdayIds.has(journeeId)) return;
+            if (!match || !ligue1MatchdayIds.has(journeeId) || !perimetreSaison.has(journeeId)) return;
             const deja = parJournee.get(journeeId) ?? [];
             if (deja.some((m: any) => String(m.id) === String(match.id))) return;
             parJournee.set(journeeId, [...deja, match]);

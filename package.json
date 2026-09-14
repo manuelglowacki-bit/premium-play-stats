@@ -35,6 +35,7 @@
     "verif-mail-rappel": "tsx src/lib/mailRappel.verif.ts",
     "verif-parcours": "tsx src/lib/parcoursSaison.verif.ts",
     "verif-recit": "tsx src/lib/recitDebrief.verif.ts",
+    "verif-perimetre": "tsx src/lib/perimetreClassement.verif.ts",
     "verif-joueurs": "tsx src/lib/joueurs.verif.ts",
     "verif-article": "tsx src/lib/articleManuel.verif.ts",
     "verif-annonce-debrief": "tsx src/lib/annonceDebrief.verif.ts"

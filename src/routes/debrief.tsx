@@ -34,6 +34,11 @@ import { ecrireRecit, morceaux, rangEcrit } from "@/lib/recitDebrief";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { lireArticle } from "@/lib/articleManuel";
 import { pseudoActuel } from "@/lib/joueurs";
+import {
+  journeesDeLaSaison,
+  matchsDuClassement,
+  optionsBonusDuClassement,
+} from "@/lib/perimetreClassement";
 import { ArticleEcritALaMain } from "@/components/prono/ArticleEcritALaMain";
 import {
   cheminLisible,
@@ -778,6 +783,7 @@ function DebriefPage() {
   const [rankingBonusOptions, setRankingBonusOptions] = useState<LeagueBonusOption[]>([]);
   const [rankingFavoriteHistory, setRankingFavoriteHistory] = useState<Record<string, string | undefined>>({});
   const [rankingTeamNames, setRankingTeamNames] = useState<Record<string, string | undefined>>({});
+  const [rankingSeasonByMatchday, setRankingSeasonByMatchday] = useState<Record<string, string | undefined>>({});
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [clock, setClock] = useState(Date.now());
   // Empêche une requête devenue obsolète (refresh live précédent encore en
@@ -808,7 +814,9 @@ function DebriefPage() {
         // 20260914100000). Vide = la page redige elle-meme.
         supabase
           .from("app_settings")
-          .select("debrief_texte, debrief_journee, debrief_maj")
+          // `season` : LA saison en cours. Sans elle, le Debrief melangeait
+          // les journees de toutes les saisons presentes en base.
+          .select("season, debrief_texte, debrief_journee, debrief_maj")
           .eq("id", 1)
           .maybeSingle(),
         getMatchdays(),
@@ -854,22 +862,47 @@ function DebriefPage() {
         (c: any) => c.external_code === "FL1" || c.code === "FL1"
       )?.id;
 
+      // ============================================================
+      // LES MEMES MATCHS QUE LE CLASSEMENT — c'est la regle, pas un detail.
+      // ============================================================
+      // Le Debrief donnait 51 points a un joueur que le Classement affichait
+      // a 25. Cause : il retenait les journees de TOUTES les saisons
+      // presentes en base, pas seulement celle en cours. Deux « journees 1 »
+      // (celle de la saison passee et celle de cette saison) portent le meme
+      // numero : leurs points s'additionnaient, et le classement reconstitue
+      // n'avait plus aucun rapport avec le vrai.
+      //
+      // Le filtre ci-dessous est copie sur celui de classement.tsx, a la
+      // ligne pres. Toute page qui recalcule un classement doit partir
+      // exactement des memes matchs, sinon elle raconte une autre ligue.
+      const saisonCourante = String((reglagesData as any)?.season ?? "");
+
+      // Le perimetre du CALCUL : toutes les competitions de la saison en
+      // cours (les championnats bonus y compris, puisque c'est de la que
+      // viennent les matchs bonus). Regle ecrite et verifiee une seule fois
+      // dans src/lib/perimetreClassement.ts.
+      const perimetre = journeesDeLaSaison(matchdaysData ?? [], saisonCourante);
+
+      // Le RECIT, lui, se raconte journee de Ligue 1 par journee de Ligue 1.
       const ligue1Matchdays = (matchdaysData ?? []).filter(
-        (md: any) => md.competition_id === competitionId
+        (md: any) => md.competition_id === competitionId && perimetre.has(String(md.id)),
       );
 
       const matchesById = new Map<string, any>();
+      (matchesData ?? []).forEach((match: any) => matchesById.set(String(match.id), match));
+
       const matchesByMatchday = new Map<string, any[]>();
-      (matchesData ?? []).forEach((match: any) => {
-        matchesById.set(String(match.id), match);
-        if ((match.match_type ?? "LIGUE1") !== "LIGUE1" || !match.matchday_id) return;
+      matchsDuClassement(matchesData ?? [], perimetre).forEach((match: any) => {
         const list = matchesByMatchday.get(match.matchday_id) ?? [];
         list.push(match);
         matchesByMatchday.set(match.matchday_id, list);
       });
 
+      // Les lignes bonus d'une autre saison n'ont rien a faire ici non plus.
+      const optionsBonusSaison = optionsBonusDuClassement(bonusOptionsData ?? [], perimetre);
+
       const bonusMatchesByMatchday = new Map<string, any[]>();
-      (bonusOptionsData ?? []).forEach((option: any) => {
+      optionsBonusSaison.forEach((option: any) => {
         const match = matchesById.get(String(option.match_id));
         if (!match) return;
         const matchdayId = String(option.matchday_id);
@@ -881,7 +914,7 @@ function DebriefPage() {
       // Le tirage EN VIGUEUR pour chaque journee. Regle partagee avec
       // l'Accueil (src/lib/journeeBonus.ts) : deux implementations de la meme
       // regle finissent toujours par diverger — c'est deja arrive a Stats.
-      const bonusEnVigueur = bonusEnVigueurParJournee((bonusOptionsData ?? []) as any[]);
+      const bonusEnVigueur = bonusEnVigueurParJournee(optionsBonusSaison as any[]);
 
       // Supabase reste la source du calendrier. Pour le direct, la fusion
       // (statut/score + garde anti-régression + cache sessionStorage) passe
@@ -917,12 +950,23 @@ function DebriefPage() {
 
       const rankingPredictionRows = (predictionData ?? []) as LeaguePrediction[];
 
-      const rankingBonusRows: LeagueBonusOption[] = (bonusOptionsData ?? []).map(
+      const rankingBonusRows: LeagueBonusOption[] = optionsBonusSaison.map(
         (row: any) => ({
           matchday_id: String(row.matchday_id),
           match_id: String(row.match_id),
         }),
       );
+
+      // JOURNEE -> SAISON, sur TOUTES les journees connues (un match bonus a
+      // son propre matchday_id, dans une autre competition). Le Classement
+      // passe cette table au moteur ; sans elle, le bareme du club favori
+      // d'un pronostic passe est recalcule avec le favori d'aujourd'hui — et
+      // les deux pages ne donnent plus les memes points.
+      const saisonParJournee: Record<string, string> = {};
+      (matchdaysData ?? []).forEach((md: any) => {
+        if (!md?.id) return;
+        saisonParJournee[String(md.id)] = String(md.season_id || md.season || "unknown");
+      });
 
       const favoriteHistoryMap: Record<string, string | undefined> = {};
       (favoriteHistoryData ?? []).forEach((row: any) => {
@@ -944,6 +988,7 @@ function DebriefPage() {
       setRankingBonusOptions(rankingBonusRows);
       setRankingFavoriteHistory(favoriteHistoryMap);
       setRankingTeamNames(teamNames);
+      setRankingSeasonByMatchday(saisonParJournee);
 
       setArticleManuel({
         texte: String((reglagesData as any)?.debrief_texte ?? ""),
@@ -1078,6 +1123,9 @@ function DebriefPage() {
       profiles as LeagueProfile[],
       rankingTeamNames,
       {
+        // Memes options que classement.tsx — aucune des deux ne peut etre
+        // omise sans changer les points.
+        seasonByMatchdayId: rankingSeasonByMatchday,
         favoriteTeamBySeason: rankingFavoriteHistory,
       },
     );
@@ -1088,6 +1136,7 @@ function DebriefPage() {
     rankingBonusOptions,
     rankingFavoriteHistory,
     rankingTeamNames,
+    rankingSeasonByMatchday,
   ]);
 
   // Points RÉELS d'un joueur sur un match précis, tels que calculés par le
