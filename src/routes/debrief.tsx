@@ -1243,6 +1243,14 @@ function DebriefPage() {
     const parcours = parcoursSaison({
       joueurs: rankedPlayers.map((p: any) => ({ id: String(p.id), name: p.name })),
       journees: journeesJouees,
+      // LES POINTS D'UNE JOURNEE VIENNENT DU MOTEUR, tels quels. Leur somme
+      // sur les journees vaut donc exactement le total du Classement — c'est
+      // vrai par construction, plus par coincidence. L'ancienne addition
+      // match par match comptait deux fois un match present a la fois comme
+      // match de championnat et comme match bonus, et le Debrief affichait
+      // le double de chaque total.
+      pointsDeLaJournee: (userId, journeeId) =>
+        leagueStats.pointsByUserAndMatchday?.[userId]?.[journeeId] ?? 0,
       pointsDe: (userId, matchId) => pointsFor(userId, matchId),
       exactDe: (userId, matchId) => {
         const prono = predictionsByUser.get(userId)?.byMatch.get(matchId);
@@ -1328,7 +1336,7 @@ function DebriefPage() {
       densite,
       exAequoTete,
     };
-  }, [rankedPlayers, journees, pointsFor, predictionsByUser, matchesById]);
+  }, [rankedPlayers, journees, pointsFor, leagueStats, predictionsByUser, matchesById]);
 
   // L'ARTICLE DE L'ORGANISATEUR, decoupe en blocs affichables. Vide tant
   // qu'il n'a rien colle dans Admin — la page reprend alors son texte.

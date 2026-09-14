@@ -38,10 +38,15 @@ where m.is_bonus is true
 order by md.number;
 
 -- 3. LE TOTAL PAR JOUEUR, SAISON PAR SAISON.
---    Comparer la ligne de la saison en cours avec ce qu'affiche le
---    Classement : les deux doivent coincider. Le barème officiel est
---    applique ici (score exact 3, bon resultat 2, sinon 0) — hors bonus
---    club favori, qui ne se calcule pas en SQL.
+--    ATTENTION : les totaux ci-dessous NE SONT PAS ceux du Classement et ne
+--    doivent pas y etre compares. Le vrai bareme est :
+--        match de championnat  bon resultat = 1 point
+--        match du club favori  exact = 2, bon resultat = 1
+--        match bonus           exact = 3, bon resultat = 2
+--    Il depend du club favori de chaque joueur A L'EPOQUE du pronostic, ce
+--    qui ne se calcule pas en SQL. Cette requete applique un bareme simplifie
+--    (exact 3, bon resultat 2) et ne sert donc qu'a UNE chose : verifier que
+--    toutes les lignes appartiennent bien a la meme saison.
 select
   '3. POINTS PAR SAISON' as controle,
   coalesce(md.season, '(vide)') as saison,

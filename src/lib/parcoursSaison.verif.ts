@@ -50,9 +50,14 @@ const POINTS: Record<string, Record<string, number>> = {
   c: { m1: 2, m2: 4, m3: 7 },
 };
 
+// Les points d'une journee viennent du MOTEUR, indexes par journee. Dans ce
+// jeu d'essai chaque journee n'a qu'un match : m1 pour j1, m2 pour j2...
+const JOURNEE_DU_MATCH: Record<string, string> = { j1: "m1", j2: "m2", j3: "m3" };
+
 const base = {
   joueurs,
   journees,
+  pointsDeLaJournee: (u: string, j: string) => POINTS[u]?.[JOURNEE_DU_MATCH[j]] ?? 0,
   pointsDe: (u: string, m: string) => POINTS[u]?.[m] ?? 0,
   exactDe: () => false,
   classer: rankPlayers,
@@ -96,7 +101,8 @@ console.log("\nLes departages viennent du vrai classement");
 const exAequo = parcoursSaison({
   joueurs: [{ id: "x", name: "X" }, { id: "y", name: "Y" }],
   journees: [{ id: "j1", numero: 1, matchIds: ["m1"] }],
-  pointsDe: (u) => (u === "x" ? 3 : 3),
+  pointsDeLaJournee: () => 3,
+  pointsDe: () => 3,
   exactDe: (u) => u === "y",
   classer: rankPlayers,
 });
@@ -132,6 +138,29 @@ egal("aucun match : pas terminee, elle n'a pas commence", journeeTerminee([]), f
 egal("un seul match, joue", journeeTerminee([true]), true);
 egal("un seul match, pas joue", journeeTerminee([false]), false);
 
+
+
+console.log("\nUN MATCH QUI FIGURE DEUX FOIS DANS LA JOURNEE");
+// LE DEFAUT DU 14 SEPTEMBRE : le Debrief affichait exactement le double de
+// chaque total (51 au lieu de 25). Les points venaient d'une addition refaite
+// match par match, et un match present a la fois comme match de championnat
+// et comme match bonus etait compte deux fois. Ils viennent desormais du
+// moteur, qui attribue chaque pronostic une fois et une seule.
+{
+  const doublon = parcoursSaison({
+    joueurs: [{ id: "a", name: "A" }],
+    journees: [{ id: "j1", numero: 1, matchIds: ["m1", "m1", "m1"] }],
+    pointsDeLaJournee: () => 7,
+    pointsDe: () => 7,
+    exactDe: () => true,
+    classer: rankPlayers,
+  });
+  egal("le total reste celui du moteur, quel que soit le nombre de doublons",
+    doublon.get("a")![0].points, 7);
+  egal("le gain de la journee aussi", doublon.get("a")![0].gainJournee, 7);
+  egal("les scores exacts ne sont pas comptes trois fois",
+    doublon.get("a")![0].exactScores, 1);
+}
 
 console.log("\nLe mouvement sur la SEULE derniere journee");
 // La distinction qui a fait dire a l'organisateur que l'article n'avait

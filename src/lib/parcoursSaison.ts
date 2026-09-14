@@ -48,6 +48,19 @@ export type EntreesParcours = {
   joueurs: readonly JoueurSaison[];
   /** Journees TERMINEES uniquement, dans n'importe quel ordre. */
   journees: readonly JourneeSaison[];
+  /**
+   * LES POINTS D'UN JOUEUR SUR UNE JOURNEE, tels que le moteur les a
+   * calcules — et non re-additionnes match par match ici.
+   *
+   * C'est la seule source qui garantit que le total du Debrief est celui du
+   * Classement. En refaisant la somme sur les matchs, cette fonction
+   * comptait chaque match deux fois : le Debrief affichait exactement le
+   * double du vrai total (51 au lieu de 25). Le moteur, lui, attribue chaque
+   * pronostic une fois et une seule, y compris pour les matchs bonus dont un
+   * joueur peut avoir plusieurs lignes.
+   */
+  pointsDeLaJournee: (userId: string, journeeId: string) => number;
+  /** Sert uniquement a compter les pronostics joues, pas les points. */
   pointsDe: (userId: string, matchId: string) => number;
   exactDe: (userId: string, matchId: string) => boolean;
   /** A jouer : rankPlayers. */
@@ -59,7 +72,7 @@ export type EntreesParcours = {
  *   Un joueur sans aucune journee terminee ressort avec un parcours vide.
  */
 export function parcoursSaison(entrees: EntreesParcours): Map<string, EtapeParcours[]> {
-  const { joueurs, journees, pointsDe, exactDe, classer } = entrees;
+  const { joueurs, journees, pointsDeLaJournee, pointsDe, exactDe, classer } = entrees;
 
   const parcours = new Map<string, EtapeParcours[]>();
   joueurs.forEach((joueur) => parcours.set(String(joueur.id), []));
@@ -74,21 +87,26 @@ export function parcoursSaison(entrees: EntreesParcours): Map<string, EtapeParco
   for (const journee of ordonnees) {
     const gains = new Map<string, number>();
 
+    // UN MATCH, UNE FOIS. Un meme match peut figurer deux fois dans la liste
+    // (il est a la fois match de championnat et match bonus, ou deux lignes
+    // bonus le designent) : sans ce dedoublonnage, ses scores exacts et ses
+    // pronostics seraient comptes deux fois.
+    const matchsDeLaJournee = [...new Set(journee.matchIds.map(String))];
+
     for (const joueur of joueurs) {
       const id = String(joueur.id);
-      let gain = 0;
+      // LES POINTS VIENNENT DU MOTEUR, pas d'une addition refaite ici.
+      const gain = pointsDeLaJournee(id, String(journee.id));
       let exacts = 0;
       let pronos = 0;
 
-      for (const matchId of journee.matchIds) {
-        const points = pointsDe(id, String(matchId));
+      for (const matchId of matchsDeLaJournee) {
         // Un match non pronostique rapporte 0 : on ne peut pas le distinguer
         // d'un pronostic rate par les seuls points. `exactDe` tranche pour
         // les scores exacts ; pour le compte de pronostics, on s'en tient a
         // ceux qui ont rapporte, comme le fait `regularitySuccess`.
-        if (points > 0) pronos += 1;
-        gain += points;
-        if (exactDe(id, String(matchId))) exacts += 1;
+        if (pointsDe(id, matchId) > 0) pronos += 1;
+        if (exactDe(id, matchId)) exacts += 1;
       }
 
       gains.set(id, gain);
