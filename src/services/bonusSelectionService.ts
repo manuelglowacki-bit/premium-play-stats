@@ -594,9 +594,22 @@ export function normalizeCompetitionName(value: unknown): BonusCompetitionCode |
  * le calcul dégrade proprement sur le niveau statique connu (levelBalanceRatio)
  * plutôt que de planter — jamais de score fabriqué à partir de rien.
  */
+/**
+ * @param options.inclureTermines Accepter un match DEJA JOUE.
+ *
+ *   Par defaut non : on ne tire jamais un bonus sur une rencontre finie.
+ *
+ *   Mais cette meme fonction sert aussi a RELIRE une selection deja
+ *   enregistree, pour l'afficher dans l'Admin. Le veto sur les matchs
+ *   termines rendait alors le bonus d'une journee passee introuvable : la
+ *   ligne n'apparaissait plus et le bouton « Modifier » ne repondait pas —
+ *   impossible de corriger un score apres coup, c'est-a-dire exactement
+ *   quand on en a besoin. La relecture passe donc `inclureTermines: true`.
+ */
 export function scoreBonusCandidate(
   match: Match,
   standings?: CompetitionStandings,
+  options?: { inclureTermines?: boolean },
 ): BonusCandidate | null {
   const competitionCode = competitionFromMatch(match);
   if (!competitionCode) return null;
@@ -610,7 +623,10 @@ export function scoreBonusCandidate(
     return null;
   }
 
-  if (match.finished || String(match.status).toLowerCase() === "finished") {
+  if (
+    !options?.inclureTermines &&
+    (match.finished || String(match.status).toLowerCase() === "finished")
+  ) {
     return null;
   }
 
@@ -668,9 +684,10 @@ export function selectBestBonusMatch(
   matches: Match[],
   competitionCode: BonusCompetitionCode,
   standings?: CompetitionStandings,
+  options?: { inclureTermines?: boolean },
 ): BonusCandidate | null {
   return matches
-    .map((match) => scoreBonusCandidate(match, standings))
+    .map((match) => scoreBonusCandidate(match, standings, options))
     .filter(
       (candidate): candidate is BonusCandidate =>
         candidate !== null && candidate.competitionCode === competitionCode,

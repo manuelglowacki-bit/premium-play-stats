@@ -166,6 +166,37 @@ const CLASSEMENT: CompetitionStandings = {
 {
   const joue = { ...match("f", "Liverpool", "Chelsea"), finished: true };
   verifier("un match terminé est écarté", scoreBonusCandidate(joue, CLASSEMENT) === null);
+
+  // ... SAUF quand on RELIT une sélection déjà enregistrée.
+  // Le tirage ne doit jamais proposer un match fini ; la relecture, elle,
+  // doit pouvoir le retrouver — sinon le bonus d'une journée passée devient
+  // introuvable dans l'Admin et son score n'est plus corrigeable.
+  const relu = scoreBonusCandidate(joue, CLASSEMENT, { inclureTermines: true });
+  verifier("mais il reste relisible quand on le demande", relu !== null);
+  verifier(
+    "et c'est bien le même match",
+    relu?.match.id === joue.id,
+    `obtenu ${relu?.match.id}`,
+  );
+
+  const statutFinished = { ...match("g", "Liverpool", "Chelsea"), status: "FINISHED" };
+  verifier(
+    "le statut FINISHED est traité comme `finished`",
+    scoreBonusCandidate(statutFinished, CLASSEMENT) === null,
+  );
+  verifier(
+    "et lui aussi reste relisible",
+    scoreBonusCandidate(statutFinished, CLASSEMENT, { inclureTermines: true }) !== null,
+  );
+
+  verifier(
+    "selectBestBonusMatch relit aussi un match fini quand on le demande",
+    selectBestBonusMatch([joue], "PL", CLASSEMENT, { inclureTermines: true }) !== null,
+  );
+  verifier(
+    "mais ne le propose pas par défaut",
+    selectBestBonusMatch([joue], "PL", CLASSEMENT) === null,
+  );
 }
 
 console.log(echecs === 0 ? "\nTOUT PASSE" : `\n${echecs} ECHEC(S)`);

@@ -4206,8 +4206,13 @@ function BonusTab({
     }
   }
 
+  // RELECTURE d'une selection deja enregistree — pas un tirage.
+  // `inclureTermines` est indispensable ici : sans lui, le bonus d'une
+  // journee passee devenait introuvable et le bouton « Modifier » ne
+  // repondait plus, alors que c'est precisement apres le match qu'on a
+  // besoin d'en corriger le score.
   function scoreCandidateForMatch(match: Match, code: BonusCompetitionCode): BonusCandidate | null {
-    return scoreBonusCandidateForAdmin(match, code);
+    return scoreBonusCandidateForAdmin(match, code, undefined, { inclureTermines: true });
   }
 
   // Saisie du résultat (score réel du match, "2-1"...) pour le match bonus
@@ -4275,8 +4280,13 @@ function BonusTab({
     await onChanged();
   }
 
-  function scoreBonusCandidateForAdmin(match: Match, code: BonusCompetitionCode, standings?: CompetitionStandings): BonusCandidate | null {
-    return selectBestBonusMatch([toBonusMatch(match)], code, standings);
+  function scoreBonusCandidateForAdmin(
+    match: Match,
+    code: BonusCompetitionCode,
+    standings?: CompetitionStandings,
+    options?: { inclureTermines?: boolean },
+  ): BonusCandidate | null {
+    return selectBestBonusMatch([toBonusMatch(match)], code, standings, options);
   }
 
   // ============================================================
