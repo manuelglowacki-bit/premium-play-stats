@@ -40,18 +40,46 @@ export type EntreesRecit = {
   exAequoTete: number;
 };
 
+/** La couleur d'une section. La page traduit ces noms en classes ; le texte,
+ *  lui, n'a pas a connaitre Tailwind. */
+export type TonSection = "or" | "vert" | "rouge" | "bleu";
+
 export type SectionRecit = {
   kicker: string;
   titre: string;
+  emoji: string;
+  ton: TonSection;
   paragraphes: string[];
 };
 
 export type Recit = {
   surtitre: string;
   titre: string;
+  emoji: string;
   chapeau: string;
   sections: SectionRecit[];
 };
+
+/**
+ * Les chiffres qui comptent sont encadres de `**` dans le texte, comme dans
+ * un message. La page les met en couleur ; ailleurs (un test, un copier-
+ * coller) ils restent lisibles tels quels. `sansAccents` les retire.
+ */
+export function sansAccents(texte: string): string {
+  return texte.replace(/\*\*/g, "");
+}
+
+/** Decoupe un paragraphe en morceaux, en signalant ceux a mettre en avant. */
+export function morceaux(texte: string): { texte: string; accent: boolean }[] {
+  return texte
+    .split(/(\*\*[^*]+\*\*)/g)
+    .filter((bout) => bout !== "")
+    .map((bout) =>
+      bout.startsWith("**") && bout.endsWith("**")
+        ? { texte: bout.slice(2, -2), accent: true }
+        : { texte: bout, accent: false },
+    );
+}
 
 /** « 1er », « 2e », « 23e ». */
 export function rangEcrit(rang: number): string {
@@ -114,12 +142,12 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
   const chapeau = e.densite
     ? `Après ${journees}, le classement n'a pas encore livré son verdict. ` +
-      `${nombreEcrit(e.densite.joueurs).replace(/^./, (c) => c.toUpperCase())} joueurs se tiennent en ` +
-      `${nombreEcrit(e.densite.points)} point${e.densite.points > 1 ? "s" : ""}, ` +
+      `**${nombreEcrit(e.densite.joueurs).replace(/^./, (c) => c.toUpperCase())} joueurs** se tiennent en ` +
+      `**${nombreEcrit(e.densite.points)} point${e.densite.points > 1 ? "s" : ""}**, ` +
       `les leaders changent d'une journée à l'autre et ` +
       `certains réalisent des remontées spectaculaires. Autrement dit : une seule ` +
       `bonne journée peut tout renverser.`
-    : `Après ${journees}, ${leader.name} mène la compétition avec ${pts(leader.points)}. ` +
+    : `Après ${journees}, **${leader.name}** mène la compétition avec **${pts(leader.points)}**. ` +
       `Le classement commence à prendre forme, mais rien n'est encore figé.`;
 
   const sections: SectionRecit[] = [];
@@ -132,9 +160,9 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
   if (leader.progression > 0) {
     tete.push(
-      `Le patron du moment s'appelle ${leader.name}. Parti ${rangEcrit(depart)} après la ` +
-        `première journée, il a gagné ${places(leader.progression)} pour s'installer en tête ` +
-        `avec ${pts(leader.points)}.`,
+      `Le patron du moment s'appelle **${leader.name}**. Parti **${rangEcrit(depart)}** après la ` +
+        `première journée, il a gagné **${places(leader.progression)}** pour s'installer en tête ` +
+        `avec **${pts(leader.points)}**.`,
     );
   } else if (leader.progression < 0) {
     tete.push(
@@ -150,7 +178,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   }
 
   if (leader.etapes.length > 1) {
-    tete.push(`Son parcours, journée après journée : ${parcoursEcrit(leader.etapes)}.`);
+    tete.push(`Son parcours, journée après journée : **${parcoursEcrit(leader.etapes)}**.`);
   }
 
   if (leader.exactScores > 0) {
@@ -164,25 +192,25 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   if (e.exAequoTete > 1) {
     const autres = e.fiches.slice(1, e.exAequoTete).map((f) => f.name);
     tete.push(
-      `Mais il n'est pas seul là-haut : ${listeFr(autres)} compte${autres.length > 1 ? "nt" : ""} ` +
+      `Mais il n'est pas seul là-haut : **${listeFr(autres)}** compte${autres.length > 1 ? "nt" : ""} ` +
         `exactement le même nombre de points. Seuls les départages les séparent, et le moindre ` +
         `point marqué peut redistribuer l'ordre du podium.`,
     );
   } else if (e.fiches[1]) {
     const ecart = leader.points - e.fiches[1].points;
     tete.push(
-      `${e.fiches[1].name} suit à ${pts(ecart)}, ce qui ne représente qu'un bon résultat d'écart.`,
+      `**${e.fiches[1].name}** suit à **${pts(ecart)}**, ce qui ne représente qu'un bon résultat d'écart.`,
     );
   }
 
   if (e.meilleureJournee && e.meilleureJournee.derniereJournee > 0) {
     tete.push(
       `La meilleure copie de la journée ${e.numeroDerniereJournee} revient à ` +
-        `${e.meilleureJournee.name}, avec ${pts(e.meilleureJournee.derniereJournee)} marqués.`,
+        `**${e.meilleureJournee.name}**, avec **${pts(e.meilleureJournee.derniereJournee)}** marqués.`,
     );
   }
 
-  sections.push({ kicker: "En tête", titre: "Le patron du moment", paragraphes: tete });
+  sections.push({ kicker: "En tête", titre: "Le patron du moment", emoji: "👑", ton: "or", paragraphes: tete });
 
   // ------------------------------------------------------------------
   // LES REMONTEES
@@ -192,10 +220,10 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     const premier = e.remontees[0];
 
     p.push(
-      `S'il y a un joueur qui résume ce début de championnat, c'est ${premier.name}. ` +
+      `S'il y a un joueur qui résume ce début de championnat, c'est **${premier.name}**. ` +
         `${rangEcrit(premier.etapes[0]?.rang ?? premier.rang).replace(/^./, (c) => c.toUpperCase())} ` +
-        `après la première journée, il est aujourd'hui ${rangEcrit(premier.rang)} : ` +
-        `${places(premier.progression)} gagnées. Son parcours : ${parcoursEcrit(premier.etapes)}.`,
+        `après la première journée, il est aujourd'hui **${rangEcrit(premier.rang)}** : ` +
+        `**${places(premier.progression)} gagnées**. Son parcours : **${parcoursEcrit(premier.etapes)}**.`,
     );
 
     if (premier.rang <= 3) {
@@ -214,14 +242,14 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
     e.remontees.slice(1).forEach((joueur, index) => {
       p.push(
-        `${amorces[index % amorces.length](joueur.name)} : ${places(joueur.progression)} gagnées ` +
-          `depuis la première journée (${parcoursEcrit(joueur.etapes)}), pour ${pts(joueur.points)} ` +
+        `${amorces[index % amorces.length](`**${joueur.name}**`)} : **${places(joueur.progression)} gagnées** ` +
+          `depuis la première journée (**${parcoursEcrit(joueur.etapes)}**), pour **${pts(joueur.points)}** ` +
           `au total. ` +
           `${joueur.rang <= 10 ? "Le voilà installé dans le haut du tableau." : "La dynamique est lancée."}`,
       );
     });
 
-    sections.push({ kicker: "Les remontées", titre: "Ils reviennent de loin", paragraphes: p });
+    sections.push({ kicker: "Les remontées", titre: "Ils reviennent de loin", emoji: "🚀", ton: "vert", paragraphes: p });
   }
 
   // ------------------------------------------------------------------
@@ -232,9 +260,9 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
     for (const joueur of e.chutes) {
       p.push(
-        `${joueur.name} recule de ${places(joueur.progression)} depuis le début ` +
-          `(${parcoursEcrit(joueur.etapes)}) et pointe désormais ${rangEcrit(joueur.rang)} ` +
-          `avec ${pts(joueur.points)}.`,
+        `**${joueur.name}** recule de **${places(joueur.progression)}** depuis le début ` +
+          `(**${parcoursEcrit(joueur.etapes)}**) et pointe désormais **${rangEcrit(joueur.rang)}** ` +
+          `avec **${pts(joueur.points)}**.`,
       );
     }
 
@@ -245,7 +273,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
         `écarts aussi faibles, une seule bonne journée suffit à tout remettre en place.`,
     );
 
-    sections.push({ kicker: "Les dégringolades", titre: "La pente est raide", paragraphes: p });
+    sections.push({ kicker: "Les dégringolades", titre: "La pente est raide", emoji: "📉", ton: "rouge", paragraphes: p });
   }
 
   // ------------------------------------------------------------------
@@ -254,8 +282,8 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   const fin: string[] = [];
   if (e.densite) {
     fin.push(
-      `${nombreEcrit(e.densite.joueurs).replace(/^./, (c) => c.toUpperCase())} joueurs en ` +
-        `${nombreEcrit(e.densite.points)} point${e.densite.points > 1 ? "s" : ""} : ` +
+      `**${nombreEcrit(e.densite.joueurs).replace(/^./, (c) => c.toUpperCase())} joueurs** en ` +
+        `**${nombreEcrit(e.densite.points)} point${e.densite.points > 1 ? "s" : ""}** : ` +
         `c'est dire si tout reste ouvert. Le moindre score exact, ` +
         `une bonne journée, et l'ordre du classement change du tout au tout.`,
     );
@@ -269,11 +297,12 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     `Rendez-vous à la journée ${e.numeroDerniereJournee + 1} pour la suite — et que le meilleur gagne.`,
   );
 
-  sections.push({ kicker: "Et maintenant", titre: "Tout est encore ouvert", paragraphes: fin });
+  sections.push({ kicker: "Et maintenant", titre: "Tout est encore ouvert", emoji: "⏳", ton: "bleu", paragraphes: fin });
 
   return {
     surtitre: `Le grand bilan après ${journees}`,
     titre,
+    emoji: e.exAequoTete > 1 ? "🤯" : "🏆",
     chapeau,
     sections,
   };

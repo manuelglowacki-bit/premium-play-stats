@@ -30,7 +30,7 @@ import { getForeignClubLogo } from "@/lib/clubLogos";
 import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
-import { ecrireRecit } from "@/lib/recitDebrief";
+import { ecrireRecit, morceaux } from "@/lib/recitDebrief";
 import {
   cheminLisible,
   parcoursSaison,
@@ -50,6 +50,35 @@ import {
   FINISHED_STATUSES,
   IN_PROGRESS_STATUSES,
 } from "@/lib/liveMatches";
+
+/** Les quatre tons de l'article. Le texte ne nomme qu'une couleur
+ *  (« or », « vert »...) ; c'est ici qu'elle devient des classes. */
+const TONS = {
+  or: {
+    fond: "bg-amber-400/[.035]",
+    kicker: "text-amber-300",
+    filet: "border-amber-400/40",
+    accent: "text-amber-200",
+  },
+  vert: {
+    fond: "bg-emerald-400/[.035]",
+    kicker: "text-emerald-300",
+    filet: "border-emerald-400/40",
+    accent: "text-emerald-200",
+  },
+  rouge: {
+    fond: "bg-red-400/[.03]",
+    kicker: "text-red-300",
+    filet: "border-red-400/35",
+    accent: "text-red-200",
+  },
+  bleu: {
+    fond: "bg-sky-400/[.035]",
+    kicker: "text-sky-300",
+    filet: "border-sky-400/40",
+    accent: "text-sky-200",
+  },
+} as const;
 
 export const Route = createFileRoute("/debrief")({
   head: () => ({
@@ -1313,55 +1342,98 @@ function DebriefPage() {
           ) : (
             <>
               {/* LE CHAPEAU */}
-              <section className="border-b border-slate-800 px-5 py-9 md:px-10 md:py-12">
+              <section className="relative overflow-hidden border-b border-slate-800 bg-gradient-to-br from-emerald-500/[.10] via-transparent to-fuchsia-500/[.06] px-5 py-9 md:px-10 md:py-12">
                 <p className="font-mono text-[10px] font-black uppercase tracking-[.24em] text-emerald-300">
                   {recit.surtitre}
                 </p>
                 <h2 className="mt-3 max-w-[20ch] font-display text-[2rem] font-black uppercase leading-[.95] tracking-[-.03em] text-white md:text-[3.25rem]">
+                  <span className="mr-2" aria-hidden>
+                    {recit.emoji}
+                  </span>
                   {recit.titre}
                 </h2>
                 {/* Le chapeau : plus gros que le corps, c'est lui qui donne
                     envie de lire la suite. `max-w` en `ch` et non en pixels —
                     une ligne de lecture confortable se mesure en caracteres. */}
                 <p className="mt-5 max-w-[62ch] text-[17px] font-medium leading-[1.65] text-slate-200 md:text-lg">
-                  {recit.chapeau}
+                  {morceaux(recit.chapeau).map((bout, i) =>
+                    bout.accent ? (
+                      <strong key={i} className="font-black text-emerald-300">
+                        {bout.texte}
+                      </strong>
+                    ) : (
+                      <span key={i}>{bout.texte}</span>
+                    ),
+                  )}
                 </p>
               </section>
 
-              {/* LE CORPS DE L'ARTICLE */}
-              {recit.sections.map((section) => (
-                <section
-                  key={section.kicker}
-                  className="border-b border-slate-800 px-5 py-8 md:px-10 md:py-10"
-                >
-                  <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
-                    {section.kicker}
-                  </p>
-                  <h3 className="mt-1.5 font-display text-xl font-black uppercase tracking-[-.02em] text-white md:text-2xl">
-                    {section.titre}
-                  </h3>
-                  <div className="mt-4 max-w-[68ch] space-y-4">
-                    {section.paragraphes.map((paragraphe, index) => (
-                      <p
-                        key={index}
-                        className="text-[15px] leading-[1.75] text-slate-300 md:text-base"
-                      >
-                        {paragraphe}
-                      </p>
-                    ))}
-                  </div>
-                </section>
-              ))}
+              {/* LE CORPS DE L'ARTICLE
+                  Une couleur par section — l'or pour la tete, le vert pour
+                  ceux qui montent, le rouge pour ceux qui tombent, le bleu
+                  pour la suite. Le texte, lui, ne connait pas Tailwind : il
+                  ne donne qu'un nom de ton (voir recitDebrief.ts). */}
+              {recit.sections.map((section) => {
+                const couleurs = TONS[section.ton];
+                return (
+                  <section
+                    key={section.kicker}
+                    className={`border-b border-slate-800 px-5 py-8 md:px-10 md:py-10 ${couleurs.fond}`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl leading-none md:text-3xl" aria-hidden>
+                        {section.emoji}
+                      </span>
+                      <div className="min-w-0">
+                        <p className={`font-mono text-[9px] font-black uppercase tracking-[.2em] ${couleurs.kicker}`}>
+                          {section.kicker}
+                        </p>
+                        <h3 className="mt-0.5 font-display text-xl font-black uppercase tracking-[-.02em] text-white md:text-2xl">
+                          {section.titre}
+                        </h3>
+                      </div>
+                    </div>
+
+                    {/* Le filet colore rattache les paragraphes a leur section
+                        — sans lui, quatre blocs de texte se ressemblent tous. */}
+                    <div className={`mt-4 max-w-[68ch] space-y-4 border-l-2 pl-4 ${couleurs.filet}`}>
+                      {section.paragraphes.map((paragraphe, index) => (
+                        <p
+                          key={index}
+                          className="text-[15px] leading-[1.75] text-slate-300 md:text-base"
+                        >
+                          {morceaux(paragraphe).map((bout, i) =>
+                            bout.accent ? (
+                              <strong key={i} className={`font-bold ${couleurs.accent}`}>
+                                {bout.texte}
+                              </strong>
+                            ) : (
+                              <span key={i}>{bout.texte}</span>
+                            ),
+                          )}
+                        </p>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
 
               {/* LE CLASSEMENT — un journal a aussi ses tableaux. */}
               {grandBilan && (
                 <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-                  <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
-                    Le classement
-                  </p>
-                  <h3 className="mt-1.5 font-display text-xl font-black uppercase text-white md:text-2xl">
-                    Le top {grandBilan.top10.length}
-                  </h3>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl leading-none md:text-3xl" aria-hidden>
+                      📊
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
+                        Le classement
+                      </p>
+                      <h3 className="mt-0.5 font-display text-xl font-black uppercase text-white md:text-2xl">
+                        Le top {grandBilan.top10.length}
+                      </h3>
+                    </div>
+                  </div>
 
                   <div className="mt-4 max-w-[68ch] space-y-1.5">
                     {grandBilan.top10.map((joueur) => (

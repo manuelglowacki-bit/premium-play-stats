@@ -5,6 +5,8 @@
 import {
   ecrireRecit,
   listeFr,
+  morceaux,
+  sansAccents,
   nombreEcrit,
   parcoursEcrit,
   rangEcrit,
@@ -79,7 +81,7 @@ const entrees: EntreesRecit = {
 };
 
 const r = ecrireRecit(entrees)!;
-const tout = [r.chapeau, ...r.sections.flatMap((s) => s.paragraphes)].join(" ");
+const tout = sansAccents([r.chapeau, ...r.sections.flatMap((s) => s.paragraphes)].join(" "));
 
 console.log("\nL'article");
 egal("le surtitre compte les journees", r.surtitre, "Le grand bilan après quatre journées");
@@ -116,7 +118,7 @@ const solo = ecrireRecit({
   fiches: [fiche("Seul", 1, 3, [1])],
   remontees: [], chutes: [], meilleureJournee: null, densite: null, exAequoTete: 1,
 })!;
-const texteSolo = [solo.chapeau, ...solo.sections.flatMap((s) => s.paragraphes)].join(" ");
+const texteSolo = sansAccents([solo.chapeau, ...solo.sections.flatMap((s) => s.paragraphes)].join(" "));
 egal("une seule journee : singulier", solo.surtitre, "Le grand bilan après une journée");
 verifier("un seul joueur : pas d'ex aequo annonce", !texteSolo.includes("égalité"), texteSolo);
 verifier("pas de parcours a raconter sur une journee",
@@ -131,12 +133,36 @@ const unePlace = ecrireRecit({
   exAequoTete: 1,
   meilleureJournee: null,
 })!;
-const texteUne = [unePlace.chapeau, ...unePlace.sections.flatMap((s) => s.paragraphes)].join(" ");
+const texteUne = sansAccents([unePlace.chapeau, ...unePlace.sections.flatMap((s) => s.paragraphes)].join(" "));
 verifier("une seule place : singulier", texteUne.includes("une place") && !texteUne.includes("une places"), texteUne);
 verifier("un seul point : singulier", texteUne.includes("1 point") && !texteUne.includes("1 points"), texteUne);
 
 console.log("\nCas limites");
 egal("aucun joueur : aucun texte", ecrireRecit({ ...entrees, fiches: [] }), null);
+
+console.log("\nLes chiffres mis en avant");
+const brut = [r.chapeau, ...r.sections.flatMap((s) => s.paragraphes)].join(" ");
+verifier("des passages sont marques", brut.includes("**"), brut.slice(0, 120));
+verifier("les marqueurs vont par paires", (brut.match(/\*\*/g) ?? []).length % 2 === 0,
+  `${(brut.match(/\*\*/g) ?? []).length} marqueurs`);
+egal("sansAccents les retire", sansAccents("un **gros** chiffre"), "un gros chiffre");
+egal("morceaux separe le texte et l'accent",
+  morceaux("un **gros** chiffre"),
+  [{ texte: "un ", accent: false }, { texte: "gros", accent: true }, { texte: " chiffre", accent: false }]);
+egal("un texte sans marqueur reste entier",
+  morceaux("rien a signaler"), [{ texte: "rien a signaler", accent: false }]);
+egal("un texte vide ne produit rien", morceaux(""), []);
+verifier("aucun marqueur ne survit a l'affichage",
+  morceaux(brut).every((m) => !m.texte.includes("**")));
+
+console.log("\nEmojis et couleurs");
+verifier("le titre porte un emoji", r.emoji.length > 0, r.emoji);
+verifier("chaque section a un emoji", r.sections.every((s) => s.emoji.length > 0));
+verifier("chaque section a une couleur",
+  r.sections.every((s) => ["or", "vert", "rouge", "bleu"].includes(s.ton)));
+verifier("les couleurs ne sont pas toutes identiques",
+  new Set(r.sections.map((s) => s.ton)).size > 1,
+  JSON.stringify(r.sections.map((s) => s.ton)));
 
 console.log("\n" + "=".repeat(62));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);
