@@ -33,6 +33,7 @@ import { rankPlayers } from "@/lib/leaderboardRanking";
 import { ecrireRecit, morceaux } from "@/lib/recitDebrief";
 import {
   cheminLisible,
+  journeeTerminee,
   parcoursSaison,
   progressionTotale,
 } from "@/lib/parcoursSaison";
@@ -1119,7 +1120,19 @@ function DebriefPage() {
   const grandBilan = useMemo(() => {
     if (rankedPlayers.length === 0) return null;
 
-    // Uniquement les journees de Ligue 1 dont au moins un match est joue.
+    // UNE JOURNEE N'EST RACONTEE QUE LORSQU'ELLE EST ENTIEREMENT TERMINEE —
+    // matchs de Ligue 1 ET matchs bonus.
+    //
+    // Un bilan qui bouge pendant que les matchs se jouent n'est pas un bilan :
+    // le classement change a chaque but, et le joueur qui lit le samedi soir
+    // voit un article que le dimanche dementira. En n'ouvrant la page qu'une
+    // fois tout joue, elle bascule d'elle-meme le dimanche soir — sans tache
+    // programmee, c'est la donnee qui decide.
+    //
+    // CONSEQUENCE ASSUMEE, decidee par l'organisateur : un match bonus laisse
+    // sans score empeche sa journee d'etre racontee. Le Debrief reste alors
+    // sur la precedente — c'est visible immediatement, et le remede est de
+    // saisir le score manquant (Admin -> Bonus -> Modifier le bonus).
     const journeesJouees = journees
       .map((journee) => {
         const tous = [...journee.matches, ...journee.bonus];
@@ -1128,10 +1141,11 @@ function DebriefPage() {
           id: String(journee.id),
           numero: Number(journee.number) || 0,
           matchIds: tous.map((match: any) => String(match.id)),
+          terminee: journeeTerminee(tous.map((match: any) => isActuallyFinished(match))),
           joues: joues.length,
         };
       })
-      .filter((journee) => journee.joues > 0 && journee.numero > 0);
+      .filter((journee) => journee.numero > 0 && journee.terminee);
 
     if (journeesJouees.length === 0) return null;
 
@@ -1286,7 +1300,11 @@ function DebriefPage() {
                   <span className="capitalize">
                     {new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
                   </span>
-                  {currentJournee?.title ? <span className="text-slate-600"> · {currentJournee.title}</span> : null}
+                  {/* La journee RACONTEE, pas celle du calendrier : pendant
+                      que la J5 se joue, le Debrief parle encore de la J4. */}
+                  {grandBilan ? (
+                    <span className="text-slate-600"> · Journée {grandBilan.derniereJournee}</span>
+                  ) : null}
                 </p>
               </div>
 

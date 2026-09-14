@@ -5,6 +5,7 @@
 import { rankPlayers } from "./leaderboardRanking";
 import {
   cheminLisible,
+  journeeTerminee,
   parcoursSaison,
   progressionTotale,
   type JourneeSaison,
@@ -110,6 +111,15 @@ egal("chemin vide", cheminLisible([]), "");
 
 const sansJoueur = parcoursSaison({ ...base, joueurs: [] });
 egal("aucun joueur : aucune entree", [...sansJoueur.keys()], []);
+
+console.log("\nUne journee entierement terminee");
+egal("tous les matchs joues", journeeTerminee([true, true, true]), true);
+egal("un seul match non joue : pas terminee", journeeTerminee([true, true, false]), false);
+egal("un match bonus oublie bloque la journee",
+  journeeTerminee([true, true, true, true, true, true, true, true, true, false]), false);
+egal("aucun match : pas terminee, elle n'a pas commence", journeeTerminee([]), false);
+egal("un seul match, joue", journeeTerminee([true]), true);
+egal("un seul match, pas joue", journeeTerminee([false]), false);
 
 console.log("\n" + "=".repeat(60));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);

@@ -133,3 +133,18 @@ export function progressionTotale(etapes: readonly EtapeParcours[]): number {
 export function cheminLisible(etapes: readonly EtapeParcours[]): string {
   return etapes.map((e) => (e.rang === 1 ? "1er" : `${e.rang}e`)).join(" → ");
 }
+
+/**
+ * UNE JOURNEE EST-ELLE ENTIEREMENT TERMINEE ?
+ *
+ * Tous ses matchs doivent l'etre — ceux de Ligue 1 comme les matchs bonus.
+ * C'est ce qui permet au Debrief de ne raconter que des journees closes :
+ * un bilan qui bouge pendant que les matchs se jouent n'est pas un bilan.
+ *
+ * Une journee sans aucun match n'est pas « terminee » : elle n'a simplement
+ * pas commence. Sans cette garde, une journee vide au calendrier passerait
+ * pour jouee et le Debrief raconterait une journee sans resultat.
+ */
+export function journeeTerminee(matchsTermines: readonly boolean[]): boolean {
+  return matchsTermines.length > 0 && matchsTermines.every(Boolean);
+}
