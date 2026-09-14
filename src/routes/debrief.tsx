@@ -34,6 +34,15 @@ import { ecrireRecit, morceaux, rangEcrit } from "@/lib/recitDebrief";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { lireArticle } from "@/lib/articleManuel";
 import { pseudoActuel } from "@/lib/joueurs";
+import { useAuth } from "@/context/AuthContext";
+import {
+  EMOJIS_DEBRIEF,
+  apresLeGeste,
+  gesteAuClic,
+  reactionsParArticle,
+  type LigneReaction,
+  type ReactionsArticle,
+} from "@/lib/reactionsDebrief";
 import {
   journeesDeLaSaison,
   matchsDuClassement,
@@ -766,6 +775,13 @@ function EditorialEmptyState({
 function DebriefPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { user } = useAuth();
+  // LES REACTIONS DES JOUEURS. Chargees une fois, puis mises a jour sur place
+  // au clic : un compteur qui attend le serveur donne l'impression que le
+  // clic n'a pas marche, et le joueur reclique.
+  const [reactions, setReactions] = useState<Map<string, ReactionsArticle>>(new Map());
+  const [reactionEnCours, setReactionEnCours] = useState<string | null>(null);
+
   const [journees, setJournees] = useState<Journee[]>([]);
   // L'article ecrit a la main par l'organisateur. Quand il est rempli, c'est
   // lui qui s'affiche a la place du texte calcule.
@@ -1338,6 +1354,81 @@ function DebriefPage() {
     };
   }, [rankedPlayers, journees, pointsFor, leagueStats, predictionsByUser, matchesById]);
 
+  // ============================================================
+  // LES REACTIONS
+  // ============================================================
+  const journeeRacontee = grandBilan?.derniereJournee ?? null;
+
+  useEffect(() => {
+    if (!journeeRacontee) return;
+    let annule = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("debrief_reactions")
+        .select("user_id, journee, article, emoji")
+        .eq("journee", journeeRacontee);
+
+      // Tant que la table n'existe pas (migration pas encore passee), la page
+      // s'affiche normalement sans barre de reactions — jamais d'erreur
+      // rouge pour une fonctionnalite d'agrement.
+      if (annule || error || !data) return;
+      setReactions(reactionsParArticle(data as LigneReaction[], journeeRacontee, user?.id ?? null));
+    })();
+
+    return () => {
+      annule = true;
+    };
+  }, [journeeRacontee, user?.id]);
+
+  async function reagir(article: string, emoji: string) {
+    if (!user?.id || !journeeRacontee) return;
+
+    const avant = reactions.get(article);
+    const geste = gesteAuClic(avant?.lemien ?? null, emoji);
+    if (geste.action === "rien") return;
+
+    // Affichage immediat, puis enregistrement. En cas d'echec on remet
+    // exactement l'etat precedent : mieux vaut un compteur qui revient en
+    // arriere qu'un compteur qui ment.
+    setReactions((actuelles) => new Map(actuelles).set(article, apresLeGeste(avant, geste)));
+    setReactionEnCours(article);
+
+    try {
+      if (geste.action === "retirer") {
+        const { error } = await supabase
+          .from("debrief_reactions")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("journee", journeeRacontee)
+          .eq("article", article);
+        if (error) throw error;
+      } else {
+        // `upsert` sur (user_id, journee, article) : c'est l'index unique de
+        // la base qui garantit « une reaction par joueur et par article »,
+        // pas une verification cote site qu'un double clic contournerait.
+        const { error } = await supabase
+          .from("debrief_reactions")
+          .upsert(
+            { user_id: user.id, journee: journeeRacontee, article, emoji: geste.emoji },
+            { onConflict: "user_id,journee,article" },
+          );
+        if (error) throw error;
+      }
+    } catch (err) {
+      console.error("Reaction non enregistree", err);
+      setReactions((actuelles) => {
+        const remises = new Map(actuelles);
+        if (avant) remises.set(article, avant);
+        else remises.delete(article);
+        return remises;
+      });
+    } finally {
+      setReactionEnCours(null);
+    }
+  }
+
+
   // L'ARTICLE DE L'ORGANISATEUR, decoupe en blocs affichables. Vide tant
   // qu'il n'a rien colle dans Admin — la page reprend alors son texte.
   const blocsManuels = useMemo(() => lireArticle(articleManuel.texte), [articleManuel.texte]);
@@ -1601,6 +1692,17 @@ function DebriefPage() {
                           </p>
                         </blockquote>
                       )}
+
+                      {/* LES REACTIONS. Discretes tant que personne n'a
+                          reagi : c'est un article, pas un reseau social. Un
+                          emoji deja choisi se retire en recliquant dessus. */}
+                      <BarreReactions
+                        article={section.cle}
+                        etat={reactions.get(section.cle)}
+                        peutReagir={Boolean(user?.id) && journeeRacontee != null}
+                        occupe={reactionEnCours === section.cle}
+                        onReagir={(emoji) => reagir(section.cle, emoji)}
+                      />
                     </div>
 
                     {/* LA MARGE : encadres et parcours. Sous le texte sur
@@ -1728,6 +1830,85 @@ function DebriefPage() {
         </article>
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * LA BARRE DE REACTIONS D'UN ARTICLE.
+ *
+ * Au repos elle ne montre que les emojis deja choisis, en petit : la page
+ * reste un journal. Elle s'ouvre au survol ou au clic sur le « + », et le
+ * bouton qu'on a soi-meme choisi est cercle de vert.
+ */
+function BarreReactions({
+  article,
+  etat,
+  peutReagir,
+  occupe,
+  onReagir,
+}: {
+  article: string;
+  etat: ReactionsArticle | undefined;
+  peutReagir: boolean;
+  occupe: boolean;
+  onReagir: (emoji: string) => void;
+}) {
+  const [ouverte, setOuverte] = useState(false);
+  const comptes = etat?.comptes ?? {};
+  const lemien = etat?.lemien ?? null;
+  const total = etat?.total ?? 0;
+
+  // Les emojis a montrer au repos : ceux qui ont au moins une voix.
+  const choisis = EMOJIS_DEBRIEF.filter((emoji) => (comptes[emoji] ?? 0) > 0);
+  const toutMontrer = ouverte || total === 0;
+  const aMontrer = toutMontrer ? [...EMOJIS_DEBRIEF] : choisis;
+
+  if (!peutReagir && total === 0) return null;
+
+  return (
+    <div className="mt-6 flex flex-wrap items-center gap-1.5">
+      {aMontrer.map((emoji) => {
+        const compte = comptes[emoji] ?? 0;
+        const cestMoi = lemien === emoji;
+        return (
+          <button
+            key={`${article}-${emoji}`}
+            type="button"
+            disabled={!peutReagir || occupe}
+            onClick={() => onReagir(emoji)}
+            aria-pressed={cestMoi}
+            aria-label={`Réagir ${emoji}${compte > 0 ? ` — ${compte}` : ""}`}
+            className={`tap inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              cestMoi
+                ? "border-emerald-400/60 bg-emerald-400/[.12]"
+                : "border-slate-800 hover:border-slate-600"
+            }`}
+          >
+            <span aria-hidden>{emoji}</span>
+            {compte > 0 && (
+              <span
+                className={`font-mono text-[11px] font-black tabular-nums ${
+                  cestMoi ? "text-emerald-300" : "text-slate-500"
+                }`}
+              >
+                {compte}
+              </span>
+            )}
+          </button>
+        );
+      })}
+
+      {!toutMontrer && peutReagir && (
+        <button
+          type="button"
+          onClick={() => setOuverte(true)}
+          aria-label="Choisir une réaction"
+          className="tap inline-flex size-8 items-center justify-center rounded-full border border-slate-800 font-mono text-xs font-black text-slate-500 transition-colors hover:border-slate-600 hover:text-slate-300"
+        >
+          +
+        </button>
+      )}
+    </div>
   );
 }
 

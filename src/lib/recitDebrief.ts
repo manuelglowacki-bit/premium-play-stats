@@ -82,6 +82,15 @@ export type EncadreRecit = {
  * charge, et peut changer d'habillage sans qu'une ligne de redaction bouge.
  */
 export type SectionRecit = {
+  /**
+   * L'IDENTITE DE L'ARTICLE, stable dans le temps.
+   *
+   * L'intertitre contient un pseudo et change donc d'une journee a l'autre
+   * (« FCS, de l'ombre a la lumiere » devient « Lulu, … »). Les reactions des
+   * joueurs doivent se rattacher a quelque chose qui ne bouge pas : c'est
+   * cette clef, et non le titre affiche.
+   */
+  cle: string;
   intertitre: string;
   paragraphes: string[];
   /** La phrase detachee en gros caracteres, s'il y en a une. */
@@ -368,6 +377,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
 
     dejaCites.add(leader.id);
     sections.push({
+      cle: "leader",
       intertitre,
       paragraphes: p,
       phraseForte:
@@ -405,6 +415,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
     );
 
     sections.push({
+      cle: "tete",
       intertitre:
         exAequo.length > 1
           ? `${maj(nombreEcrit(exAequo.length))} joueurs, un même objectif`
@@ -443,6 +454,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
 
     dejaCites.add(grimpeur.id);
     sections.push({
+      cle: "grimpeur",
       intertitre: `${grimpeur.name}, la remontée qui impressionne`,
       paragraphes: p,
       phraseForte:
@@ -485,6 +497,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
 
     dejaCites.add(regulier.id);
     sections.push({
+      cle: "regulier",
       intertitre: `${regulier.name}, la régularité qui paie`,
       paragraphes: p,
       phraseForte: `${regulier.name} ne fait pas de bruit. ${maj(accordsDe(regulier.name).aUnPronom ? il(regulier) : regulier.name)} avance. Et ${accordsDe(regulier.name).aUnPronom ? il(regulier) : regulier.name} est désormais à ${pts(regulier.points)}.`,
@@ -520,6 +533,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
 
     dejaCites.add(ancienLeader.id);
     sections.push({
+      cle: "ancien-leader",
       intertitre: `${ancienLeader.name}, le leader qui a perdu sa place… mais pas le contact`,
       paragraphes: p,
     });
@@ -555,6 +569,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
 
     embusques.forEach((f) => dejaCites.add(f.id));
     sections.push({
+      cle: "embusques",
       intertitre: `${listeFr(embusques.map((f) => f.name))}, toujours en embuscade`,
       paragraphes: p,
     });
@@ -580,6 +595,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
 
     autresRemontees.slice(0, 3).forEach((f) => dejaCites.add(f.id));
     sections.push({
+      cle: "remontees",
       intertitre:
         autresRemontees.length > 1
           ? `Ils ont gagné du terrain ce week-end`
@@ -612,6 +628,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
     );
 
     sections.push({
+      cle: "chutes",
       intertitre: `À l'inverse, certains ont perdu du terrain`,
       paragraphes: p,
     });
@@ -630,6 +647,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
     const amplitude = leader.points - dernier;
 
     sections.push({
+      cle: "chiffre",
       intertitre: `Le chiffre à retenir`,
       paragraphes: [
         `**${maj(nombreEcrit(paquet.length))} joueurs** sont actuellement regroupés entre ` +
@@ -696,6 +714,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
     }
 
     sections.push({
+      cle: "conclusion",
       intertitre: `Cap sur la journée ${suivante}`,
       paragraphes: p,
       phraseForte: e_.densite

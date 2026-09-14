@@ -195,6 +195,20 @@ egal("aucun joueur : aucun texte", ecrireRecit({ ...entrees, fiches: [] }), null
     solo.sections.every((s) => (s.echelles ?? []).length === 0));
 }
 
+
+console.log("\nLes clefs d'article (ce a quoi les reactions se rattachent)");
+{
+  const clefs = r.sections.map((s) => s.cle);
+  verifier("chaque article a une clef", clefs.every(Boolean), JSON.stringify(clefs));
+  verifier("aucune clef en double", new Set(clefs).size === clefs.length, JSON.stringify(clefs));
+  // La clef ne doit PAS dependre du titre affiche : celui-ci contient un
+  // pseudo et change d'une journee a l'autre. Les reactions se perdraient.
+  verifier("la clef ne contient aucun pseudo",
+    clefs.every((c) => !/FCS|Lulu|Sanji|Quentin|Max|Mel11/i.test(c)), JSON.stringify(clefs));
+  verifier("la clef du leader est stable", clefs.includes("leader"), JSON.stringify(clefs));
+  verifier("celle de la conclusion aussi", clefs.includes("conclusion"), JSON.stringify(clefs));
+}
+
 console.log("\n" + "=".repeat(64));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);
 if (echecs > 0) process.exit(1);
