@@ -7,6 +7,7 @@ import {
   cheminLisible,
   journeeTerminee,
   parcoursSaison,
+  progressionJournee,
   progressionTotale,
   type JourneeSaison,
   type JoueurSaison,
@@ -130,6 +131,34 @@ egal("un match bonus oublie bloque la journee",
 egal("aucun match : pas terminee, elle n'a pas commence", journeeTerminee([]), false);
 egal("un seul match, joue", journeeTerminee([true]), true);
 egal("un seul match, pas joue", journeeTerminee([false]), false);
+
+
+console.log("\nLe mouvement sur la SEULE derniere journee");
+// La distinction qui a fait dire a l'organisateur que l'article n'avait
+// « plus aucun sens » : un joueur peut monter sur la saison et descendre
+// sur la journee racontee. Les deux chiffres ne disent pas la meme chose.
+{
+  const etapes = [
+    { numero: 1, rang: 19, points: 4, gainJournee: 4, exactScores: 0 },
+    { numero: 2, rang: 20, points: 9, gainJournee: 5, exactScores: 0 },
+    { numero: 3, rang: 7, points: 22, gainJournee: 13, exactScores: 1 },
+    { numero: 4, rang: 11, points: 25, gainJournee: 3, exactScores: 1 },
+  ];
+  egal("sur la saison il a gagne huit places", progressionTotale(etapes), 8);
+  egal("sur la journee il en a perdu quatre", progressionJournee(etapes), -4);
+}
+egal("aucune etape : aucun mouvement", progressionJournee([]), 0);
+egal("une seule journee : aucun mouvement", progressionJournee([
+  { numero: 1, rang: 3, points: 5, gainJournee: 5, exactScores: 0 },
+]), 0);
+egal("deux journees : la difference des deux rangs", progressionJournee([
+  { numero: 1, rang: 8, points: 3, gainJournee: 3, exactScores: 0 },
+  { numero: 2, rang: 5, points: 9, gainJournee: 6, exactScores: 0 },
+]), 3);
+egal("un joueur qui ne bouge pas : zero", progressionJournee([
+  { numero: 1, rang: 5, points: 3, gainJournee: 3, exactScores: 0 },
+  { numero: 2, rang: 5, points: 9, gainJournee: 6, exactScores: 0 },
+]), 0);
 
 console.log("\n" + "=".repeat(60));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);

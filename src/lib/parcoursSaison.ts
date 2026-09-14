@@ -132,6 +132,21 @@ export function progressionTotale(etapes: readonly EtapeParcours[]): number {
   return etapes[0].rang - etapes[etapes.length - 1].rang;
 }
 
+/**
+ * LE MOUVEMENT SUR LA SEULE DERNIERE JOURNEE : rang de la veille moins rang
+ * du soir. Positif = montee.
+ *
+ * A ne pas confondre avec `progressionTotale`. Un Debrief qui raconte la
+ * journee 4 doit dire qui a gagne des places SUR LA JOURNEE 4. Presenter
+ * comme « il revient de loin » un joueur qui vient de perdre quatre places
+ * parce qu'il avait bien demarre la saison n'a aucun sens pour qui lit
+ * l'article le lundi matin.
+ */
+export function progressionJournee(etapes: readonly EtapeParcours[]): number {
+  if (etapes.length < 2) return 0;
+  return etapes[etapes.length - 2].rang - etapes[etapes.length - 1].rang;
+}
+
 /** « 17e → 9e → 6e → 1er », pour l'affichage. */
 export function cheminLisible(etapes: readonly EtapeParcours[]): string {
   return etapes.map((e) => (e.rang === 1 ? "1er" : `${e.rang}e`)).join(" → ");

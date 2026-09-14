@@ -25,7 +25,12 @@ export type FicheRecit = {
   rang: number;
   points: number;
   exactScores: number;
+  /** Places gagnees DEPUIS LE DEBUT. Positif = montee. */
   progression: number;
+  /** Places gagnees SUR LA SEULE journee racontee. Positif = montee. */
+  mouvement: number;
+  /** Rang au soir de la journee precedente, `null` s'il n'y en a pas. */
+  rangVeille?: number | null;
   derniereJournee: number;
   etapes: EtapeRecit[];
 };
@@ -34,8 +39,12 @@ export type EntreesRecit = {
   journeesJouees: number;
   numeroDerniereJournee: number;
   fiches: FicheRecit[];
+  /** Ceux qui ont gagne des places SUR la journee racontee. */
   remontees: FicheRecit[];
+  /** Ceux qui en ont perdu SUR la journee racontee. */
   chutes: FicheRecit[];
+  /** La plus belle trajectoire depuis la 1re journee — une autre histoire. */
+  trajectoire?: FicheRecit | null;
   meilleureJournee: FicheRecit | null;
   densite: { joueurs: number; points: number } | null;
   exAequoTete: number;
@@ -274,12 +283,16 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   if (e.remontees.length > 0) {
     const p: string[] = [];
     const premier = e.remontees[0];
+    const jour = e.numeroDerniereJournee;
 
+    // LE MOUVEMENT DE LA JOURNEE, pas celui de la saison : c'est un Debrief
+    // de journee. Le parcours complet reste cite juste apres, en contexte.
     p.push(
-      `S'il y a un joueur qui résume ce début de championnat, c'est **${premier.name}**. ` +
-        `${rangEcrit(premier.etapes[0]?.rang ?? premier.rang).replace(/^./, (c) => c.toUpperCase())} ` +
-        `après la première journée, il est aujourd'hui **${rangEcrit(premier.rang)}** : ` +
-        `**${places(premier.progression)} gagnées**. Son parcours : **${parcoursEcrit(premier.etapes)}**.`,
+      `Le plus beau coup de cette **${jour}e journée** est signé **${premier.name}** : ` +
+        `**${places(premier.mouvement)} gagnées** en une journée, ` +
+        `${premier.rangVeille != null ? `de **${rangEcrit(premier.rangVeille)}** à ` : `désormais `}` +
+        `**${rangEcrit(premier.rang)}**. Il a marqué **${pts(premier.derniereJournee)}** ce week-end. ` +
+        `Son parcours depuis le début : **${parcoursEcrit(premier.etapes)}**.`,
     );
 
     if (premier.rang <= 3) {
@@ -298,14 +311,27 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
     e.remontees.slice(1).forEach((joueur, index) => {
       p.push(
-        `${amorces[index % amorces.length](`**${joueur.name}**`)} : **${places(joueur.progression)} gagnées** ` +
-          `depuis la première journée (**${parcoursEcrit(joueur.etapes)}**), pour **${pts(joueur.points)}** ` +
-          `au total. ` +
+        `${amorces[index % amorces.length](`**${joueur.name}**`)} : **${places(joueur.mouvement)} gagnées** ` +
+          `sur la journée${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""} ` +
+          `(**${pts(joueur.derniereJournee)}** marqués), pour **${pts(joueur.points)}** au total. ` +
           `${joueur.rang <= 10 ? "Le voilà installé dans le haut du tableau." : "La dynamique est lancée."}`,
       );
     });
 
-    sections.push({ kicker: "Les remontées", titre: "Ils reviennent de loin", emoji: "🚀", ton: "vert", paragraphes: p });
+    // LA SAISON, en une phrase et a part. Un joueur peut avoir la plus belle
+    // trajectoire depuis la J1 sans avoir bouge ce week-end : les deux
+    // histoires sont vraies, mais ce ne sont pas les memes.
+    const t = e.trajectoire;
+    if (t && t.progression > 0 && t.id !== premier.id) {
+      p.push(
+        `Sur l'ensemble de la saison, la plus belle trajectoire reste celle de **${t.name}** : ` +
+          `${rangEcrit(t.etapes[0]?.rang ?? t.rang)} après la première journée, ` +
+          `**${rangEcrit(t.rang)}** aujourd'hui, soit **${places(t.progression)} gagnées** ` +
+          `(**${parcoursEcrit(t.etapes)}**).`,
+      );
+    }
+
+    sections.push({ kicker: "Les remontées", titre: "Ils ont grimpé ce week-end", emoji: "🚀", ton: "vert", paragraphes: p });
   }
 
   // ------------------------------------------------------------------
@@ -316,9 +342,9 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
     for (const joueur of e.chutes) {
       p.push(
-        `**${joueur.name}** recule de **${places(joueur.progression)}** depuis le début ` +
-          `(**${parcoursEcrit(joueur.etapes)}**) et pointe désormais **${rangEcrit(joueur.rang)}** ` +
-          `avec **${pts(joueur.points)}**.`,
+        `**${joueur.name}** recule de **${places(-joueur.mouvement)}** sur cette journée` +
+          `${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""} ` +
+          `et totalise **${pts(joueur.points)}**. Son parcours : **${parcoursEcrit(joueur.etapes)}**.`,
       );
     }
 
@@ -329,7 +355,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
         `écarts aussi faibles, une seule bonne journée suffit à tout remettre en place.`,
     );
 
-    sections.push({ kicker: "Les dégringolades", titre: "La pente est raide", emoji: "📉", ton: "rouge", paragraphes: p });
+    sections.push({ kicker: "Les dégringolades", titre: "Ils ont reculé ce week-end", emoji: "📉", ton: "rouge", paragraphes: p });
   }
 
   // ------------------------------------------------------------------
@@ -342,7 +368,11 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
   if (derniers.length > 0 && e.fiches.length > 6) {
     const p: string[] = [];
-    const retard = leader.points - derniers[0].points;
+    // Le retard se lit sur TOUT le groupe. Le calculer sur le mieux classe
+    // des trois donnait un chiffre qui ne correspondait a aucun des noms
+    // cites juste avant — le dernier etait bien plus loin que ca.
+    const retardMin = leader.points - derniers[0].points;
+    const retardMax = leader.points - derniers[derniers.length - 1].points;
 
     p.push(
       derniers
@@ -351,7 +381,10 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     );
 
     p.push(
-      `Le retard sur la tête est de **${pts(retard)}**, ce qui paraît beaucoup — mais ` +
+      `${retardMax > retardMin
+        ? `Le retard sur la tête va de **${pts(retardMin)}** à **${pts(retardMax)}**`
+        : `Le retard sur la tête est de **${pts(retardMax)}**`}, ` +
+        `ce qui paraît beaucoup — mais ` +
         `${derniers.some((f) => f.derniereJournee > 0)
           ? "ils continuent de marquer, et"
           : "avec des écarts qui se comblent vite,"} ` +

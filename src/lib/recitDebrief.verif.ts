@@ -59,6 +59,8 @@ function fiche(name: string, rang: number, points: number, rangs: number[], exac
   return {
     id: name, name, rang, points, exactScores: exact,
     progression: rangs.length > 1 ? rangs[0] - rangs[rangs.length - 1] : 0,
+    mouvement: rangs.length > 1 ? rangs[rangs.length - 2] - rangs[rangs.length - 1] : 0,
+    rangVeille: rangs.length > 1 ? rangs[rangs.length - 2] : null,
     derniereJournee: derniere,
     etapes: rangs.map((r, i) => ({ numero: i + 1, rang: r, points: 0, gainJournee: 0 })),
   };
@@ -206,6 +208,74 @@ verifier("les couleurs ne sont pas toutes identiques",
 verifier("deux sections qui se suivent n'ont jamais la meme couleur",
   complet.sections.every((s, i) => i === 0 || s.ton !== complet.sections[i - 1].ton),
   JSON.stringify(complet.sections.map((s) => `${s.kicker}:${s.ton}`)));
+
+
+console.log("\nL'article parle de LA JOURNEE, pas de la saison");
+// Le defaut signale par l'organisateur : « Chris » etait presente comme
+// revenant de loin (19e a la J1, 11e aujourd'hui) alors qu'il venait de
+// PERDRE quatre places sur la journee racontee.
+{
+  // Le rang d'une fiche doit toujours egaler le dernier rang de son parcours,
+  // et les points suivre les rangs : c'est ce que produit le Debrief.
+  const chris = fiche("Chris", 11, 15, [19, 20, 7, 11], 0, 3);   // saison +8, journee -4
+  const marseillais = fiche("Marseillais", 9, 18, [23, 23, 11, 9], 0, 8); // saison +14, journee +2
+
+  verifier("un joueur qui recule sur la journee n'est pas une remontee",
+    chris.mouvement === -4 && chris.progression === 8,
+    `mouvement ${chris.mouvement}, progression ${chris.progression}`);
+
+  const art = ecrireRecit({
+    ...entrees,
+    fiches: [fcs, lulu, sanji, marseillais, chris],
+    remontees: [marseillais],
+    chutes: [chris],
+    trajectoire: marseillais,
+  })!;
+  const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
+
+  verifier("la remontee est chiffree sur la journee, pas sur la saison",
+    texte.includes("deux places gagnées") && !texte.includes("14 places gagnées"),
+    texte.slice(0, 500));
+  verifier("le rang de la veille est donne",
+    texte.includes("de 11e à 9e"), texte.slice(0, 500));
+  verifier("le parcours complet reste cite en contexte",
+    texte.includes("23e, puis 23e, puis 11e, et enfin 9e"), texte.slice(0, 500));
+  verifier("celui qui a recule est bien dans les chutes, sur la journee",
+    texte.includes("Chris recule de quatre places sur cette journée"), texte);
+  verifier("les titres de sections parlent du week-end",
+    art.sections.some((x) => x.titre === "Ils ont grimpé ce week-end") ||
+    art.sections.some((x) => x.titre.includes("grimp")), JSON.stringify(art.sections.map((x) => x.titre)));
+}
+
+console.log("\nLe retard du bas de tableau");
+// Il etait calcule sur le MIEUX classe des trois derniers : le chiffre ne
+// correspondait a aucun des noms cites juste avant.
+{
+  const bas = [
+    fcs, lulu, sanji,
+    fiche("A", 4, 40, [4, 4, 4, 4], 0, 5),
+    fiche("B", 5, 38, [5, 5, 5, 5], 0, 5),
+    fiche("C", 6, 36, [6, 6, 6, 6], 0, 5),
+    fiche("D", 7, 34, [7, 7, 7, 7], 0, 5),
+    fiche("Lolomat62", 8, 25, [8, 8, 8, 8], 0, 2),
+    fiche("Red Evils", 9, 22, [9, 9, 9, 9], 0, 2),
+    fiche("Nour", 10, 16, [10, 10, 10, 10], 0, 1),
+  ];
+  // Le leader du tableau ci-dessus est `fcs`, 25 points : on prend donc un
+  // leader plus haut pour que l'ecart soit lisible.
+  const tete = fiche("Tete", 1, 51, [1, 1, 1, 1], 0, 9);
+  const art = ecrireRecit({
+    ...entrees,
+    fiches: [tete, ...bas.slice(3)],
+    remontees: [], chutes: [], trajectoire: null,
+  })!;
+  const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
+
+  verifier("le retard est donne en fourchette, du premier au dernier du groupe",
+    texte.includes("va de 26 points à 35 points"), texte.slice(-600));
+  verifier("l'ancien chiffre seul a disparu",
+    !texte.includes("Le retard sur la tête est de 26 points"), texte.slice(-600));
+}
 
 console.log("\n" + "=".repeat(62));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);

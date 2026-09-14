@@ -36,6 +36,7 @@ import {
   cheminLisible,
   journeeTerminee,
   parcoursSaison,
+  progressionJournee,
   progressionTotale,
 } from "@/lib/parcoursSaison";
 import {
@@ -1233,6 +1234,10 @@ function DebriefPage() {
         etapes,
         chemin: cheminLisible(etapes),
         progression: progressionTotale(etapes),
+        // Le mouvement SUR la journee racontee — c'est lui qui decide qui
+        // monte et qui descend dans l'article. Voir progressionJournee().
+        mouvement: progressionJournee(etapes),
+        rangVeille: etapes.length >= 2 ? etapes[etapes.length - 2].rang : null,
         // Points marques sur la derniere journee jouee.
         derniereJournee: etapes[etapes.length - 1]?.gainJournee ?? 0,
       };
@@ -1244,15 +1249,25 @@ function DebriefPage() {
 
     const parId = new Map(fiches.map((f) => [f.id, f]));
 
+    // QUI MONTE ET QUI DESCEND SUR LA JOURNEE RACONTEE — pas sur la saison.
+    // Un joueur parti de la 23e place et 9e aujourd'hui a une belle saison,
+    // mais s'il vient de perdre quatre places il n'a rien a faire dans « ils
+    // reviennent de loin » d'un Debrief de la journee 4.
     const remontees = [...fiches]
-      .filter((f) => f.progression > 0 && f.etapes.length >= 2)
-      .sort((a, b) => b.progression - a.progression || a.rang - b.rang)
+      .filter((f) => f.mouvement > 0 && f.etapes.length >= 2)
+      .sort((a, b) => b.mouvement - a.mouvement || a.rang - b.rang)
       .slice(0, 3);
 
     const chutes = [...fiches]
-      .filter((f) => f.progression < 0 && f.etapes.length >= 2)
-      .sort((a, b) => a.progression - b.progression || a.rang - b.rang)
+      .filter((f) => f.mouvement < 0 && f.etapes.length >= 2)
+      .sort((a, b) => a.mouvement - b.mouvement || a.rang - b.rang)
       .slice(0, 3);
+
+    // La plus belle trajectoire DEPUIS LE DEBUT, gardee a part : c'est une
+    // autre histoire que celle de la journee, et elle merite sa phrase.
+    const trajectoire = [...fiches]
+      .filter((f) => f.progression > 0 && f.etapes.length >= 3)
+      .sort((a, b) => b.progression - a.progression || a.rang - b.rang)[0] ?? null;
 
     // La meilleure journee du groupe, celle dont on parle le lendemain.
     const meilleureJournee = [...fiches]
@@ -1276,6 +1291,7 @@ function DebriefPage() {
       top10: fiches.slice(0, 10),
       remontees,
       chutes,
+      trajectoire,
       meilleureJournee,
       densite,
       exAequoTete,
@@ -1291,6 +1307,7 @@ function DebriefPage() {
       fiches: grandBilan.fiches,
       remontees: grandBilan.remontees,
       chutes: grandBilan.chutes,
+      trajectoire: grandBilan.trajectoire,
       meilleureJournee: grandBilan.meilleureJournee,
       densite: grandBilan.densite,
       exAequoTete: grandBilan.exAequoTete,
