@@ -32,6 +32,8 @@ export type EtapeParcours = {
   points: number;
   /** Points marques SUR cette journee. */
   gainJournee: number;
+  /** Scores exacts cumules a l'issue de cette journee. */
+  exactScores: number;
 };
 
 export type LigneClassable = {
@@ -116,6 +118,7 @@ export function parcoursSaison(entrees: EntreesParcours): Map<string, EtapeParco
         rang: Number(ligne.rank),
         points: Number(ligne.points),
         gainJournee: gains.get(String(ligne.id)) ?? 0,
+        exactScores: Number(ligne.exactScores),
       });
     }
   }

@@ -106,11 +106,21 @@ console.log("\nCas limites");
 const aucune = parcoursSaison({ ...base, journees: [] });
 egal("aucune journee terminee : parcours vide", aucune.get("a"), []);
 egal("progression d'un parcours vide", progressionTotale([]), 0);
-egal("progression d'une seule journee", progressionTotale([{ numero: 1, rang: 4, points: 2, gainJournee: 2 }]), 0);
+egal("progression d'une seule journee", progressionTotale([{ numero: 1, rang: 4, points: 2, gainJournee: 2, exactScores: 0 }]), 0);
 egal("chemin vide", cheminLisible([]), "");
 
 const sansJoueur = parcoursSaison({ ...base, joueurs: [] });
 egal("aucun joueur : aucune entree", [...sansJoueur.keys()], []);
+
+console.log("\nLes scores exacts cumules");
+const avecExacts = parcoursSaison({
+  ...base,
+  exactDe: (u, m) => u === "a" && m !== "m1",
+});
+egal("FCS : 0 puis 1 puis 2 scores exacts",
+  avecExacts.get("a")!.map((e) => e.exactScores), [0, 1, 2]);
+egal("les autres restent a zero",
+  avecExacts.get("b")!.map((e) => e.exactScores), [0, 0, 0]);
 
 console.log("\nUne journee entierement terminee");
 egal("tous les matchs joues", journeeTerminee([true, true, true]), true);

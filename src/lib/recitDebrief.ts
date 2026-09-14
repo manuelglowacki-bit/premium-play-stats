@@ -16,6 +16,7 @@ export type EtapeRecit = {
   rang: number;
   points: number;
   gainJournee: number;
+  exactScores?: number;
 };
 
 export type FicheRecit = {

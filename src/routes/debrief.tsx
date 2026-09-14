@@ -1133,19 +1133,37 @@ function DebriefPage() {
     // sans score empeche sa journee d'etre racontee. Le Debrief reste alors
     // sur la precedente — c'est visible immediatement, et le remede est de
     // saisir le score manquant (Admin -> Bonus -> Modifier le bonus).
-    const journeesJouees = journees
+    const toutesLesJournees = journees
       .map((journee) => {
         const tous = [...journee.matches, ...journee.bonus];
-        const joues = tous.filter((match: any) => isActuallyFinished(match));
+        const termines = tous.map((match: any) => isActuallyFinished(match));
         return {
           id: String(journee.id),
           numero: Number(journee.number) || 0,
           matchIds: tous.map((match: any) => String(match.id)),
-          terminee: journeeTerminee(tous.map((match: any) => isActuallyFinished(match))),
-          joues: joues.length,
+          terminee: journeeTerminee(termines),
+          joues: termines.filter(Boolean).length,
         };
       })
-      .filter((journee) => journee.numero > 0 && journee.terminee);
+      .filter((journee) => journee.numero > 0);
+
+    // LA JOURNEE RACONTEE : la derniere entierement terminee.
+    const derniereTerminee = toutesLesJournees
+      .filter((journee) => journee.terminee)
+      .sort((a, b) => b.numero - a.numero)[0];
+
+    if (!derniereTerminee) return null;
+
+    // LE PARCOURS s'arrete a cette journee, mais il compte TOUTES celles
+    // d'avant des qu'un match y a ete joue.
+    //
+    // Si on n'y gardait que les journees completes, une journee a laquelle il
+    // manque un resultat disparaitrait du cumul : ses points ne seraient
+    // jamais additionnes, et tous les rangs des journees suivantes seraient
+    // faux. Mieux vaut une journee comptee avec ce qui a ete joue qu'une
+    // journee effacee.
+    const journeesJouees = toutesLesJournees
+      .filter((journee) => journee.joues > 0 && journee.numero <= derniereTerminee.numero);
 
     if (journeesJouees.length === 0) return null;
 
@@ -1161,15 +1179,23 @@ function DebriefPage() {
       classer: rankPlayers,
     });
 
+    // ARRETE A LA JOURNEE RACONTEE, pas a aujourd'hui.
+    //
+    // `rankedPlayers` donne le classement A L'INSTANT : pendant que la J5 se
+    // joue, il compte deja ses matchs termines. Un article intitule « le
+    // bilan apres 4 journees » qui afficherait ces totaux-la se contredirait
+    // lui-meme. On lit donc le rang et le total de la DERNIERE ETAPE du
+    // parcours — l'etat du classement au soir de la journee racontee.
     const fiches = rankedPlayers.map((joueur: any) => {
       const etapes = parcours.get(String(joueur.id)) ?? [];
+      const derniereEtape = etapes[etapes.length - 1];
       return {
         id: String(joueur.id),
         name: joueur.name as string,
         avatar: (joueur.avatar as string) || "",
-        rang: Number(joueur.rank),
-        points: Number(joueur.points),
-        exactScores: Number(joueur.exactScores ?? 0),
+        rang: derniereEtape ? derniereEtape.rang : Number(joueur.rank),
+        points: derniereEtape ? derniereEtape.points : Number(joueur.points),
+        exactScores: derniereEtape ? derniereEtape.exactScores : Number(joueur.exactScores ?? 0),
         etapes,
         chemin: cheminLisible(etapes),
         progression: progressionTotale(etapes),
@@ -1177,6 +1203,10 @@ function DebriefPage() {
         derniereJournee: etapes[etapes.length - 1]?.gainJournee ?? 0,
       };
     });
+
+    // On reordonne sur le rang de la journee racontee : `rankedPlayers` est
+    // trie sur le classement d'aujourd'hui, qui peut deja avoir bouge.
+    fiches.sort((a, b) => a.rang - b.rang || a.name.localeCompare(b.name, "fr"));
 
     const parId = new Map(fiches.map((f) => [f.id, f]));
 
