@@ -78,6 +78,18 @@ const TONS = {
     filet: "border-sky-400/40",
     accent: "text-sky-200",
   },
+  violet: {
+    fond: "bg-fuchsia-400/[.035]",
+    kicker: "text-fuchsia-300",
+    filet: "border-fuchsia-400/40",
+    accent: "text-fuchsia-200",
+  },
+  cyan: {
+    fond: "bg-cyan-400/[.035]",
+    kicker: "text-cyan-300",
+    filet: "border-cyan-400/40",
+    accent: "text-cyan-200",
+  },
 } as const;
 
 export const Route = createFileRoute("/debrief")({

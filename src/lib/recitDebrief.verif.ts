@@ -140,6 +140,46 @@ verifier("un seul point : singulier", texteUne.includes("1 point") && !texteUne.
 console.log("\nCas limites");
 egal("aucun joueur : aucun texte", ecrireRecit({ ...entrees, fiches: [] }), null);
 
+console.log("\nLes sections ajoutees");
+// Une ligue complete : il faut des poursuivants ET un bas de tableau.
+const ligue = [
+  fcs, lulu, sanji,
+  fiche("Quentin", 4, 24, [11, 1, 1, 4], 0, 5),
+  fiche("Max", 5, 24, [2, 2, 4, 5], 0, 4),
+  fiche("Mel11", 6, 24, [1, 5, 5, 6], 0, 4),
+  fiche("Jo", 7, 23, [22, 19, 7, 7], 0, 6),
+  fiche("Nour", 8, 18, [10, 6, 20, 8], 0, 2),
+  fiche("Chris", 9, 15, [9, 9, 9, 9], 0, 1),
+  fiche("Phiphi", 10, 12, [10, 10, 10, 10], 0, 0),
+];
+const complet = ecrireRecit({
+  ...entrees, fiches: ligue, remontees: [sanji, fcs], chutes: [remi],
+  densite: { joueurs: 6, points: 1 },
+})!;
+const kickers = complet.sections.map((s) => s.kicker);
+verifier("il y a une section poursuivants", kickers.includes("Les poursuivants"), JSON.stringify(kickers));
+verifier("il y a un bas de tableau", kickers.includes("Le bas du tableau"), JSON.stringify(kickers));
+
+const txtComplet = sansAccents(complet.sections.flatMap((s) => s.paragraphes).join(" "));
+verifier("les poursuivants sont nommes",
+  ["Lulu", "Sanji", "Quentin", "Max"].every((n) => txtComplet.includes(n)), txtComplet.slice(0, 300));
+verifier("au plus quatre poursuivants sont detailles",
+  (complet.sections.find((s) => s.kicker === "Les poursuivants")?.paragraphes.length ?? 0) <= 4);
+verifier("l'ecart a la tete est dit", txtComplet.includes("de la tête"), txtComplet.slice(0, 400));
+verifier("les derniers sont nommes", txtComplet.includes("Phiphi"), txtComplet);
+verifier("on ne les enterre pas", txtComplet.includes("Rien n'est perdu") || txtComplet.includes("suffit à recoller"), txtComplet.slice(-400));
+verifier("les questions de fin nomment de vrais joueurs",
+  txtComplet.includes("poursuivra-t-il sa remontée"), txtComplet.slice(-400));
+
+// Une toute petite ligue n'a ni poursuivants a detailler ni bas de tableau.
+const petite = ecrireRecit({
+  ...entrees, fiches: [fcs, lulu], remontees: [], chutes: [],
+  densite: null, exAequoTete: 2, meilleureJournee: null,
+})!;
+verifier("pas de bas de tableau a deux joueurs",
+  !petite.sections.some((s) => s.kicker === "Le bas du tableau"),
+  JSON.stringify(petite.sections.map((s) => s.kicker)));
+
 console.log("\nLes chiffres mis en avant");
 const brut = [r.chapeau, ...r.sections.flatMap((s) => s.paragraphes)].join(" ");
 verifier("des passages sont marques", brut.includes("**"), brut.slice(0, 120));
@@ -159,10 +199,13 @@ console.log("\nEmojis et couleurs");
 verifier("le titre porte un emoji", r.emoji.length > 0, r.emoji);
 verifier("chaque section a un emoji", r.sections.every((s) => s.emoji.length > 0));
 verifier("chaque section a une couleur",
-  r.sections.every((s) => ["or", "vert", "rouge", "bleu"].includes(s.ton)));
+  r.sections.every((s) => ["or", "vert", "rouge", "bleu", "violet", "cyan"].includes(s.ton)));
 verifier("les couleurs ne sont pas toutes identiques",
   new Set(r.sections.map((s) => s.ton)).size > 1,
   JSON.stringify(r.sections.map((s) => s.ton)));
+verifier("deux sections qui se suivent n'ont jamais la meme couleur",
+  complet.sections.every((s, i) => i === 0 || s.ton !== complet.sections[i - 1].ton),
+  JSON.stringify(complet.sections.map((s) => `${s.kicker}:${s.ton}`)));
 
 console.log("\n" + "=".repeat(62));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);

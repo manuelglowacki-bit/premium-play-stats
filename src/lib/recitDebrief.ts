@@ -42,7 +42,7 @@ export type EntreesRecit = {
 
 /** La couleur d'une section. La page traduit ces noms en classes ; le texte,
  *  lui, n'a pas a connaitre Tailwind. */
-export type TonSection = "or" | "vert" | "rouge" | "bleu";
+export type TonSection = "or" | "vert" | "rouge" | "bleu" | "violet" | "cyan";
 
 export type SectionRecit = {
   kicker: string;
@@ -181,6 +181,13 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     tete.push(`Son parcours, journée après journée : **${parcoursEcrit(leader.etapes)}**.`);
   }
 
+  if (leader.derniereJournee > 0) {
+    tete.push(
+      `Sur la seule journée ${e.numeroDerniereJournee}, il a ajouté ` +
+        `**${pts(leader.derniereJournee)}** à son total.`,
+    );
+  }
+
   if (leader.exactScores > 0) {
     tete.push(
       `Il compte également ${nombreEcrit(leader.exactScores)} score${leader.exactScores > 1 ? "s" : ""} ` +
@@ -211,6 +218,54 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   }
 
   sections.push({ kicker: "En tête", titre: "Le patron du moment", emoji: "👑", ton: "or", paragraphes: tete });
+
+  // ------------------------------------------------------------------
+  // LES POURSUIVANTS
+  // ------------------------------------------------------------------
+  // Ceux qui suivent immediatement. Sans eux, l'article parle du premier
+  // puis saute aux remontees : la moitie du haut de tableau n'existe pas.
+  // On s'arrete a quatre — au-dela, on recite le classement.
+  const poursuivants = e.fiches
+    .slice(1, 5)
+    .filter((f) => f.etapes.length > 0);
+
+  if (poursuivants.length > 0) {
+    const p: string[] = [];
+
+    poursuivants.forEach((joueur) => {
+      const ecart = leader.points - joueur.points;
+      const phrases: string[] = [];
+
+      phrases.push(
+        `**${joueur.name}** est **${rangEcrit(joueur.rang)}** avec **${pts(joueur.points)}**` +
+          (ecart > 0 ? `, à **${pts(ecart)}** de la tête.` : `, à égalité avec la tête.`),
+      );
+
+      if (joueur.etapes.length > 1) {
+        phrases.push(`Son parcours : **${parcoursEcrit(joueur.etapes)}**.`);
+      }
+
+      // La nuance qui manque toujours : reculer en ayant bien joue.
+      if (joueur.progression < 0 && joueur.derniereJournee > 0) {
+        phrases.push(
+          `Il a pourtant ajouté **${pts(joueur.derniereJournee)}** sur la dernière journée — ` +
+            `ceux qui le devancent ont simplement fait mieux.`,
+        );
+      } else if (joueur.derniereJournee > 0) {
+        phrases.push(`Il a marqué **${pts(joueur.derniereJournee)}** sur la dernière journée.`);
+      }
+
+      p.push(phrases.join(" "));
+    });
+
+    sections.push({
+      kicker: "Les poursuivants",
+      titre: "Ils sont juste derrière",
+      emoji: "💪",
+      ton: "bleu",
+      paragraphes: p,
+    });
+  }
 
   // ------------------------------------------------------------------
   // LES REMONTEES
@@ -277,6 +332,41 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   }
 
   // ------------------------------------------------------------------
+  // LE BAS DU TABLEAU
+  // ------------------------------------------------------------------
+  // On ne les oublie pas, et surtout on ne les enterre pas : dans une ligue
+  // aussi serree, le retard se rattrape en une journee. Le dire est le
+  // minimum quand on publie un classement que vingt-trois personnes lisent.
+  const derniers = e.fiches.slice(-3).filter((f) => f.rang > 3);
+
+  if (derniers.length > 0 && e.fiches.length > 6) {
+    const p: string[] = [];
+    const retard = leader.points - derniers[0].points;
+
+    p.push(
+      derniers
+        .map((f) => `**${f.name}** (${rangEcrit(f.rang)}, **${pts(f.points)}**)`)
+        .join(", ") + ` ferment la marche.`,
+    );
+
+    p.push(
+      `Le retard sur la tête est de **${pts(retard)}**, ce qui paraît beaucoup — mais ` +
+        `${derniers.some((f) => f.derniereJournee > 0)
+          ? "ils continuent de marquer, et"
+          : "avec des écarts qui se comblent vite,"} ` +
+        `une grosse journée suffit à recoller au peloton. La saison est longue.`,
+    );
+
+    sections.push({
+      kicker: "Le bas du tableau",
+      titre: "Rien n'est perdu",
+      emoji: "🔦",
+      ton: "violet",
+      paragraphes: p,
+    });
+  }
+
+  // ------------------------------------------------------------------
   // LA CONCLUSION
   // ------------------------------------------------------------------
   const fin: string[] = [];
@@ -293,11 +383,27 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
         `points, de quoi bousculer une hiérarchie en une soirée.`,
     );
   }
+  // Les questions de fin nomment de VRAIS joueurs : c'est ce qui donne envie
+  // d'aller voir la journee suivante.
+  const questions: string[] = [];
+  if (e.exAequoTete > 1) {
+    questions.push(`Qui prendra seul la tête ?`);
+  } else {
+    questions.push(`**${leader.name}** tiendra-t-il son rang ?`);
+  }
+  if (e.remontees[0]) {
+    questions.push(`**${e.remontees[0].name}** poursuivra-t-il sa remontée ?`);
+  }
+  if (e.chutes[0]) {
+    questions.push(`**${e.chutes[0].name}** relancera-t-il sa saison ?`);
+  }
+  if (questions.length > 0) fin.push(questions.join(" "));
+
   fin.push(
-    `Rendez-vous à la journée ${e.numeroDerniereJournee + 1} pour la suite — et que le meilleur gagne.`,
+    `Rendez-vous à la **journée ${e.numeroDerniereJournee + 1}** pour la suite — et que le meilleur gagne.`,
   );
 
-  sections.push({ kicker: "Et maintenant", titre: "Tout est encore ouvert", emoji: "⏳", ton: "bleu", paragraphes: fin });
+  sections.push({ kicker: "Et maintenant", titre: "Tout est encore ouvert", emoji: "⏳", ton: "cyan", paragraphes: fin });
 
   return {
     surtitre: `Le grand bilan après ${journees}`,
