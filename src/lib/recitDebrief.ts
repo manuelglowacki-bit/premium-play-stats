@@ -11,6 +11,8 @@
  * compris, ce qui est precisement ce qu'un gabarit ne sait pas faire seul.
  */
 
+import { accordsDe } from "./joueurs";
+
 export type EtapeRecit = {
   numero: number;
   rang: number;
@@ -48,10 +50,6 @@ export type EntreesRecit = {
   exAequoTete: number;
 };
 
-/** La couleur d'une section. La page traduit ces noms en classes ; le texte,
- *  lui, n'a pas a connaitre Tailwind. */
-export type TonSection = "or" | "vert" | "rouge" | "bleu" | "violet" | "cyan";
-
 /**
  * LE PARCOURS D'UN JOUEUR, MONTRE ET PAS SEULEMENT RACONTE.
  *
@@ -66,21 +64,40 @@ export type EchelleParcours = {
   etapes: EtapeRecit[];
 };
 
-export type SectionRecit = {
-  kicker: string;
+/**
+ * UN ENCADRE STATISTIQUE, celui d'un magazine : peu de chiffres, choisis.
+ * « 25 POINTS — FCS, Lulu, Sanji » en dit plus qu'un tableau de vingt-trois
+ * lignes, parce qu'on le lit d'un coup d'oeil.
+ */
+export type EncadreRecit = {
   titre: string;
-  emoji: string;
-  ton: TonSection;
+  groupes: { valeur: string; noms: string[] }[];
+  note?: string;
+};
+
+/**
+ * UN ARTICLE DE LA PAGE. La structure est celle d'une copie de journal :
+ * un intertitre, des paragraphes, parfois une phrase forte detachee et un
+ * encadre. Le texte ne connait ni Tailwind ni couleurs — la page s'en
+ * charge, et peut changer d'habillage sans qu'une ligne de redaction bouge.
+ */
+export type SectionRecit = {
+  intertitre: string;
   paragraphes: string[];
-  /** Les parcours a dessiner sous les paragraphes, s'il y en a. */
+  /** La phrase detachee en gros caracteres, s'il y en a une. */
+  phraseForte?: string;
+  /** L'encadre chiffre, s'il apporte quelque chose. */
+  encadre?: EncadreRecit;
+  /** Les parcours a dessiner, s'il y en a. */
   echelles?: EchelleParcours[];
 };
 
 export type Recit = {
   surtitre: string;
   titre: string;
-  emoji: string;
-  chapeau: string;
+  sousTitre: string;
+  /** Le chapo, en plusieurs paragraphes — c'est lui qui donne envie. */
+  chapeau: string[];
   sections: SectionRecit[];
 };
 
@@ -157,345 +174,543 @@ export function parcoursEcrit(etapes: readonly EtapeRecit[]): string {
   return `${debut}, ${liaison} ${dernier}`;
 }
 
-export function ecrireRecit(e: EntreesRecit): Recit | null {
-  if (e.fiches.length === 0) return null;
 
-  const jN = e.journeesJouees;
+// ------------------------------------------------------------------
+// LES ACCORDS
+// ------------------------------------------------------------------
+// Un gabarit qui ecrit « il » pour tout le monde se trompe sur une vraie
+// personne. Quand le genre n'est pas connu, on n'invente pas : on repete le
+// nom. C'est un peu plus lourd, et c'est toujours juste.
+
+/** « Il » / « Elle » en debut de phrase, ou le nom au neutre. */
+function Il(f: FicheRecit): string {
+  const a = accordsDe(f.name);
+  return a.aUnPronom ? a.il.replace(/^./, (c) => c.toUpperCase()) : `**${f.name}**`;
+}
+
+/** « il » / « elle » en milieu de phrase, ou le nom au neutre. */
+function il(f: FicheRecit): string {
+  const a = accordsDe(f.name);
+  return a.aUnPronom ? a.il : `**${f.name}**`;
+}
+
+/** « lui » / « elle » apres une preposition, ou le nom au neutre. */
+function lui(f: FicheRecit): string {
+  const a = accordsDe(f.name);
+  return a.aUnPronom ? a.lui : `**${f.name}**`;
+}
+
+/** « le joueur » / « la joueuse ». */
+function leJoueur(f: FicheRecit): string {
+  return accordsDe(f.name).leJoueur;
+}
+
+/** Le « e » d'un participe : « installé » / « installée ». */
+function e(f: FicheRecit): string {
+  return accordsDe(f.name).e;
+}
+
+const maj = (texte: string) => texte.replace(/^./, (c) => c.toUpperCase());
+
+/** Les joueurs regroupes par total de points, du meilleur au moins bon. */
+function groupesDePoints(fiches: readonly FicheRecit[], combien: number) {
+  const parPoints = new Map<number, string[]>();
+  fiches.slice(0, combien).forEach((f) => {
+    parPoints.set(f.points, [...(parPoints.get(f.points) ?? []), f.name]);
+  });
+  return [...parPoints.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([valeur, noms]) => ({ valeur: `${valeur} pts`, noms }));
+}
+
+export function ecrireRecit(e_: EntreesRecit): Recit | null {
+  if (e_.fiches.length === 0) return null;
+
+  const jN = e_.journeesJouees;
+  const journee = e_.numeroDerniereJournee;
   const journees = `${nombreEcrit(jN)} journée${jN > 1 ? "s" : ""}`;
-  const leader = e.fiches[0];
-
-  // ------------------------------------------------------------------
-  // LE CHAPEAU
-  // ------------------------------------------------------------------
-  const titre =
-    e.exAequoTete > 1
-      ? `${nombreEcrit(e.exAequoTete)} joueurs à égalité en tête`.replace(/^./, (c) => c.toUpperCase())
-      : `${leader.name} prend le pouvoir`;
-
-  const chapeau = e.densite
-    ? `Après ${journees}, le classement n'a pas encore livré son verdict. ` +
-      `**${nombreEcrit(e.densite.joueurs).replace(/^./, (c) => c.toUpperCase())} joueurs** se tiennent en ` +
-      `**${nombreEcrit(e.densite.points)} point${e.densite.points > 1 ? "s" : ""}**, ` +
-      `les leaders changent d'une journée à l'autre et ` +
-      `certains réalisent des remontées spectaculaires. Autrement dit : une seule ` +
-      `bonne journée peut tout renverser.`
-    : `Après ${journees}, **${leader.name}** mène la compétition avec **${pts(leader.points)}**. ` +
-      `Le classement commence à prendre forme, mais rien n'est encore figé.`;
-
+  const fiches = e_.fiches;
+  const leader = fiches[0];
   const sections: SectionRecit[] = [];
 
-  // ------------------------------------------------------------------
-  // LE JOUEUR EN TETE
-  // ------------------------------------------------------------------
-  const tete: string[] = [];
-  const depart = leader.etapes[0]?.rang ?? leader.rang;
+  // UN JOUEUR, UN ARTICLE. Sans ce garde-fou, le meme nom revenait dans « en
+  // embuscade » ET dans « ils ont gagne du terrain » : le lecteur a
+  // l'impression que l'article se repete, et il a raison.
+  const dejaCites = new Set<string>();
 
-  if (leader.progression > 0) {
-    tete.push(
-      `Le patron du moment s'appelle **${leader.name}**. Parti **${rangEcrit(depart)}** après la ` +
-        `première journée, il a gagné **${places(leader.progression)}** pour s'installer en tête ` +
-        `avec **${pts(leader.points)}**.`,
-    );
-  } else if (leader.progression < 0) {
-    tete.push(
-      `${leader.name} mène toujours avec ${pts(leader.points)}, mais il a reculé de ` +
-        `${places(leader.progression)} depuis le début : la tête du classement se mérite ` +
-        `chaque semaine.`,
-    );
-  } else {
-    tete.push(
-      `${leader.name} tient la corde depuis le début et compte aujourd'hui ${pts(leader.points)}. ` +
-        `Une régularité qui commence à peser.`,
-    );
-  }
-
-  if (leader.etapes.length > 1) {
-    tete.push(`Son parcours, journée après journée : **${parcoursEcrit(leader.etapes)}**.`);
-  }
-
-  if (leader.derniereJournee > 0) {
-    // Le mouvement de la journee, dit explicitement : « de la 6e a la 1re
-    // place » raconte la journee mieux qu'un total cumule.
-    tete.push(
-      `Sur la seule journée ${e.numeroDerniereJournee}, il a ajouté ` +
-        `**${pts(leader.derniereJournee)}** à son total` +
-        `${leader.mouvement > 0 && leader.rangVeille != null
-          ? `, ce qui le fait passer de **${rangEcrit(leader.rangVeille)}** à **${rangEcrit(leader.rang)}**`
-          : ""}` +
-        `.`,
-    );
-  }
-
-  if (leader.exactScores > 0) {
-    tete.push(
-      `Il compte également ${nombreEcrit(leader.exactScores)} score${leader.exactScores > 1 ? "s" : ""} ` +
-        `exact${leader.exactScores > 1 ? "s" : ""} — c'est précisément là que se décident les fins ` +
-        `de saison, quand deux joueurs arrivent au même total.`,
-    );
-  }
-
-  if (e.exAequoTete > 1) {
-    const autres = e.fiches.slice(1, e.exAequoTete).map((f) => f.name);
-    tete.push(
-      `Mais il n'est pas seul là-haut : **${listeFr(autres)}** compte${autres.length > 1 ? "nt" : ""} ` +
-        `exactement le même nombre de points. Seuls les départages les séparent, et le moindre ` +
-        `point marqué peut redistribuer l'ordre du podium.`,
-    );
-  } else if (e.fiches[1]) {
-    const ecart = leader.points - e.fiches[1].points;
-    tete.push(
-      `**${e.fiches[1].name}** suit à **${pts(ecart)}**, ce qui ne représente qu'un bon résultat d'écart.`,
-    );
-  }
-
-  if (e.meilleureJournee && e.meilleureJournee.derniereJournee > 0) {
-    // DIRE CE QU'ON MESURE. Cette phrase parle des POINTS marques ; la
-    // section des remontees, juste apres, parle des PLACES gagnees. Sans le
-    // critere, deux « meilleurs de la journee » differents se suivent et le
-    // lecteur cherche l'erreur de calcul — il n'y en a pas.
-    const record = e.meilleureJournee.derniereJournee;
-    const exAequo = e.fiches.filter((f) => f.derniereJournee === record).map((f) => f.name);
-    tete.push(
-      `Le plus gros total de la journée ${e.numeroDerniereJournee} revient à ` +
-        `**${listeFr(exAequo)}**, avec **${pts(record)}** marqués` +
-        `${exAequo.length > 1 ? " chacun" : ""}.`,
-    );
-  }
-
-  sections.push({
-    kicker: "En tête",
-    titre: "Le patron du moment",
-    emoji: "👑",
-    ton: "or",
-    paragraphes: tete,
-    echelles: leader.etapes.length >= 2 ? [{ nom: leader.name, etapes: leader.etapes }] : undefined,
-  });
+  // Ceux qui comptent exactement le meme total que la tete.
+  const exAequo = fiches.filter((f) => f.points === leader.points);
+  // Le peloton de tete : tout le monde a un point ou moins du leader.
+  const groupeTete = fiches.filter((f) => leader.points - f.points <= 1);
 
   // ------------------------------------------------------------------
-  // LES POURSUIVANTS
+  // LA UNE
   // ------------------------------------------------------------------
-  // Ceux qui suivent immediatement. Sans eux, l'article parle du premier
-  // puis saute aux remontees : la moitie du haut de tableau n'existe pas.
-  // On s'arrete a quatre — au-dela, on recite le classement.
-  const poursuivants = e.fiches
-    .slice(1, 5)
-    .filter((f) => f.etapes.length > 0);
+  const titre =
+    e_.densite && e_.densite.joueurs >= 3
+      ? `Après ${jN} journée${jN > 1 ? "s" : ""}, la course est plus ouverte que jamais`
+      : exAequo.length > 1
+        ? `${maj(nombreEcrit(exAequo.length))} joueurs à égalité en tête`
+        : `${leader.name} prend les commandes`;
 
-  if (poursuivants.length > 0) {
+  const sousTitre =
+    exAequo.length > 1
+      ? `${leader.name} a pris les commandes, mais rien n'est joué. ` +
+        `${maj(nombreEcrit(exAequo.length))} joueurs comptent **${pts(leader.points)}**` +
+        (groupeTete.length > exAequo.length
+          ? ` et les ${nombreEcrit(groupeTete.length)} premiers ne sont séparés que par une seule longueur.`
+          : ".")
+      : `${leader.name} mène avec **${pts(leader.points)}**` +
+        (fiches[1]
+          ? `, mais ${fiches[1].name} n'est qu'à **${pts(leader.points - fiches[1].points)}**.`
+          : ".");
+
+  // ------------------------------------------------------------------
+  // LE CHAPO — plusieurs paragraphes courts, comme dans un journal.
+  // ------------------------------------------------------------------
+  const chapeau: string[] = [];
+
+  chapeau.push(
+    `Après ${journees}, le Prono Ligue 1 LM est déjà en train de livrer un ` +
+      `scénario digne des plus grands championnats.`,
+  );
+
+  chapeau.push(
+    `Alors que la journée ${journee} vient de redistribuer les cartes, ` +
+      `**${leader.name}** s'est ${
+        accordsDe(leader.name).aUnPronom ? `installé${e(leader)}` : "hissé"
+      } en tête du classement avec **${pts(leader.points)}**.` +
+      (exAequo.length > 1
+        ? ` Mais derrière ${accordsDe(leader.name).aUnPronom ? lui(leader) : "le leader"}, la menace est immédiate : ` +
+          `**${listeFr(exAequo.slice(1).map((f) => f.name))}** ` +
+          `compte${exAequo.length > 2 ? "nt" : ""} exactement le même total.`
+        : fiches[1]
+          ? ` Mais **${fiches[1].name}** ne lâche rien, à **${pts(leader.points - fiches[1].points)}** seulement.`
+          : ""),
+  );
+
+  const juste = groupeTete.filter((f) => !exAequo.includes(f));
+  if (juste.length > 0) {
+    chapeau.push(
+      `Et comme si cela ne suffisait pas, **${listeFr(juste.map((f) => f.name))}** ` +
+        `${juste.length > 1 ? "ne sont" : "n'est"} qu'à une longueur.`,
+    );
+  }
+
+  if (groupeTete.length >= 3) {
+    chapeau.push(`${maj(nombreEcrit(groupeTete.length))} joueurs dans un seul point. La bataille est lancée.`);
+  }
+
+  // ------------------------------------------------------------------
+  // LE LEADER
+  // ------------------------------------------------------------------
+  {
     const p: string[] = [];
+    const depart = leader.etapes[0]?.rang ?? leader.rang;
+    const intertitre =
+      leader.progression >= 5
+        ? `${leader.name}, de l'ombre à la lumière`
+        : leader.progression > 0
+          ? `${leader.name}, la montée en puissance`
+          : `${leader.name} tient la barre`;
 
-    poursuivants.forEach((joueur) => {
-      const ecart = leader.points - joueur.points;
-      const phrases: string[] = [];
-
-      phrases.push(
-        `**${joueur.name}** est **${rangEcrit(joueur.rang)}** avec **${pts(joueur.points)}**` +
-          (ecart > 0 ? `, à **${pts(ecart)}** de la tête.` : `, à égalité avec la tête.`),
-      );
-
-      if (joueur.etapes.length > 1) {
-        phrases.push(`Son parcours : **${parcoursEcrit(joueur.etapes)}**.`);
-      }
-
-      // La nuance qui manque toujours : reculer en ayant bien joue.
-      if (joueur.progression < 0 && joueur.derniereJournee > 0) {
-        phrases.push(
-          `Il a pourtant ajouté **${pts(joueur.derniereJournee)}** sur la dernière journée — ` +
-            `ceux qui le devancent ont simplement fait mieux.`,
-        );
-      } else if (joueur.derniereJournee > 0) {
-        phrases.push(`Il a marqué **${pts(joueur.derniereJournee)}** sur la dernière journée.`);
-      }
-
-      p.push(phrases.join(" "));
-    });
-
-    sections.push({
-      kicker: "Les poursuivants",
-      titre: "Ils sont juste derrière",
-      emoji: "💪",
-      ton: "bleu",
-      paragraphes: p,
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // LES REMONTEES
-  // ------------------------------------------------------------------
-  if (e.remontees.length > 0) {
-    const p: string[] = [];
-    const premier = e.remontees[0];
-    const jour = e.numeroDerniereJournee;
-
-    // LE MOUVEMENT DE LA JOURNEE, pas celui de la saison : c'est un Debrief
-    // de journee. Le parcours complet reste cite juste apres, en contexte.
-    p.push(
-      `La plus forte progression de cette **${jour}e journée** est signée **${premier.name}** : ` +
-        `**${placesGagnees(premier.mouvement)}** en une journée, ` +
-        `${premier.rangVeille != null ? `de **${rangEcrit(premier.rangVeille)}** à ` : `désormais `}` +
-        `**${rangEcrit(premier.rang)}**. Il a marqué **${pts(premier.derniereJournee)}** ce week-end. ` +
-        `Son parcours depuis le début : **${parcoursEcrit(premier.etapes)}**.`,
-    );
-
-    if (premier.rang <= 3) {
+    if (leader.etapes.length > 1 && leader.progression > 0) {
+      const etapes = leader.etapes;
       p.push(
-        `Et il ne s'agit pas d'un simple coup d'éclat : il confirme journée après journée, ` +
-          `au point de figurer désormais sur le podium.`,
+        `**${leader.name}** avait commencé la compétition à la **${rangEcrit(depart)} place**` +
+          (etapes[0].points ? ` avec **${pts(etapes[0].points)}**` : "") + `.`,
+      );
+      if (etapes.length >= 3) {
+        p.push(
+          `${Il(leader)} est ensuite ${accordsDe(leader.name).aUnPronom ? "remonté" + e(leader) : "remonté"} à la ` +
+            `**${rangEcrit(etapes[1].rang)} place** après la journée ${etapes[1].numero}, avant de ` +
+            `${etapes[2].rang <= etapes[1].rang ? "s'installer" : "reculer"} à la ` +
+            `**${rangEcrit(etapes[etapes.length - 2].rang)} place** à l'issue de la journée ` +
+            `${etapes[etapes.length - 2].numero}.`,
+        );
+      }
+      p.push(
+        `Et lors de la journée ${journee}, tout s'est accéléré.` +
+          (leader.derniereJournee > 0
+            ? ` Avec **${pts(leader.derniereJournee)}** supplémentaires, ` +
+              `${accordsDe(leader.name).aUnPronom ? il(leader) : `**${leader.name}**`} s'est ` +
+              `${accordsDe(leader.name).aUnPronom ? `emparé${e(leader)}` : "emparé"} de la première place ` +
+              `avec **${pts(leader.points)}**.`
+            : ""),
+      );
+      p.push(
+        `De la **${rangEcrit(depart)}** à la **première place** en ${journees}. ` +
+          `Une remontée de **${places(leader.progression)}**.`,
+      );
+    } else {
+      p.push(
+        `**${leader.name}** mène le classement avec **${pts(leader.points)}**` +
+          (leader.etapes.length > 1
+            ? `, au terme d'un parcours d'une régularité rare : **${parcoursEcrit(leader.etapes)}**.`
+            : "."),
+      );
+      if (leader.derniereJournee > 0) {
+        p.push(
+          `Sur la seule journée ${journee}, ${accordsDe(leader.name).aUnPronom ? il(leader) : `**${leader.name}**`} ` +
+            `a ajouté **${pts(leader.derniereJournee)}** à son total.`,
+        );
+      }
+    }
+
+    if (leader.exactScores > 0) {
+      p.push(
+        `${Il(leader)} compte également **${nombreEcrit(leader.exactScores)} score` +
+          `${leader.exactScores > 1 ? "s" : ""} exact${leader.exactScores > 1 ? "s" : ""}** — ` +
+          `c'est précisément là que se décident les fins de saison, quand deux joueurs ` +
+          `arrivent au même total.`,
       );
     }
 
-    // Trois formulations, pour ne pas servir trois fois la meme phrase.
-    const amorces = [
-      (nom: string) => `${nom} n'est pas en reste`,
-      (nom: string) => `Impossible également de passer à côté de ${nom}`,
-      (nom: string) => `Dans le même registre, ${nom} avance`,
+    dejaCites.add(leader.id);
+    sections.push({
+      intertitre,
+      paragraphes: p,
+      phraseForte:
+        leader.progression >= 5
+          ? `${leader.name} était parti dans l'ombre. ${maj(il(leader))} est désormais sous les projecteurs.`
+          : undefined,
+      echelles: leader.etapes.length >= 2 ? [{ nom: leader.name, etapes: leader.etapes }] : undefined,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // LE HAUT DU CLASSEMENT
+  // ------------------------------------------------------------------
+  if (groupeTete.length >= 2) {
+    const p: string[] = [];
+
+    if (exAequo.length > 1) {
+      p.push(
+        `**${listeFr(exAequo.map((f) => f.name))}** sont tous ` +
+          `${exAequo.length === 2 ? "les deux" : `les ${nombreEcrit(exAequo.length)}`} ` +
+          `à **${pts(leader.points)}**.`,
+      );
+    }
+    if (juste.length > 0) {
+      p.push(
+        `**${listeFr(juste.map((f) => f.name))}** ${juste.length > 1 ? "suivent" : "suit"} ` +
+          `avec **${pts(juste[0].points)}**.`,
+      );
+    }
+    p.push(
+      `Autrement dit : les **${nombreEcrit(groupeTete.length)} premiers** sont séparés par ` +
+        `**un seul point**. À ce niveau de densité, la moindre erreur lors de la journée ` +
+        `${journee + 1} peut redessiner tout le podium — et un score exact suffit à ` +
+        `faire basculer une place.`,
+    );
+
+    sections.push({
+      intertitre:
+        exAequo.length > 1
+          ? `${maj(nombreEcrit(exAequo.length))} joueurs, un même objectif`
+          : `Le haut du classement se tient en un point`,
+      paragraphes: p,
+      encadre: {
+        titre: "En tête",
+        groupes: groupesDePoints(groupeTete, groupeTete.length),
+      },
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // LA PLUS BELLE REMONTEE DE LA SAISON
+  // ------------------------------------------------------------------
+  const grimpeur =
+    [...fiches]
+      .filter((f) => f.id !== leader.id && f.progression > 0 && f.etapes.length >= 3)
+      .sort((a, b) => b.progression - a.progression || a.rang - b.rang)[0] ?? null;
+
+  if (grimpeur && grimpeur.progression >= 3) {
+    const depart = grimpeur.etapes[0]?.rang ?? grimpeur.rang;
+    const p: string[] = [
+      `**${grimpeur.name}** était **${rangEcrit(depart)}** après la première journée. ` +
+        `${maj(il(grimpeur))} est aujourd'hui **${rangEcrit(grimpeur.rang)}**, avec ` +
+        `**${pts(grimpeur.points)}**.`,
+      `Son parcours, journée après journée : **${parcoursEcrit(grimpeur.etapes)}**. ` +
+        `Soit **${placesGagnees(grimpeur.progression)}** depuis le début de la compétition.`,
+    ];
+    if (grimpeur.rang <= 3) {
+      p.push(
+        `Et il ne s'agit pas d'un simple coup d'éclat : ${il(grimpeur)} confirme journée ` +
+          `après journée, au point de figurer désormais sur le podium.`,
+      );
+    }
+
+    dejaCites.add(grimpeur.id);
+    sections.push({
+      intertitre: `${grimpeur.name}, la remontée qui impressionne`,
+      paragraphes: p,
+      phraseForte:
+        grimpeur.rang <= 3
+          ? `Il y a ${journees}, ${grimpeur.name} regardait le podium de loin. Aujourd'hui, ${il(grimpeur) || grimpeur.name} y est.`
+          : undefined,
+      echelles: [{ nom: grimpeur.name, etapes: grimpeur.etapes }],
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // LA REGULARITE
+  // ------------------------------------------------------------------
+  // Celui dont le classement ne bouge presque jamais, et jamais vers le bas.
+  // Une qualite invisible dans un tableau, et decisive sur une saison.
+  const regulier =
+    [...fiches]
+      .filter(
+        (f) =>
+          f.id !== leader.id &&
+          f.id !== grimpeur?.id &&
+          f.rang <= 6 &&
+          f.etapes.length >= 3 &&
+          f.etapes.every((etape, i, tout) => i === 0 || etape.rang <= tout[i - 1].rang + 1),
+      )
+      .sort((a, b) => a.rang - b.rang)[0] ?? null;
+
+  if (regulier) {
+    const p: string[] = [
+      `**${regulier.name}** n'a jamais vraiment quitté le groupe de tête : ` +
+        `**${parcoursEcrit(regulier.etapes)}**.`,
+      `Les totaux disent la même chose — ` +
+        `**${regulier.etapes.map((etape) => `${etape.points}`).join(" → ")} points** — ` +
+        `une progression sans accroc, sans la moindre journée blanche.`,
+      `${maj(il(regulier))} est aujourd'hui **${rangEcrit(regulier.rang)}**` +
+        (regulier.points === leader.points
+          ? `, à égalité parfaite de points avec **${leader.name}**.`
+          : `, à **${pts(leader.points - regulier.points)}** de la tête.`),
     ];
 
-    e.remontees.slice(1).forEach((joueur, index) => {
-      p.push(
-        `${amorces[index % amorces.length](`**${joueur.name}**`)} : **${placesGagnees(joueur.mouvement)}** ` +
-          `sur la journée${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""} ` +
-          `(**${pts(joueur.derniereJournee)}** marqués), pour **${pts(joueur.points)}** au total. ` +
-          `${joueur.rang <= 10 ? "Le voilà installé dans le haut du tableau." : "La dynamique est lancée."}`,
-      );
-    });
-
-    // PAS DE DIGRESSION SUR LA SAISON ICI. Le brief est un point sur
-    // l'evolution du classement SUR LA JOURNEE : la plus belle trajectoire
-    // depuis la premiere journee est une autre histoire, et l'organisateur a
-    // demande qu'elle n'y figure pas. Le parcours complet de chaque joueur
-    // cite reste visible dans son echelle, ce qui suffit.
-
+    dejaCites.add(regulier.id);
     sections.push({
-      kicker: "Les remontées",
-      titre: "Ils ont grimpé ce week-end",
-      emoji: "🚀",
-      ton: "vert",
+      intertitre: `${regulier.name}, la régularité qui paie`,
       paragraphes: p,
-      echelles: e.remontees
-        .filter((f) => f.etapes.length >= 2)
-        .map((f) => ({ nom: f.name, etapes: f.etapes })),
+      phraseForte: `${regulier.name} ne fait pas de bruit. ${maj(accordsDe(regulier.name).aUnPronom ? il(regulier) : regulier.name)} avance. Et ${accordsDe(regulier.name).aUnPronom ? il(regulier) : regulier.name} est désormais à ${pts(regulier.points)}.`,
     });
   }
 
   // ------------------------------------------------------------------
-  // LES CHUTES
+  // L'ANCIEN LEADER
   // ------------------------------------------------------------------
-  if (e.chutes.length > 0) {
-    const p: string[] = [];
+  const ancienLeader = fiches.find((f) => f.rangVeille === 1 && f.rang !== 1) ?? null;
 
-    for (const joueur of e.chutes) {
+  if (ancienLeader) {
+    const ecart = leader.points - ancienLeader.points;
+    const p: string[] = [
+      `**${ancienLeader.name}** a mené le classement à l'issue de la journée ` +
+        `${journee - 1}. La journée ${journee} lui a coûté ` +
+        `**${places(ancienLeader.mouvement)}** : ${il(ancienLeader) || ancienLeader.name} pointe ` +
+        `désormais **${rangEcrit(ancienLeader.rang)}**.`,
+    ];
+    if (ancienLeader.derniereJournee > 0) {
       p.push(
-        `**${joueur.name}** recule de **${places(-joueur.mouvement)}** sur cette journée` +
-          `${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""}, ` +
-          `et totalise **${pts(joueur.points)}**. Son parcours : **${parcoursEcrit(joueur.etapes)}**.`,
+        `Mais attention : ${il(ancienLeader) || `**${ancienLeader.name}**`} n'a absolument pas raté ` +
+          `sa journée. ${maj(il(ancienLeader))} a ajouté **${pts(ancienLeader.derniereJournee)}** à son total. ` +
+          `Le problème est simplement que ceux qui ${il(ancienLeader) ? "le" : "le"} devancent ont fait mieux.`,
       );
     }
-
-    // La precision qui change tout pour celui qui se lit.
     p.push(
-      `Attention toutefois : reculer ne veut pas dire avoir mal joué. Tous continuent de ` +
-        `marquer — simplement, les joueurs qui les entourent ont marqué davantage. Avec des ` +
-        `écarts aussi faibles, une seule bonne journée suffit à tout remettre en place.`,
+      ecart <= 3
+        ? `À **${pts(ecart)}** de la tête, ${il(ancienLeader) || `**${ancienLeader.name}**`} reste ` +
+          `pleinement dans la course. Une bonne journée ${journee + 1} et tout est à refaire.`
+        : `L'écart est de **${pts(ecart)}**. Rien d'irrattrapable dans un classement aussi dense.`,
     );
 
+    dejaCites.add(ancienLeader.id);
     sections.push({
-      kicker: "Les dégringolades",
-      titre: "Ils ont reculé ce week-end",
-      emoji: "📉",
-      ton: "rouge",
+      intertitre: `${ancienLeader.name}, le leader qui a perdu sa place… mais pas le contact`,
       paragraphes: p,
-      echelles: e.chutes
-        .filter((f) => f.etapes.length >= 2)
-        .map((f) => ({ nom: f.name, etapes: f.etapes })),
     });
   }
 
   // ------------------------------------------------------------------
-  // LE BAS DU TABLEAU
+  // LES EMBUSQUES
   // ------------------------------------------------------------------
-  // On ne les oublie pas, et surtout on ne les enterre pas : dans une ligue
-  // aussi serree, le retard se rattrape en une journee. Le dire est le
-  // minimum quand on publie un classement que vingt-trois personnes lisent.
-  const derniers = e.fiches.slice(-3).filter((f) => f.rang > 3);
+  // Ceux qu'on nomme dans le titre sont EXACTEMENT ceux dont on parle : la
+  // liste et l'intertitre sortent du meme tableau, sinon l'un annonce deux
+  // joueurs et l'autre en raconte trois.
+  const embusques = fiches
+    .filter(
+      (f) =>
+        !dejaCites.has(f.id) &&
+        f.rang <= 8 &&
+        leader.points - f.points <= 3,
+    )
+    .slice(0, 2);
 
-  if (derniers.length > 0 && e.fiches.length > 6) {
-    const p: string[] = [];
-    // Le retard se lit sur TOUT le groupe. Le calculer sur le mieux classe
-    // des trois donnait un chiffre qui ne correspondait a aucun des noms
-    // cites juste avant — le dernier etait bien plus loin que ca.
-    const retardMin = leader.points - derniers[0].points;
-    const retardMax = leader.points - derniers[derniers.length - 1].points;
-
+  if (embusques.length >= 2) {
+    const p: string[] = embusques.map(
+      (f) =>
+        `**${f.name}** : **${parcoursEcrit(f.etapes)}**, pour **${pts(f.points)}**. ` +
+          `${maj(il(f))} ${f.mouvement >= 0 ? "se maintient" : "a reculé"} ` +
+          `et reste à **${pts(leader.points - f.points)}** du sommet.`,
+    );
     p.push(
-      derniers
-        .map((f) => `**${f.name}** (${rangEcrit(f.rang)}, **${pts(f.points)}**)`)
-        .join(", ") + ` ferment la marche.`,
+      `${maj(nombreEcrit(embusques.length))} candidats parfaitement capables de reprendre la ` +
+        `première place dès la journée ${journee + 1}. Dans ce classement, une place se ` +
+        `reprend en un week-end.`,
     );
 
+    embusques.forEach((f) => dejaCites.add(f.id));
+    sections.push({
+      intertitre: `${listeFr(embusques.map((f) => f.name))}, toujours en embuscade`,
+      paragraphes: p,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // LES REMONTEES DE LA JOURNEE
+  // ------------------------------------------------------------------
+  const autresRemontees = e_.remontees.filter((f) => !dejaCites.has(f.id));
+
+  if (autresRemontees.length > 0) {
+    const p: string[] = autresRemontees.slice(0, 3).map((f) => {
+      const creux = Math.max(...f.etapes.map((etape) => etape.rang));
+      const reaction =
+        creux > (f.rangVeille ?? f.rang) ? "" : ` Après une journée ${journee - 1} difficile, la réaction est nette.`;
+      return (
+        `**${f.name}** : **${parcoursEcrit(f.etapes)}**. ` +
+        `${maj(il(f))} reprend **${places(f.mouvement)}** sur la seule journée ${journee}` +
+        (f.derniereJournee > 0 ? ` grâce à **${pts(f.derniereJournee)}**` : "") +
+        `, pour **${pts(f.points)}** au total.${reaction}`
+      );
+    });
+
+    autresRemontees.slice(0, 3).forEach((f) => dejaCites.add(f.id));
+    sections.push({
+      intertitre:
+        autresRemontees.length > 1
+          ? `Ils ont gagné du terrain ce week-end`
+          : `${autresRemontees[0].name}, une remontée qui se confirme`,
+      paragraphes: p,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // CEUX QUI ONT PERDU DU TERRAIN
+  // ------------------------------------------------------------------
+  if (e_.chutes.length > 0) {
+    const p: string[] = e_.chutes
+      .slice(0, 4)
+      .map(
+        (f) =>
+          `**${f.name}** : **${parcoursEcrit(f.etapes)}**. ` +
+          `**${maj(places(f.mouvement))}** perdues sur la journée ${journee}, pour ` +
+          `**${pts(f.points)}**.`,
+      );
+
     p.push(
-      `${retardMax > retardMin
-        ? `Le retard sur la tête va de **${pts(retardMin)}** à **${pts(retardMax)}**`
-        : `Le retard sur la tête est de **${pts(retardMax)}**`}, ` +
-        `ce qui paraît beaucoup — mais ` +
-        `${derniers.some((f) => f.derniereJournee > 0)
-          ? "ils continuent de marquer, et"
-          : "avec des écarts qui se comblent vite,"} ` +
-        `une grosse journée suffit à recoller au peloton. La saison est longue.`,
+      `Il faut se garder d'y lire des journées ratées. Tous ont continué de marquer — ` +
+        (e_.chutes.some((f) => f.derniereJournee > 0)
+          ? `${listeFr(e_.chutes.filter((f) => f.derniereJournee > 0).slice(0, 3).map((f) => `**${f.name}** en a pris **${f.derniereJournee}**`))}. `
+          : "") +
+        `Le classement est simplement si serré qu'une journée un peu moins réussie que ` +
+        `celle du voisin coûte immédiatement plusieurs places. Le mouvement inverse est ` +
+        `tout aussi rapide.`,
     );
 
     sections.push({
-      kicker: "Le bas du tableau",
-      titre: "Rien n'est perdu",
-      emoji: "🔦",
-      ton: "violet",
+      intertitre: `À l'inverse, certains ont perdu du terrain`,
       paragraphes: p,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // LE CHIFFRE A RETENIR
+  // ------------------------------------------------------------------
+  if (e_.densite && e_.densite.joueurs >= 3) {
+    // LE GROUPE SERRE, et lui seul. L'encadre listait les dix premiers pendant
+    // que la phrase parlait de ceux tenant en trois points : on lisait
+    // « regroupes entre 23 et 25 points » au-dessus d'une ligne a 18. Les deux
+    // sortent desormais du meme tableau.
+    const paquet = fiches.filter((f) => leader.points - f.points <= e_.densite!.points);
+    const dernier = paquet[paquet.length - 1]?.points ?? leader.points;
+    const amplitude = leader.points - dernier;
+
+    sections.push({
+      intertitre: `Le chiffre à retenir`,
+      paragraphes: [
+        `**${maj(nombreEcrit(paquet.length))} joueurs** sont actuellement regroupés entre ` +
+          `**${pts(dernier)}** et **${pts(leader.points)}**` +
+          (amplitude > 0
+            ? ` — **${nombreEcrit(amplitude)} point${amplitude > 1 ? "s" : ""}** d'amplitude, ` +
+              `pas davantage.`
+            : `, tous au même total.`) +
+          ` C'est dire si tout reste ouvert : un score exact, une bonne journée, et ` +
+          `l'ordre du classement change du tout au tout.`,
+      ],
+      encadre: {
+        titre: `Le peloton de tête`,
+        groupes: groupesDePoints(paquet, paquet.length),
+        note:
+          amplitude > 0
+            ? `${maj(nombreEcrit(paquet.length))} joueurs en ${pts(amplitude)}.`
+            : undefined,
+      },
     });
   }
 
   // ------------------------------------------------------------------
   // LA CONCLUSION
   // ------------------------------------------------------------------
-  const fin: string[] = [];
-  if (e.densite) {
-    fin.push(
-      `**${nombreEcrit(e.densite.joueurs).replace(/^./, (c) => c.toUpperCase())} joueurs** en ` +
-        `**${nombreEcrit(e.densite.points)} point${e.densite.points > 1 ? "s" : ""}** : ` +
-        `c'est dire si tout reste ouvert. Le moindre score exact, ` +
-        `une bonne journée, et l'ordre du classement change du tout au tout.`,
-    );
-  } else {
-    fin.push(
-      `Les écarts peuvent encore se combler vite : un score exact sur le match bonus vaut trois ` +
-        `points, de quoi bousculer une hiérarchie en une soirée.`,
-    );
-  }
-  // Les questions de fin nomment de VRAIS joueurs : c'est ce qui donne envie
-  // d'aller voir la journee suivante.
-  const questions: string[] = [];
-  if (e.exAequoTete > 1) {
-    questions.push(`Qui prendra seul la tête ?`);
-  } else {
-    questions.push(`**${leader.name}** tiendra-t-il son rang ?`);
-  }
-  if (e.remontees[0]) {
-    questions.push(`**${e.remontees[0].name}** poursuivra-t-il sa remontée ?`);
-  }
-  if (e.chutes[0]) {
-    questions.push(`**${e.chutes[0].name}** relancera-t-il sa saison ?`);
-  }
-  if (questions.length > 0) fin.push(questions.join(" "));
+  {
+    const p: string[] = [];
+    const suivante = journee + 1;
 
-  fin.push(
-    `Rendez-vous à la **journée ${e.numeroDerniereJournee + 1}** pour la suite — et que le meilleur gagne.`,
-  );
+    p.push(
+      `La journée ${suivante} arrive, et elle compte double en termes d'enjeu : dans un ` +
+        `classement aussi resserré, elle peut aussi bien confirmer un patron qu'en ` +
+        `désigner un autre.`,
+    );
 
-  sections.push({ kicker: "Et maintenant", titre: "Tout est encore ouvert", emoji: "⏳", ton: "cyan", paragraphes: fin });
+    // Un nom, une fois. Le grimpeur est souvent aussi un ex aequo de la tete :
+    // sans cette garde, la phrase le citait deux fois a six mots d'intervalle.
+    const nommes = new Set<string>([leader.id]);
+    const enjeux: string[] = [`**${leader.name}** voudra conserver son fauteuil`];
+
+    const auContact = exAequo.filter((f) => !nommes.has(f.id));
+    if (auContact.length > 0) {
+      auContact.forEach((f) => nommes.add(f.id));
+      enjeux.push(
+        `**${listeFr(auContact.map((f) => f.name))}** ` +
+          `${auContact.length > 1 ? "voudront" : "voudra"} rester au contact`,
+      );
+    }
+    if (ancienLeader && !nommes.has(ancienLeader.id)) {
+      nommes.add(ancienLeader.id);
+      enjeux.push(`**${ancienLeader.name}** cherchera à reprendre son trône`);
+    }
+    if (grimpeur && !nommes.has(grimpeur.id)) {
+      nommes.add(grimpeur.id);
+      enjeux.push(`**${grimpeur.name}** voudra poursuivre sa remontée`);
+    }
+    if (enjeux.length > 1) p.push(`${listeFr(enjeux)}.`);
+
+    if (e_.chutes.length > 0) {
+      p.push(
+        `Quant à ceux qui ont reculé, ils savent mieux que personne qu'une seule bonne ` +
+          `journée suffit à tout remettre en place.`,
+      );
+    }
+
+    sections.push({
+      intertitre: `Cap sur la journée ${suivante}`,
+      paragraphes: p,
+      phraseForte: e_.densite
+        ? `${maj(nombreEcrit(exAequo.length))} joueur${exAequo.length > 1 ? "s" : ""} à ${pts(leader.points)}, ` +
+          `${nombreEcrit(groupeTete.length)} dans un seul point et ${nombreEcrit(e_.densite.joueurs)} dans ` +
+          `${nombreEcrit(e_.densite.points)} longueur${e_.densite.points > 1 ? "s" : ""} : ` +
+          `le Prono Ligue 1 LM n'a jamais semblé aussi indécis.`
+        : undefined,
+    });
+  }
 
   return {
-    surtitre: `Le grand bilan après ${journees}`,
+    surtitre: "Prono Ligue 1 LM — Le grand débrief",
     titre,
-    emoji: e.exAequoTete > 1 ? "🤯" : "🏆",
+    sousTitre,
     chapeau,
     sections,
   };

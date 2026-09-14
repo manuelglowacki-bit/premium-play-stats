@@ -30,9 +30,10 @@ import { getForeignClubLogo } from "@/lib/clubLogos";
 import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
-import { ecrireRecit, morceaux } from "@/lib/recitDebrief";
+import { ecrireRecit, morceaux, rangEcrit } from "@/lib/recitDebrief";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { lireArticle } from "@/lib/articleManuel";
+import { pseudoActuel } from "@/lib/joueurs";
 import { ArticleEcritALaMain } from "@/components/prono/ArticleEcritALaMain";
 import {
   cheminLisible,
@@ -58,44 +59,6 @@ import {
 
 /** Les quatre tons de l'article. Le texte ne nomme qu'une couleur
  *  (« or », « vert »...) ; c'est ici qu'elle devient des classes. */
-const TONS = {
-  or: {
-    fond: "bg-amber-400/[.035]",
-    kicker: "text-amber-300",
-    filet: "border-amber-400/40",
-    accent: "text-amber-200",
-  },
-  vert: {
-    fond: "bg-emerald-400/[.035]",
-    kicker: "text-emerald-300",
-    filet: "border-emerald-400/40",
-    accent: "text-emerald-200",
-  },
-  rouge: {
-    fond: "bg-red-400/[.03]",
-    kicker: "text-red-300",
-    filet: "border-red-400/35",
-    accent: "text-red-200",
-  },
-  bleu: {
-    fond: "bg-sky-400/[.035]",
-    kicker: "text-sky-300",
-    filet: "border-sky-400/40",
-    accent: "text-sky-200",
-  },
-  violet: {
-    fond: "bg-fuchsia-400/[.035]",
-    kicker: "text-fuchsia-300",
-    filet: "border-fuchsia-400/40",
-    accent: "text-fuchsia-200",
-  },
-  cyan: {
-    fond: "bg-cyan-400/[.035]",
-    kicker: "text-cyan-300",
-    filet: "border-cyan-400/40",
-    accent: "text-cyan-200",
-  },
-} as const;
 
 export const Route = createFileRoute("/debrief")({
   head: () => ({
@@ -1137,7 +1100,10 @@ function DebriefPage() {
   const rankedPlayers = useMemo(() => {
     const rows = profiles.map((profile) => ({
       id: profile.id,
-      name: profile.pseudo || "Joueur",
+      // Un joueur qui a change de pseudo en cours de saison doit apparaitre
+      // sous un seul nom, sinon l'article raconte deux personnes la ou il
+      // n'y en a qu'une (voir src/lib/joueurs.ts).
+      name: pseudoActuel(profile.pseudo) || "Joueur",
       avatar: profile.avatar_url || "",
       points: leagueStats.pointsByUser[profile.id] ?? 0,
       exactScores: leagueStats.exactScoresByUser[profile.id] ?? 0,
@@ -1374,8 +1340,8 @@ function DebriefPage() {
 
   return (
     <AppShell>
-      <div className="relative z-10 mx-auto max-w-[1320px] px-3 pb-28 md:px-6 md:pb-20">
-        <article className="overflow-hidden rounded-[30px] border border-slate-800/90 bg-[#07101c]/96 shadow-[0_30px_100px_rgba(0,0,0,.45)]">
+      <div className="relative z-10 mx-auto max-w-[1180px] px-2.5 pb-28 md:px-6 md:pb-20">
+        <article className="overflow-hidden rounded-[26px] border border-slate-800/80 bg-[#070f1a]/97 shadow-[0_30px_100px_rgba(0,0,0,.45)]">
 
           {/* ============================================================
               1 — L'OURS : le titre, la date, et ce qui se joue MAINTENANT
@@ -1384,45 +1350,38 @@ function DebriefPage() {
               journee, compte des matchs, LIVE, heure de mise a jour — dont
               aucune ne ressortait. Il n'en reste qu'une qui compte vraiment,
               le direct ; le reste redescend au rang de legende. */}
-          <header className="relative overflow-hidden border-b border-slate-800 px-5 py-7 md:px-10 md:py-9">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute -right-24 -top-28 size-72 rounded-full bg-emerald-500/[0.07] blur-3xl"
-            />
-            <div className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-              <div className="min-w-0">
-                <span className="font-mono text-[10px] font-black uppercase tracking-[.3em] text-emerald-300">
-                  Le bilan
+          {/* L'OURS DU JOURNAL. Le titre de la page tenait sur cinq lignes
+              de 5,5 rem et repetait ce que la une dit deja juste en dessous.
+              Un journal ne crie pas son nom : il le pose en haut, petit, avec
+              la date, et laisse la une prendre toute la place. */}
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-3.5 md:px-12">
+            <div className="flex min-w-0 items-baseline gap-3">
+              <h1 className="font-display text-base font-black uppercase tracking-[.12em] text-white md:text-lg">
+                Le Debrief
+              </h1>
+              <p className="truncate font-mono text-[10px] font-bold uppercase tracking-[.14em] text-slate-500">
+                <span className="capitalize">
+                  {new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
                 </span>
-                <h1 className="mt-1.5 font-display text-[3.25rem] font-black uppercase leading-[.82] tracking-[-.05em] text-white md:text-[4.5rem] lg:text-[5.5rem]">
-                  Le Debrief
-                </h1>
-                <p className="mt-3.5 font-mono text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">
-                  <span className="capitalize">
-                    {new Date(clock).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
-                  </span>
-                  {/* La journee RACONTEE, pas celle du calendrier : pendant
-                      que la J5 se joue, le Debrief parle encore de la J4. */}
-                  {grandBilan ? (
-                    <span className="text-slate-600"> · Journée {grandBilan.derniereJournee}</span>
-                  ) : null}
-                </p>
-              </div>
+                {/* La journee RACONTEE, pas celle du calendrier : pendant que
+                    la J5 se joue, le Debrief parle encore de la J4. */}
+                {grandBilan ? <span className="text-slate-600"> · Journée {grandBilan.derniereJournee}</span> : null}
+              </p>
+            </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-3">
-                {liveCount > 0 && (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-red-400/40 bg-red-500/15 px-3.5 py-2 font-mono text-[10px] font-black uppercase tracking-[.14em] text-red-300">
-                    <span className="relative flex size-2">
-                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
-                      <span className="relative size-2 rounded-full bg-red-400" />
-                    </span>
-                    {liveCount} match{liveCount > 1 ? "s" : ""} en direct
+            <div className="flex shrink-0 items-center gap-3">
+              {liveCount > 0 && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-red-400/40 bg-red-500/15 px-3 py-1.5 font-mono text-[9px] font-black uppercase tracking-[.14em] text-red-300">
+                  <span className="relative flex size-1.5">
+                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75" />
+                    <span className="relative size-1.5 rounded-full bg-red-400" />
                   </span>
-                )}
-                <span className="font-mono text-[9px] uppercase tracking-[.14em] text-slate-600">
-                  MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) ?? "—"}
+                  {liveCount} en direct
                 </span>
-              </div>
+              )}
+              <span className="font-mono text-[9px] uppercase tracking-[.14em] text-slate-600">
+                MAJ {lastUpdated?.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) ?? "—"}
+              </span>
             </div>
           </header>
 
@@ -1474,109 +1433,170 @@ function DebriefPage() {
             </section>
           ) : (
             <>
-              {/* LE CHAPEAU */}
-              <section className="relative overflow-hidden border-b border-slate-800 bg-gradient-to-br from-emerald-500/[.10] via-transparent to-fuchsia-500/[.06] px-5 py-9 md:px-10 md:py-12">
-                <p className="font-mono text-[10px] font-black uppercase tracking-[.24em] text-emerald-300">
-                  {recit.surtitre}
-                </p>
-                <h2 className="mt-3 max-w-[20ch] font-display text-[2rem] font-black uppercase leading-[.95] tracking-[-.03em] text-white md:text-[3.25rem]">
-                  <span className="mr-2" aria-hidden>
-                    {recit.emoji}
-                  </span>
-                  {recit.titre}
-                </h2>
-                {/* Le chapeau : plus gros que le corps, c'est lui qui donne
-                    envie de lire la suite. `max-w` en `ch` et non en pixels —
-                    une ligne de lecture confortable se mesure en caracteres. */}
-                <p className="mt-5 max-w-[62ch] text-[17px] font-medium leading-[1.65] text-slate-200 md:text-lg">
-                  {morceaux(recit.chapeau).map((bout, i) =>
-                    bout.accent ? (
-                      <strong key={i} className="font-black text-emerald-300">
-                        {bout.texte}
-                      </strong>
-                    ) : (
-                      <span key={i}>{bout.texte}</span>
-                    ),
-                  )}
-                </p>
+              {/* ============================================================
+                  LA UNE
+                  ============================================================
+                  Surtitre, titre, sous-titre, chapo. La hierarchie fait tout
+                  le travail : un seul gros titre, un seul filet, et du blanc.
+                  Aucune carte, aucun fond colore — c'est ce qui separe une
+                  page de journal d'un tableau de bord. */}
+              <section className="px-5 pb-8 pt-9 md:px-12 md:pb-10 md:pt-12">
+                {/* MEME COLONNE QUE LE CORPS DE L'ARTICLE. La une etait
+                    centree sur sa propre largeur : sur grand ecran, son titre
+                    ne tombait pas sur le meme bord gauche que les
+                    intertitres, et l'oeil le voyait tout de suite. */}
+                <div className="mx-auto max-w-[68rem]">
+                  <div className="max-w-[46rem]">
+                  <p className="font-mono text-[10px] font-black uppercase tracking-[.28em] text-emerald-300">
+                    {recit.surtitre}
+                  </p>
+
+                  <h2 className="mt-4 font-display text-[2.1rem] font-black uppercase leading-[.95] tracking-[-.035em] text-white md:text-[3.4rem]">
+                    {recit.titre}
+                  </h2>
+
+                  <p className="mt-5 border-l-2 border-emerald-400/50 pl-4 text-[17px] font-medium leading-[1.55] text-slate-200 md:text-xl">
+                    {morceaux(recit.sousTitre).map((bout, i) =>
+                      bout.accent ? (
+                        <strong key={i} className="font-black text-white">
+                          {bout.texte}
+                        </strong>
+                      ) : (
+                        <span key={i}>{bout.texte}</span>
+                      ),
+                    )}
+                  </p>
+
+                  <div className="mt-8 h-px bg-gradient-to-r from-slate-700 via-slate-800 to-transparent" />
+
+                  {/* LE CHAPO. La lettrine sur le premier paragraphe : c'est
+                      le signal le plus ancien et le plus efficace pour dire
+                      « ici commence un article ». */}
+                  <div className="mt-7 space-y-4">
+                    {recit.chapeau.map((paragraphe, index) => (
+                      <p
+                        key={index}
+                        className={`text-[16px] leading-[1.8] text-slate-300 md:text-[17px] ${
+                          index === 0
+                            ? "first-letter:float-left first-letter:mr-2.5 first-letter:mt-1 first-letter:font-display first-letter:text-[3.2rem] first-letter:font-black first-letter:leading-[.8] first-letter:text-emerald-300"
+                            : ""
+                        }`}
+                      >
+                        {morceaux(paragraphe).map((bout, i) =>
+                          bout.accent ? (
+                            <strong key={i} className="font-bold text-white">
+                              {bout.texte}
+                            </strong>
+                          ) : (
+                            <span key={i}>{bout.texte}</span>
+                          ),
+                        )}
+                      </p>
+                    ))}
+                  </div>
+                  </div>
+                </div>
               </section>
 
-              {/* LE CORPS DE L'ARTICLE
-                  Une couleur par section — l'or pour la tete, le vert pour
-                  ceux qui montent, le rouge pour ceux qui tombent, le bleu
-                  pour la suite. Le texte, lui, ne connait pas Tailwind : il
-                  ne donne qu'un nom de ton (voir recitDebrief.ts). */}
-              {recit.sections.map((section) => {
-                const couleurs = TONS[section.ton];
-                return (
-                  <section
-                    key={section.kicker}
-                    className={`border-b border-slate-800 px-5 py-8 md:px-10 md:py-10 ${couleurs.fond}`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-2xl leading-none md:text-3xl" aria-hidden>
-                        {section.emoji}
-                      </span>
-                      <div className="min-w-0">
-                        <p className={`font-mono text-[9px] font-black uppercase tracking-[.2em] ${couleurs.kicker}`}>
-                          {section.kicker}
-                        </p>
-                        <h3 className="mt-0.5 font-display text-xl font-black uppercase tracking-[-.02em] text-white md:text-2xl">
-                          {section.titre}
-                        </h3>
+              {/* ============================================================
+                  LE CORPS DE L'ARTICLE
+                  ============================================================
+                  Une seule colonne de lecture, large de moins de 70 signes,
+                  et une marge a droite sur grand ecran ou viennent se poser
+                  les encadres. C'est la mise en page d'un magazine : le texte
+                  au centre, les chiffres en appui — jamais l'inverse. */}
+              {recit.sections.map((section, indexSection) => (
+                <section
+                  key={section.intertitre}
+                  className="border-t border-slate-800/70 px-5 py-9 md:px-12 md:py-11"
+                >
+                  <div className="mx-auto grid max-w-[68rem] gap-x-10 gap-y-7 lg:grid-cols-[minmax(0,1fr)_17rem]">
+                    <div className="min-w-0 max-w-[46rem]">
+                      <h3 className="font-display text-[1.35rem] font-black uppercase leading-[1.05] tracking-[-.02em] text-white md:text-[1.75rem]">
+                        {section.intertitre}
+                      </h3>
+
+                      <div className="mt-5 space-y-4">
+                        {section.paragraphes.map((paragraphe, index) => (
+                          <p
+                            key={index}
+                            className="text-[15.5px] leading-[1.85] text-slate-300 md:text-[16.5px]"
+                          >
+                            {morceaux(paragraphe).map((bout, i) =>
+                              bout.accent ? (
+                                <strong key={i} className="font-bold text-white">
+                                  {bout.texte}
+                                </strong>
+                              ) : (
+                                <span key={i}>{bout.texte}</span>
+                              ),
+                            )}
+                          </p>
+                        ))}
                       </div>
+
+                      {/* LA PHRASE FORTE. Detachee, en gros, sans encadre :
+                          une citation de magazine, pas une alerte. */}
+                      {section.phraseForte && (
+                        <blockquote className="mt-7 border-l-2 border-emerald-400/60 py-1 pl-5">
+                          <p className="font-display text-[1.25rem] font-black leading-[1.3] tracking-[-.01em] text-white md:text-[1.5rem]">
+                            « {section.phraseForte} »
+                          </p>
+                        </blockquote>
+                      )}
                     </div>
 
-                    {/* Le filet colore rattache les paragraphes a leur section
-                        — sans lui, quatre blocs de texte se ressemblent tous. */}
-                    <div className={`mt-4 max-w-[68ch] space-y-4 border-l-2 pl-4 ${couleurs.filet}`}>
-                      {section.paragraphes.map((paragraphe, index) => (
-                        <p
-                          key={index}
-                          className="text-[15px] leading-[1.75] text-slate-300 md:text-base"
-                        >
-                          {morceaux(paragraphe).map((bout, i) =>
-                            bout.accent ? (
-                              <strong key={i} className={`font-bold ${couleurs.accent}`}>
-                                {bout.texte}
-                              </strong>
-                            ) : (
-                              <span key={i}>{bout.texte}</span>
-                            ),
-                          )}
-                        </p>
-                      ))}
-                    </div>
+                    {/* LA MARGE : encadres et parcours. Sous le texte sur
+                        telephone, a cote sur grand ecran. */}
+                    {(section.encadre || (section.echelles ?? []).length > 0) && (
+                      <aside className="min-w-0 space-y-4 lg:pt-1">
+                        {section.encadre && (
+                          <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+                            <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-emerald-300">
+                              {section.encadre.titre}
+                            </p>
+                            <div className="mt-3 space-y-3">
+                              {section.encadre.groupes.map((groupe) => (
+                                <div key={groupe.valeur}>
+                                  <p className="font-display text-base font-black tabular-nums text-white">
+                                    {groupe.valeur}
+                                  </p>
+                                  <p className="mt-0.5 text-[13px] leading-snug text-slate-400">
+                                    {groupe.noms.join(" · ")}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {section.encadre.note && (
+                              <p className="mt-3 border-t border-slate-800 pt-2.5 font-mono text-[10px] uppercase tracking-[.1em] text-slate-500">
+                                {section.encadre.note}
+                              </p>
+                            )}
+                          </div>
+                        )}
 
-                    {/* LE PARCOURS, MONTRE ET PAS SEULEMENT RACONTE.
-                        Une phrase dit « 17e, puis 9e, puis 6e, et enfin 1er ».
-                        L'echelle ci-dessous ajoute ce que la phrase ne peut
-                        pas porter sans devenir illisible : les points de
-                        chaque journee, et le sens de chaque mouvement. */}
-                    {(section.echelles ?? []).length > 0 && (
-                      <div className="mt-5 grid max-w-[68ch] gap-3 sm:grid-cols-2">
                         {(section.echelles ?? []).map((echelle) => (
                           <div
                             key={echelle.nom}
-                            className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/40 p-3"
+                            className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/50 p-4"
                           >
-                            <p className="truncate font-display text-xs font-black uppercase tracking-[.08em] text-white">
-                              {echelle.nom}
+                            <p className="truncate font-mono text-[9px] font-black uppercase tracking-[.2em] text-emerald-300">
+                              Le parcours de {echelle.nom}
                             </p>
 
                             {/* LES DEUX COLONNES SONT NOMMEES. Sans ces
                                 etiquettes, « 15 pts +15 » suivi de « 34 pts »
                                 se lit comme une addition qui ne tombe pas
-                                juste : on essaie 15 + 15 et on trouve 34.
-                                Il s'agit en realite du TOTAL a l'issue de la
-                                journee, et des points marques SUR cette
-                                journee — deux choses differentes. */}
-                            <div className="mt-2 flex min-w-0 items-center gap-2 border-b border-slate-800 pb-1 font-mono text-[8px] font-black uppercase tracking-[.14em] text-slate-600">
+                                juste : on essaie 15 + 15 et on trouve 34. Il
+                                s'agit du TOTAL au soir de la journee d'un
+                                cote, des points marques SUR la journee de
+                                l'autre. */}
+                            <div className="mt-3 flex min-w-0 items-center gap-2 border-b border-slate-800 pb-1 font-mono text-[8px] font-black uppercase tracking-[.14em] text-slate-600">
                               <span className="w-5 shrink-0" aria-hidden />
                               <span className="w-7 shrink-0" aria-hidden />
                               <span className="w-10 shrink-0">Rang</span>
                               <span className="flex-1 text-right">Total</span>
-                              <span className="w-12 shrink-0 text-right">Journée</span>
+                              <span className="w-10 shrink-0 text-right">Jour</span>
                             </div>
 
                             <div className="mt-1.5 space-y-1">
@@ -1588,35 +1608,34 @@ function DebriefPage() {
                                     key={etape.numero}
                                     className="flex min-w-0 items-center gap-2 font-mono text-[11px] tabular-nums"
                                   >
-                                    <span className="w-5 shrink-0 text-center" aria-hidden>
-                                      {delta > 0 ? "⬆️" : delta < 0 ? "⬇️" : avant == null ? "" : "➡️"}
+                                    <span
+                                      className={`w-5 shrink-0 text-center font-black ${
+                                        delta > 0
+                                          ? "text-emerald-400"
+                                          : delta < 0
+                                            ? "text-red-400"
+                                            : "text-slate-700"
+                                      }`}
+                                      aria-hidden
+                                    >
+                                      {delta > 0 ? "↑" : delta < 0 ? "↓" : avant == null ? "" : "="}
                                     </span>
                                     <span className="w-7 shrink-0 font-black text-slate-500">
                                       J{etape.numero}
                                     </span>
                                     <span
                                       className={`w-10 shrink-0 font-black ${
-                                        etape.rang === 1
-                                          ? "text-amber-300"
-                                          : etape.rang <= 3
-                                            ? "text-slate-200"
-                                            : "text-slate-400"
+                                        etape.rang === 1 ? "text-amber-300" : "text-slate-300"
                                       }`}
                                     >
-                                      {etape.rang === 1
-                                        ? "🥇"
-                                        : etape.rang === 2
-                                          ? "🥈"
-                                          : etape.rang === 3
-                                            ? "🥉"
-                                            : `${etape.rang}e`}
+                                      {rangEcrit(etape.rang)}
                                     </span>
                                     <span className="min-w-0 flex-1 truncate text-right">
                                       <span className="font-black text-slate-200">{etape.points}</span>
                                       <span className="text-slate-500"> pts</span>
                                     </span>
                                     <span
-                                      className={`w-12 shrink-0 text-right font-black ${
+                                      className={`w-10 shrink-0 text-right font-black ${
                                         etape.gainJournee > 0 ? "text-emerald-400" : "text-slate-600"
                                       }`}
                                     >
@@ -1628,83 +1647,24 @@ function DebriefPage() {
                             </div>
                           </div>
                         ))}
-                      </div>
+                      </aside>
                     )}
-                  </section>
-                );
-              })}
-
-              {/* LE CLASSEMENT — un journal a aussi ses tableaux. */}
-              {grandBilan && (
-                <section className="border-b border-slate-800 px-5 py-8 md:px-10">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl leading-none md:text-3xl" aria-hidden>
-                      📊
-                    </span>
-                    <div className="min-w-0">
-                      <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-amber-300">
-                        Le classement
-                      </p>
-                      <h3 className="mt-0.5 font-display text-xl font-black uppercase text-white md:text-2xl">
-                        Le top {grandBilan.top10.length}
-                      </h3>
-                    </div>
                   </div>
 
-                  <div className="mt-4 max-w-[68ch] space-y-1.5">
-                    {grandBilan.top10.map((joueur) => (
-                      <div
-                        key={joueur.id}
-                        className={`flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2.5 ${
-                          joueur.rang === 1
-                            ? "border-amber-400/40 bg-amber-400/[.08]"
-                            : joueur.rang <= 3
-                              ? "border-slate-300/20 bg-white/[.03]"
-                              : "border-slate-800"
-                        }`}
+                  {/* L'OURS, tout en bas : le classement complet est ailleurs,
+                      et cette page n'a pas a le recopier. */}
+                  {indexSection === recit.sections.length - 1 && (
+                    <div className="mx-auto mt-9 max-w-[68rem]">
+                      <Link
+                        to="/classement"
+                        className="tap inline-block rounded-xl border border-slate-700 px-3.5 py-2.5 font-mono text-[9px] font-black uppercase tracking-[.14em] text-emerald-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
                       >
-                        <span className="w-7 shrink-0 text-center font-display text-sm font-black tabular-nums text-slate-500">
-                          {joueur.rang === 1
-                            ? "🥇"
-                            : joueur.rang === 2
-                              ? "🥈"
-                              : joueur.rang === 3
-                                ? "🥉"
-                                : joueur.rang}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate font-display text-sm font-black text-white">
-                          {joueur.name}
-                        </span>
-                        {/* Le mouvement SUR la journee racontee — la meme
-                            mesure que les sections de l'article. Une fleche
-                            qui parlerait de la saison entiere contredirait
-                            le texte juste au-dessus. */}
-                        {joueur.mouvement !== 0 && (
-                          <span
-                            className={`shrink-0 font-mono text-[10px] font-black tabular-nums ${
-                              joueur.mouvement > 0 ? "text-emerald-400" : "text-red-400"
-                            }`}
-                          >
-                            {joueur.mouvement > 0
-                              ? `↑${joueur.mouvement}`
-                              : `↓${Math.abs(joueur.mouvement)}`}
-                          </span>
-                        )}
-                        <span className="w-10 shrink-0 text-right font-display text-base font-black tabular-nums text-white">
-                          {joueur.points}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <Link
-                    to="/classement"
-                    className="tap mt-4 inline-block rounded-xl border border-slate-700 px-3 py-2 font-mono text-[9px] font-black uppercase tracking-[.12em] text-emerald-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-200"
-                  >
-                    Voir tout le classement →
-                  </Link>
+                        Voir le classement complet →
+                      </Link>
+                    </div>
+                  )}
                 </section>
-              )}
+              ))}
             </>
           )}
 
