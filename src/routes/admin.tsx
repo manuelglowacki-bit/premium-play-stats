@@ -6,6 +6,8 @@ import { preparerAnnonce, resumerEnvoi, LONGUEUR_MAX } from "@/lib/annonce";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { lireArticle } from "@/lib/articleManuel";
+import { ArticleEcritALaMain } from "@/components/prono/ArticleEcritALaMain";
 import { AppShell } from "@/components/prono/AppShell";
 import AdminRoute from "@/components/auth/AdminRoute";
 import {
@@ -5671,6 +5673,11 @@ function SettingsTab({
     settings?.debrief_journee != null ? String(settings.debrief_journee) : "",
   );
   const [savingDebrief, setSavingDebrief] = useState(false);
+  const [apercuDebrief, setApercuDebrief] = useState(false);
+  // L'apercu lit le texte EN COURS DE SAISIE, pas celui qui est en ligne :
+  // c'est tout l'interet — voir ce que ca donne avant de publier aux 23
+  // joueurs. Exactement le meme lecteur et le meme rendu que la page.
+  const blocsDebrief = useMemo(() => lireArticle(debriefTexte), [debriefTexte]);
 
   // Général
   const [season, setSeason] = useState(settings?.season ?? "");
@@ -6193,6 +6200,14 @@ function SettingsTab({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* L'APERCU D'ABORD. Publier, c'est publier pour les 23 joueurs
+              d'un coup : il faut pouvoir regarder avant. Ce bouton
+              n'enregistre rien et n'envoie rien — il affiche ci-dessous le
+              texte en cours de saisie, avec le rendu exact de la page. */}
+          <GhostButton onClick={() => setApercuDebrief((v) => !v)} disabled={blocsDebrief.length === 0}>
+            <Eye size={13} />
+            {apercuDebrief ? "Masquer l'aperçu" : "Voir ce que ça donne"}
+          </GhostButton>
           <PrimaryButton onClick={() => handleSaveDebrief(false)} disabled={savingDebrief}>
             <Save size={13} />
             {savingDebrief ? "Envoi…" : "Publier mon article"}
@@ -6213,6 +6228,21 @@ function SettingsTab({
             </span>
           )}
         </div>
+
+        {apercuDebrief && blocsDebrief.length > 0 && (
+          <div className="mt-4">
+            <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Aperçu — personne d'autre ne le voit
+            </p>
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+              <ArticleEcritALaMain
+                blocs={blocsDebrief}
+                journee={Math.round(toNumber(debriefJournee, 0)) || null}
+                compact
+              />
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Le bloc "Gazette — Mercato" a ete retire de l'Admin a la demande de
