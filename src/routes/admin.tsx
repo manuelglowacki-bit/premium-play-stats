@@ -49,6 +49,9 @@ import {
   updateSettings,
 } from "@/services/adminService";
 import { lienRappel } from "@/lib/mailRappel";
+import { useAuth } from "@/context/AuthContext";
+import { oublierDebriefVu } from "@/lib/annonceDebrief";
+import { oublierNiveau } from "@/lib/annonceNiveau";
 import {
   type BonusCandidate,
   type BonusCompetitionCode,
@@ -94,6 +97,7 @@ import {
   Check,
   Download,
   Globe,
+  Eye,
   ChevronLeft,
   ChevronRight,
   Sparkles,
@@ -5655,6 +5659,10 @@ function SettingsTab({
   onChanged: () => Promise<void>;
   notify: (message: string) => void;
 }) {
+  // Le compte connecte : les annonces sont memorisees par joueur, donc les
+  // oublier ne concerne que celui qui clique.
+  const { user } = useAuth();
+
   // Général
   const [season, setSeason] = useState(settings?.season ?? "");
   const [entryFee, setEntryFee] = useState(String(settings?.entry_fee ?? 10));
@@ -6054,6 +6062,37 @@ function SettingsTab({
           onChange={(e) => setMaintenanceMessage(e.target.value)}
           placeholder="Message affiché aux joueurs pendant la maintenance (optionnel)"
         />
+      </Card>
+
+      {/* ================= REVOIR LES ANNONCES =================
+          Les deux bannieres de l'Accueil — « le Debrief est en ligne » et le
+          passage de niveau — ne s'affichent qu'UNE FOIS. Tres bien pour un
+          joueur, impossible a verifier pour l'organisateur : une fois lue,
+          elle a disparu.
+          Ce bouton les remet en attente pour SON compte uniquement. Rien
+          n'est envoye au serveur, aucun autre joueur n'est touche : la
+          memoire de ces annonces vit dans le navigateur. */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Eye size={18} className="text-emerald-400" />
+          Revoir les annonces
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Les bannières de l'Accueil ne s'affichent qu'une fois. Ce bouton les
+          remet en attente <span className="font-semibold text-slate-300">pour toi seul</span>,
+          pour vérifier ce que voient les joueurs. Aucun autre compte n'est touché.
+        </p>
+        <GhostButton
+          onClick={() => {
+            oublierDebriefVu(user?.id);
+            oublierNiveau(user?.id);
+            notify("👁️ Annonces réarmées — retourne sur l'Accueil");
+          }}
+          disabled={!user?.id}
+        >
+          <Eye size={13} />
+          Réafficher les annonces sur l'Accueil
+        </GhostButton>
       </Card>
 
       {/* Le bloc "Gazette — Mercato" a ete retire de l'Admin a la demande de

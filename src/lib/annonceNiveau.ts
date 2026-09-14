@@ -68,3 +68,13 @@ export function memoriserNiveau(
     // Genant, jamais grave.
   }
 }
+
+/** Oublie le niveau deja annonce, pour revoir la banniere (voir Admin). */
+export function oublierNiveau(userId: string | null | undefined): void {
+  if (!userId) return;
+  try {
+    window.localStorage.removeItem(PREFIXE + userId);
+  } catch {
+    // Stockage indisponible : il n'y avait rien a oublier.
+  }
+}

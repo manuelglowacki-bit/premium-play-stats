@@ -67,3 +67,20 @@ export function memoriserDebriefVu(
     // Sans stockage, l'annonce se represente a la prochaine ouverture.
   }
 }
+
+/**
+ * Oublie l'annonce deja vue, pour la revoir.
+ *
+ * Sert a l'organisateur : une banniere qui ne s'affiche qu'une fois est
+ * invisible des qu'on l'a lue, donc impossible a verifier. Ce bouton la
+ * remet en attente pour SON compte uniquement — les autres joueurs ne sont
+ * pas touches, rien n'est envoye au serveur.
+ */
+export function oublierDebriefVu(userId: string | null | undefined): void {
+  if (!userId) return;
+  try {
+    window.localStorage.removeItem(PREFIXE + userId);
+  } catch {
+    // Stockage indisponible : il n'y avait rien a oublier.
+  }
+}
