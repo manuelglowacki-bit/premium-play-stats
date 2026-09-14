@@ -16,6 +16,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ClassementRouteImport } from './routes/classement'
 import { Route as DebriefRouteImport } from './routes/debrief'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as GazetteRouteImport } from './routes/gazette'
 import { Route as ProfilRouteImport } from './routes/profil'
 import { Route as PronosticsRouteImport } from './routes/pronostics'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -57,6 +58,11 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GazetteRoute = GazetteRouteImport.update({
+  id: '/gazette',
+  path: '/gazette',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProfilRoute = ProfilRouteImport.update({
   id: '/profil',
   path: '/profil',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/classement': typeof ClassementRoute
   '/debrief': typeof DebriefRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -105,6 +112,7 @@ export interface FileRoutesByTo {
   '/classement': typeof ClassementRoute
   '/debrief': typeof DebriefRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -120,6 +128,7 @@ export interface FileRoutesById {
   '/classement': typeof ClassementRoute
   '/debrief': typeof DebriefRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -136,6 +145,7 @@ export interface FileRouteTypes {
     | '/classement'
     | '/debrief'
     | '/forgot-password'
+    | '/gazette'
     | '/profil'
     | '/pronostics'
     | '/reset-password'
@@ -150,6 +160,7 @@ export interface FileRouteTypes {
     | '/classement'
     | '/debrief'
     | '/forgot-password'
+    | '/gazette'
     | '/profil'
     | '/pronostics'
     | '/reset-password'
@@ -164,6 +175,7 @@ export interface FileRouteTypes {
     | '/classement'
     | '/debrief'
     | '/forgot-password'
+    | '/gazette'
     | '/profil'
     | '/pronostics'
     | '/reset-password'
@@ -179,6 +191,7 @@ export interface RootRouteChildren {
   ClassementRoute: typeof ClassementRoute
   DebriefRoute: typeof DebriefRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
+  GazetteRoute: typeof GazetteRoute
   ProfilRoute: typeof ProfilRoute
   PronosticsRoute: typeof PronosticsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
@@ -237,6 +250,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/gazette': {
+      id: '/gazette'
+      path: '/gazette'
+      fullPath: '/gazette'
+      preLoaderRoute: typeof GazetteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/profil': {
       id: '/profil'
       path: '/profil'
@@ -283,6 +303,7 @@ const rootRouteChildren: RootRouteChildren = {
   ClassementRoute: ClassementRoute,
   DebriefRoute: DebriefRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
+  GazetteRoute: GazetteRoute,
   ProfilRoute: ProfilRoute,
   PronosticsRoute: PronosticsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
