@@ -132,6 +132,13 @@ export interface AppSettings {
   // rien ne soit perdu si la bascule revient. Optionnelle : les anciennes
   // lignes peuvent ne pas la porter.
   mercato_active?: boolean | null;
+
+  // LE DEBRIEF ECRIT A LA MAIN (migration 20260914100000). Quand
+  // `debrief_texte` est vide, la page redige elle-meme son article : il n'y
+  // a donc jamais de page blanche, meme si personne n'ecrit rien.
+  debrief_texte?: string | null;
+  debrief_journee?: number | null;
+  debrief_maj?: string | null;
 }
 
 // ============================================================

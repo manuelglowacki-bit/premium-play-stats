@@ -32,6 +32,7 @@ import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { ecrireRecit, morceaux } from "@/lib/recitDebrief";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
+import { lireArticle, titreDeUne, type BlocArticle } from "@/lib/articleManuel";
 import {
   cheminLisible,
   journeeTerminee,
@@ -797,6 +798,13 @@ function DebriefPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [journees, setJournees] = useState<Journee[]>([]);
+  // L'article ecrit a la main par l'organisateur. Quand il est rempli, c'est
+  // lui qui s'affiche a la place du texte calcule.
+  const [articleManuel, setArticleManuel] = useState<{
+    texte: string;
+    journee: number | null;
+    maj: string | null;
+  }>({ texte: "", journee: null, maj: null });
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [predictionsByUser, setPredictionsByUser] = useState<Map<string, PlayerPronos>>(new Map());
   const [teams, setTeams] = useState<GazetteTeam[]>([]);
@@ -821,6 +829,7 @@ function DebriefPage() {
     try {
       const [
         { data: competitionsData, error: competitionsError },
+        { data: reglagesData },
         matchdaysData,
         matchesData,
         { data: bonusOptionsData, error: bonusOptionsError },
@@ -831,6 +840,13 @@ function DebriefPage() {
         apiLiveMatches,
       ] = await Promise.all([
         supabase.from("competitions").select("id, external_code, code"),
+        // L'article ecrit a la main, s'il y en a un (migration
+        // 20260914100000). Vide = la page redige elle-meme.
+        supabase
+          .from("app_settings")
+          .select("debrief_texte, debrief_journee, debrief_maj")
+          .eq("id", 1)
+          .maybeSingle(),
         getMatchdays(),
         getMatches(),
         supabase
@@ -964,6 +980,12 @@ function DebriefPage() {
       setRankingBonusOptions(rankingBonusRows);
       setRankingFavoriteHistory(favoriteHistoryMap);
       setRankingTeamNames(teamNames);
+
+      setArticleManuel({
+        texte: String((reglagesData as any)?.debrief_texte ?? ""),
+        journee: Number((reglagesData as any)?.debrief_journee) || null,
+        maj: (reglagesData as any)?.debrief_maj ?? null,
+      });
 
       setJournees(normalized);
       setProfiles(loadedProfiles);
@@ -1292,6 +1314,10 @@ function DebriefPage() {
     };
   }, [rankedPlayers, journees, pointsFor, predictionsByUser, matchesById]);
 
+  // L'ARTICLE DE L'ORGANISATEUR, decoupe en blocs affichables. Vide tant
+  // qu'il n'a rien colle dans Admin — la page reprend alors son texte.
+  const blocsManuels = useMemo(() => lireArticle(articleManuel.texte), [articleManuel.texte]);
+
   // LE TEXTE — ecrit a partir des chiffres du grand bilan.
   const recit = useMemo(() => {
     if (!grandBilan) return null;
@@ -1435,7 +1461,9 @@ function DebriefPage() {
               qui ne calcule rien : il recoit des chiffres deja etablis et les
               met en francais, accords compris. Ici on ne fait que la mise en
               page — largeur de lecture, interlignage, hierarchie. */}
-          {!recit ? (
+          {blocsManuels.length > 0 ? (
+            <ArticleEcritALaMain blocs={blocsManuels} journee={articleManuel.journee} />
+          ) : !recit ? (
             <section className="px-5 py-10 md:px-10">
               <EditorialEmptyState
                 icon={Newspaper}
@@ -1682,6 +1710,159 @@ function DebriefPage() {
         </article>
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * L'ARTICLE ECRIT PAR L'ORGANISATEUR.
+ *
+ * Il l'a colle dans Admin ; on le transcrit ici avec l'allure du reste du
+ * site. Aucune phrase n'est reecrite, aucun chiffre n'est verifie : c'est
+ * son texte, affiche tel qu'il l'a ecrit. La seule chose qu'on ajoute est la
+ * mise en page — titres, listes, tableaux, mises en exergue.
+ *
+ * Le gras `**...**` passe par `morceaux()`, la meme fonction que le texte
+ * calcule : une seule facon de mettre un chiffre en avant sur cette page.
+ */
+function ArticleEcritALaMain({
+  blocs,
+  journee,
+}: {
+  blocs: BlocArticle[];
+  journee: number | null;
+}) {
+  const une = titreDeUne(blocs);
+  // Le titre de une est deja affiche en en-tete : on ne le repete pas dans
+  // le corps de l'article.
+  const premierTitre = blocs.findIndex((b) => b.type === "titre");
+  const corps = une && premierTitre >= 0 ? blocs.filter((_, i) => i !== premierTitre) : blocs;
+
+  const enGras = (texte: string, couleur: string) =>
+    morceaux(texte).map((bout, i) =>
+      bout.accent ? (
+        <strong key={i} className={`font-black ${couleur}`}>
+          {bout.texte}
+        </strong>
+      ) : (
+        <span key={i}>{bout.texte}</span>
+      ),
+    );
+
+  return (
+    <>
+      {une && (
+        <section className="relative overflow-hidden border-b border-slate-800 bg-gradient-to-br from-emerald-500/[.10] via-transparent to-fuchsia-500/[.06] px-5 py-9 md:px-10 md:py-12">
+          {journee ? (
+            <p className="font-mono text-[10px] font-black uppercase tracking-[.24em] text-emerald-300">
+              Journée {journee}
+            </p>
+          ) : null}
+          <h2 className="mt-3 max-w-[24ch] font-display text-[1.75rem] font-black uppercase leading-[1] tracking-[-.03em] text-white md:text-[3rem]">
+            {une.emoji && (
+              <span className="mr-2" aria-hidden>
+                {une.emoji}
+              </span>
+            )}
+            {une.texte}
+          </h2>
+        </section>
+      )}
+
+      <section className="px-5 py-8 md:px-10 md:py-10">
+        <div className="max-w-[68ch] space-y-4">
+          {corps.map((bloc, index) => {
+            if (bloc.type === "separateur") {
+              return <hr key={index} className="!my-7 border-slate-800" />;
+            }
+
+            if (bloc.type === "titre") {
+              return (
+                <div key={index} className="!mt-8 flex items-center gap-2.5 first:!mt-0">
+                  {bloc.emoji && (
+                    <span className="text-2xl leading-none md:text-3xl" aria-hidden>
+                      {bloc.emoji}
+                    </span>
+                  )}
+                  <h3 className="min-w-0 font-display text-xl font-black uppercase tracking-[-.02em] text-white md:text-2xl">
+                    {bloc.texte}
+                  </h3>
+                </div>
+              );
+            }
+
+            if (bloc.type === "citation") {
+              return (
+                <blockquote
+                  key={index}
+                  className="rounded-2xl border-l-2 border-amber-400/60 bg-amber-400/[.06] px-4 py-3 text-[15px] font-semibold leading-[1.7] text-amber-100 md:text-base"
+                >
+                  {enGras(bloc.texte, "text-amber-300")}
+                </blockquote>
+              );
+            }
+
+            if (bloc.type === "liste") {
+              return (
+                <ul key={index} className="space-y-1.5">
+                  {bloc.elements.map((element, i) => (
+                    <li
+                      key={i}
+                      className="flex min-w-0 gap-2.5 text-[15px] leading-[1.7] text-slate-300 md:text-base"
+                    >
+                      <span className="mt-[.45em] size-1.5 shrink-0 rounded-full bg-emerald-400" aria-hidden />
+                      <span className="min-w-0">{enGras(element, "text-emerald-300")}</span>
+                    </li>
+                  ))}
+                </ul>
+              );
+            }
+
+            if (bloc.type === "tableau") {
+              return (
+                // Un tableau peut etre plus large que l'ecran : il defile
+                // dans sa propre boite, jamais la page entiere.
+                <div key={index} className="-mx-1 overflow-x-auto">
+                  <table className="w-full min-w-[18rem] border-collapse text-left">
+                    <tbody>
+                      {bloc.lignes.map((ligne, i) => (
+                        <tr
+                          key={i}
+                          className={i === 0 ? "border-b border-slate-700" : "border-b border-slate-800/60"}
+                        >
+                          {ligne.map((cellule, j) => (
+                            <td
+                              key={j}
+                              className={`px-2.5 py-2 align-middle ${
+                                i === 0
+                                  ? "font-mono text-[9px] font-black uppercase tracking-[.14em] text-slate-500"
+                                  : `text-sm ${j === 0 ? "font-black text-white" : "text-slate-300"}`
+                              }`}
+                            >
+                              {enGras(cellule, "text-emerald-300")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+
+            return (
+              <p
+                key={index}
+                // `whitespace-pre-line` : les retours a la ligne de l'auteur
+                // sont conserves — c'est ainsi qu'il aligne un parcours.
+                className="whitespace-pre-line text-[15px] leading-[1.75] text-slate-300 md:text-base"
+              >
+                {enGras(bloc.texte, "text-emerald-300")}
+              </p>
+            );
+          })}
+        </div>
+      </section>
+    </>
   );
 }
 

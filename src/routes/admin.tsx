@@ -5663,6 +5663,15 @@ function SettingsTab({
   // oublier ne concerne que celui qui clique.
   const { user } = useAuth();
 
+  // LE DEBRIEF ECRIT A LA MAIN. Enregistre a part du reste des reglages :
+  // l'organisateur colle son article et l'envoie, sans avoir a re-valider
+  // toute la page de configuration.
+  const [debriefTexte, setDebriefTexte] = useState(settings?.debrief_texte ?? "");
+  const [debriefJournee, setDebriefJournee] = useState(
+    settings?.debrief_journee != null ? String(settings.debrief_journee) : "",
+  );
+  const [savingDebrief, setSavingDebrief] = useState(false);
+
   // Général
   const [season, setSeason] = useState(settings?.season ?? "");
   const [entryFee, setEntryFee] = useState(String(settings?.entry_fee ?? 10));
@@ -5761,7 +5770,36 @@ function SettingsTab({
     setMaintenanceMode(settings.maintenance_mode);
     setMaintenanceMessage(settings.maintenance_message ?? "");
     setMercatoActive(settings.mercato_active ?? false);
+    setDebriefTexte(settings.debrief_texte ?? "");
+    setDebriefJournee(settings.debrief_journee != null ? String(settings.debrief_journee) : "");
   }, [settings]);
+
+  async function handleSaveDebrief(effacer = false) {
+    setSavingDebrief(true);
+    try {
+      const texte = effacer ? null : debriefTexte.trim() || null;
+      const journee = effacer ? null : Math.round(toNumber(debriefJournee, 0)) || null;
+      await updateSettings({
+        debrief_texte: texte,
+        debrief_journee: journee,
+        debrief_maj: texte ? new Date().toISOString() : null,
+      });
+      if (effacer) {
+        setDebriefTexte("");
+        setDebriefJournee("");
+      }
+      await onChanged();
+      notify(
+        texte
+          ? "📰 Ton Debrief est en ligne."
+          : "Debrief remis en automatique.",
+      );
+    } catch (e) {
+      notify(errorMessage(e, "Erreur lors de l'enregistrement du Debrief."));
+    } finally {
+      setSavingDebrief(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -6093,6 +6131,88 @@ function SettingsTab({
           <Eye size={13} />
           Réafficher les annonces sur l'Accueil
         </GhostButton>
+      </Card>
+
+      {/* ================= LE DEBRIEF ECRIT A LA MAIN =================
+          L'organisateur redige son article ailleurs et le colle ici. Tant
+          que ce champ contient du texte, c'est LUI que la page affiche. Vide,
+          la page reprend son texte calcule : il n'y a jamais de page blanche,
+          et revenir en arriere ne demande qu'un bouton. */}
+      <Card className="p-5">
+        <h2 className="mb-1 flex items-center gap-2 font-display text-lg font-bold uppercase tracking-wide text-white">
+          <Newspaper size={18} className="text-amber-300" />
+          Le Debrief — ton article
+        </h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Colle ici l'article que tu as écrit. Il remplace le texte automatique
+          sur la page <span className="font-semibold text-slate-300">Debrief</span>.
+          Laisse le champ vide (ou clique « Revenir à l'automatique ») et la page
+          rédige de nouveau toute seule.
+        </p>
+
+        <div className="mb-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3 text-[11px] leading-relaxed text-slate-500">
+          <span className="font-semibold text-slate-300">La mise en forme est reprise telle quelle :</span>{" "}
+          une ligne <span className="font-mono text-slate-300">EN MAJUSCULES</span> devient un titre,
+          <span className="font-mono text-slate-300"> ---</span> une barre de séparation,
+          <span className="font-mono text-slate-300"> -</span> ou
+          <span className="font-mono text-slate-300"> 🥇</span> une liste,
+          <span className="font-mono text-slate-300"> &gt;</span> une mise en exergue,
+          <span className="font-mono text-slate-300"> **gras**</span> un chiffre mis en avant,
+          et un tableau collé reste un tableau. Tes retours à la ligne sont gardés.
+        </div>
+
+        <div className="mb-3 grid gap-3 sm:grid-cols-[1fr_auto]">
+          <div>
+            <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Ton article
+            </label>
+            <textarea
+              value={debriefTexte}
+              onChange={(e) => setDebriefTexte(e.target.value)}
+              rows={14}
+              placeholder="🏆 PRONO LIGUE 1 LM — LE GRAND BILAN APRÈS 4 JOURNÉES&#10;&#10;Après quatre journées…"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-white outline-none transition-colors focus:border-emerald-400"
+            />
+          </div>
+          <div className="sm:w-32">
+            <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Journée
+            </label>
+            <input
+              value={debriefJournee}
+              onChange={(e) => setDebriefJournee(e.target.value)}
+              inputMode="numeric"
+              placeholder="4"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none transition-colors focus:border-emerald-400"
+            />
+            <p className="mt-1.5 text-[10px] leading-relaxed text-slate-600">
+              Le numéro de la journée racontée. Il sert à l'annonce sur
+              l'Accueil : « le Debrief de la J4 est en ligne ».
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <PrimaryButton onClick={() => handleSaveDebrief(false)} disabled={savingDebrief}>
+            <Save size={13} />
+            {savingDebrief ? "Envoi…" : "Publier mon article"}
+          </PrimaryButton>
+          <GhostButton onClick={() => handleSaveDebrief(true)} disabled={savingDebrief}>
+            Revenir à l'automatique
+          </GhostButton>
+          {settings?.debrief_texte ? (
+            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+              ● Ton article est en ligne
+              {settings.debrief_maj
+                ? ` — ${new Date(settings.debrief_maj).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}`
+                : ""}
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-slate-600">
+              ● Texte automatique
+            </span>
+          )}
+        </div>
       </Card>
 
       {/* Le bloc "Gazette — Mercato" a ete retire de l'Admin a la demande de
