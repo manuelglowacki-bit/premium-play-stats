@@ -1332,6 +1332,60 @@ function GazettePage() {
     };
   }, [journeeFinishedMatches, profiles, predictionsByUser, pointsFor]);
 
+  // LE BILAN DE LA JOURNEE — les mouvements et la densite du classement.
+  //
+  // C'est ce qui manquait a la Gazette : elle disait qui menait, pas qui
+  // avait BOUGE. Or « 17e -> 1er » raconte une saison mieux qu'un total de
+  // points, et « dix joueurs en trois points » dit en une ligne pourquoi la
+  // prochaine journee compte.
+  //
+  // Rien n'est recalcule : `evolution.previousRanks` et `rankedPlayers`
+  // sortent deja du moteur, ce bloc ne fait que les lire et les trier.
+  const bilanJournee = useMemo(() => {
+    if (!evolution || rankedPlayers.length === 0) return null;
+
+    const mouvements = rankedPlayers
+      .map((player: any) => {
+        const avant = evolution.previousRanks.get(String(player.id));
+        return {
+          id: String(player.id),
+          name: player.name as string,
+          rank: Number(player.rank),
+          points: Number(player.points),
+          // Positif = il a gagne des places.
+          gain: typeof avant === "number" ? avant - Number(player.rank) : 0,
+          rangAvant: typeof avant === "number" ? avant : null,
+        };
+      })
+      .filter((m) => m.rangAvant !== null);
+
+    const grimpeurs = mouvements
+      .filter((m) => m.gain > 0)
+      .sort((a, b) => b.gain - a.gain || a.rank - b.rank)
+      .slice(0, 3);
+
+    const chutes = mouvements
+      .filter((m) => m.gain < 0)
+      .sort((a, b) => a.gain - b.gain || a.rank - b.rank)
+      .slice(0, 3);
+
+    // DENSITE — combien de joueurs se tiennent dans un mouchoir derriere le
+    // leader. On remonte tant que l'ecart reste faible : la phrase n'a
+    // d'interet que si le groupe est reellement serre.
+    const tete = Number(rankedPlayers[0]?.points ?? 0);
+    const groupe = rankedPlayers.filter((p: any) => tete - Number(p.points) <= 3);
+    const ecartGroupe = groupe.length > 1
+      ? tete - Number(groupe[groupe.length - 1].points)
+      : 0;
+
+    const densite = groupe.length >= 3 && ecartGroupe > 0
+      ? { joueurs: groupe.length, points: ecartGroupe }
+      : null;
+
+    if (grimpeurs.length === 0 && chutes.length === 0 && !densite) return null;
+    return { grimpeurs, chutes, densite };
+  }, [evolution, rankedPlayers]);
+
   const analysis = useMemo(() => {
     if (!currentJournee) {
       return {
@@ -2310,6 +2364,90 @@ function GazettePage() {
             </div>
             )}
           </section>
+
+          {/* ============================================================
+              5 bis — LE BILAN : QUI MONTE, QUI DESCEND
+              ============================================================
+              La Gazette disait qui menait, jamais qui avait BOUGE. Or
+              « 17e -> 1er » raconte une saison mieux qu'un total de points.
+              Uniquement de l'affichage : les rangs et les points viennent du
+              moteur, ce bloc les lit et les trie. */}
+          {bilanJournee && (
+            <section className="border-b border-slate-800 px-5 py-8 md:px-10">
+              <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-fuchsia-300">
+                Ce qui a bougé
+              </p>
+              <h2 className="mt-1 font-display text-2xl font-black uppercase text-white md:text-3xl">
+                Le bilan
+              </h2>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {bilanJournee.grimpeurs.length > 0 && (
+                  <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[.05] p-4">
+                    <p className="font-mono text-[9px] font-black uppercase tracking-[.16em] text-emerald-300">
+                      🚀 Ils grimpent
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {bilanJournee.grimpeurs.map((joueur) => (
+                        <div key={joueur.id} className="flex min-w-0 items-center gap-2.5">
+                          <span className="shrink-0 rounded-lg bg-emerald-400/15 px-2 py-1 font-display text-sm font-black tabular-nums text-emerald-300">
+                            +{joueur.gain}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate font-display text-sm font-black text-white">
+                            {joueur.name}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-500">
+                            {joueur.rangAvant}ᵉ → {joueur.rank}ᵉ
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {bilanJournee.chutes.length > 0 && (
+                  <div className="rounded-2xl border border-red-400/20 bg-red-400/[.04] p-4">
+                    <p className="font-mono text-[9px] font-black uppercase tracking-[.16em] text-red-300">
+                      📉 Ils reculent
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {bilanJournee.chutes.map((joueur) => (
+                        <div key={joueur.id} className="flex min-w-0 items-center gap-2.5">
+                          <span className="shrink-0 rounded-lg bg-red-400/15 px-2 py-1 font-display text-sm font-black tabular-nums text-red-300">
+                            {joueur.gain}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate font-display text-sm font-black text-white">
+                            {joueur.name}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-500">
+                            {joueur.rangAvant}ᵉ → {joueur.rank}ᵉ
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Reculer en gagnant des points, c'est le sort de la moitie du
+                  classement quand tout le monde marque. Le dire evite de
+                  laisser croire a une mauvaise journee. */}
+              {bilanJournee.densite && (
+                <p className="mt-4 text-sm leading-relaxed text-slate-400">
+                  <span className="font-display font-black text-white">
+                    {bilanJournee.densite.joueurs} joueurs
+                  </span>{" "}
+                  se tiennent en{" "}
+                  <span className="font-display font-black text-white">
+                    {bilanJournee.densite.points} point
+                    {bilanJournee.densite.points > 1 ? "s" : ""}
+                  </span>
+                  . Une seule bonne journée suffit à renverser cet ordre — et
+                  reculer d'une place n'y veut pas dire avoir mal joué.
+                </p>
+              )}
+            </section>
+          )}
 
           {/* ============================================================
               6 — LE CHIFFRE
