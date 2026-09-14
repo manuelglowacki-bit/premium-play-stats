@@ -137,6 +137,16 @@ const unePlace = ecrireRecit({
 })!;
 const texteUne = sansAccents([unePlace.chapeau, ...unePlace.sections.flatMap((s) => s.paragraphes)].join(" "));
 verifier("une seule place : singulier", texteUne.includes("une place") && !texteUne.includes("une places"), texteUne);
+// Le participe s'accorde lui aussi : « une place gagnee », jamais « gagnees ».
+verifier("le participe s'accorde au singulier",
+  !texteUne.includes("une place gagnées"), texteUne);
+verifier("et au pluriel quand il le faut",
+  sansAccents(ecrireRecit({
+    ...entrees,
+    fiches: [fiche("A", 1, 10, [5, 1]), fiche("B", 2, 9, [1, 2])],
+    remontees: [fiche("A", 1, 10, [5, 1])],
+    chutes: [], trajectoire: null, meilleureJournee: null, exAequoTete: 1,
+  })!.sections.flatMap((x) => x.paragraphes).join(" ")).includes("quatre places gagnées"));
 verifier("un seul point : singulier", texteUne.includes("1 point") && !texteUne.includes("1 points"), texteUne);
 
 console.log("\nCas limites");
@@ -275,6 +285,32 @@ console.log("\nLe retard du bas de tableau");
     texte.includes("va de 26 points à 35 points"), texte.slice(-600));
   verifier("l'ancien chiffre seul a disparu",
     !texte.includes("Le retard sur la tête est de 26 points"), texte.slice(-600));
+}
+
+
+console.log("\nLes echelles de parcours (ce que la page dessine)");
+{
+  const art = ecrireRecit(entrees)!;
+  const enTete = art.sections.find((x) => x.kicker === "En tête")!;
+  verifier("le leader a son echelle", (enTete.echelles ?? []).length === 1,
+    JSON.stringify(enTete.echelles));
+  egal("l'echelle porte le nom du joueur", enTete.echelles?.[0]?.nom, "FCS");
+  egal("elle contient une etape par journee", enTete.echelles?.[0]?.etapes.length, 4);
+
+  const remontees = art.sections.find((x) => x.kicker === "Les remontées")!;
+  egal("chaque remontee a la sienne", (remontees.echelles ?? []).length, 2);
+
+  // Un joueur qui n'a qu'une seule journee n'a pas de parcours a dessiner.
+  const debut = ecrireRecit({
+    ...entrees,
+    journeesJouees: 1,
+    numeroDerniereJournee: 1,
+    fiches: [fiche("Seul", 1, 3, [1])],
+    remontees: [], chutes: [], meilleureJournee: null, densite: null, exAequoTete: 1,
+  })!;
+  verifier("une seule journee : aucune echelle",
+    debut.sections.every((x) => (x.echelles ?? []).length === 0),
+    JSON.stringify(debut.sections.map((x) => x.echelles)));
 }
 
 console.log("\n" + "=".repeat(62));

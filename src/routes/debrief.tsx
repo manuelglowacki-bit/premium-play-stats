@@ -1525,6 +1525,68 @@ function DebriefPage() {
                         </p>
                       ))}
                     </div>
+
+                    {/* LE PARCOURS, MONTRE ET PAS SEULEMENT RACONTE.
+                        Une phrase dit « 17e, puis 9e, puis 6e, et enfin 1er ».
+                        L'echelle ci-dessous ajoute ce que la phrase ne peut
+                        pas porter sans devenir illisible : les points de
+                        chaque journee, et le sens de chaque mouvement. */}
+                    {(section.echelles ?? []).length > 0 && (
+                      <div className="mt-5 grid max-w-[68ch] gap-3 sm:grid-cols-2">
+                        {(section.echelles ?? []).map((echelle) => (
+                          <div
+                            key={echelle.nom}
+                            className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/40 p-3"
+                          >
+                            <p className="truncate font-display text-xs font-black uppercase tracking-[.08em] text-white">
+                              {echelle.nom}
+                            </p>
+                            <div className="mt-2 space-y-1">
+                              {echelle.etapes.map((etape, i) => {
+                                const avant = i > 0 ? echelle.etapes[i - 1].rang : null;
+                                const delta = avant == null ? 0 : avant - etape.rang;
+                                return (
+                                  <div
+                                    key={etape.numero}
+                                    className="flex min-w-0 items-center gap-2 font-mono text-[11px] tabular-nums"
+                                  >
+                                    <span className="w-5 shrink-0 text-center" aria-hidden>
+                                      {delta > 0 ? "⬆️" : delta < 0 ? "⬇️" : avant == null ? "" : "➡️"}
+                                    </span>
+                                    <span className="w-7 shrink-0 font-black text-slate-500">
+                                      J{etape.numero}
+                                    </span>
+                                    <span
+                                      className={`w-10 shrink-0 font-black ${
+                                        etape.rang === 1
+                                          ? "text-amber-300"
+                                          : etape.rang <= 3
+                                            ? "text-slate-200"
+                                            : "text-slate-400"
+                                      }`}
+                                    >
+                                      {etape.rang === 1
+                                        ? "🥇"
+                                        : etape.rang === 2
+                                          ? "🥈"
+                                          : etape.rang === 3
+                                            ? "🥉"
+                                            : `${etape.rang}e`}
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate text-right text-slate-400">
+                                      <span className="font-black text-slate-200">{etape.points}</span> pts
+                                      {etape.gainJournee > 0 && (
+                                        <span className="ml-1.5 text-emerald-400">+{etape.gainJournee}</span>
+                                      )}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </section>
                 );
               })}
@@ -1570,15 +1632,19 @@ function DebriefPage() {
                         <span className="min-w-0 flex-1 truncate font-display text-sm font-black text-white">
                           {joueur.name}
                         </span>
-                        {joueur.progression !== 0 && (
+                        {/* Le mouvement SUR la journee racontee — la meme
+                            mesure que les sections de l'article. Une fleche
+                            qui parlerait de la saison entiere contredirait
+                            le texte juste au-dessus. */}
+                        {joueur.mouvement !== 0 && (
                           <span
                             className={`shrink-0 font-mono text-[10px] font-black tabular-nums ${
-                              joueur.progression > 0 ? "text-emerald-400" : "text-red-400"
+                              joueur.mouvement > 0 ? "text-emerald-400" : "text-red-400"
                             }`}
                           >
-                            {joueur.progression > 0
-                              ? `↑${joueur.progression}`
-                              : `↓${Math.abs(joueur.progression)}`}
+                            {joueur.mouvement > 0
+                              ? `↑${joueur.mouvement}`
+                              : `↓${Math.abs(joueur.mouvement)}`}
                           </span>
                         )}
                         <span className="w-10 shrink-0 text-right font-display text-base font-black tabular-nums text-white">

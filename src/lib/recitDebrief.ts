@@ -54,12 +54,28 @@ export type EntreesRecit = {
  *  lui, n'a pas a connaitre Tailwind. */
 export type TonSection = "or" | "vert" | "rouge" | "bleu" | "violet" | "cyan";
 
+/**
+ * LE PARCOURS D'UN JOUEUR, MONTRE ET PAS SEULEMENT RACONTE.
+ *
+ * « J1 : 17e — 5 pts / J2 : 9e — 9 pts / J3 : 6e — 16 pts / J4 : 1er — 25 pts »
+ * se lit d'un coup d'oeil, la ou la meme chose en prose demande un effort.
+ * Le texte garde la phrase ; la page dessine l'echelle a cote. Aucun chiffre
+ * n'est calcule ici : ce sont les etapes deja reconstruites par
+ * parcoursSaison.
+ */
+export type EchelleParcours = {
+  nom: string;
+  etapes: EtapeRecit[];
+};
+
 export type SectionRecit = {
   kicker: string;
   titre: string;
   emoji: string;
   ton: TonSection;
   paragraphes: string[];
+  /** Les parcours a dessiner sous les paragraphes, s'il y en a. */
+  echelles?: EchelleParcours[];
 };
 
 export type Recit = {
@@ -109,6 +125,14 @@ export function nombreEcrit(n: number): string {
 function places(n: number): string {
   const v = Math.abs(n);
   return `${nombreEcrit(v)} place${v > 1 ? "s" : ""}`;
+}
+
+/**
+ * « une place gagnee », « deux places gagnees ». Le participe s'accorde avec
+ * « place » : le coller a la main donnait « une place gagnees ».
+ */
+function placesGagnees(n: number): string {
+  return `${places(n)} gagnée${Math.abs(n) > 1 ? "s" : ""}`;
 }
 
 /** « Lulu et Sanji », « Lulu, Sanji et Max » — jamais « Lulu, Sanji ». */
@@ -192,9 +216,15 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   }
 
   if (leader.derniereJournee > 0) {
+    // Le mouvement de la journee, dit explicitement : « de la 6e a la 1re
+    // place » raconte la journee mieux qu'un total cumule.
     tete.push(
       `Sur la seule journée ${e.numeroDerniereJournee}, il a ajouté ` +
-        `**${pts(leader.derniereJournee)}** à son total.`,
+        `**${pts(leader.derniereJournee)}** à son total` +
+        `${leader.mouvement > 0 && leader.rangVeille != null
+          ? `, ce qui le fait passer de **${rangEcrit(leader.rangVeille)}** à **${rangEcrit(leader.rang)}**`
+          : ""}` +
+        `.`,
     );
   }
 
@@ -227,7 +257,14 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     );
   }
 
-  sections.push({ kicker: "En tête", titre: "Le patron du moment", emoji: "👑", ton: "or", paragraphes: tete });
+  sections.push({
+    kicker: "En tête",
+    titre: "Le patron du moment",
+    emoji: "👑",
+    ton: "or",
+    paragraphes: tete,
+    echelles: leader.etapes.length >= 2 ? [{ nom: leader.name, etapes: leader.etapes }] : undefined,
+  });
 
   // ------------------------------------------------------------------
   // LES POURSUIVANTS
@@ -289,7 +326,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     // de journee. Le parcours complet reste cite juste apres, en contexte.
     p.push(
       `Le plus beau coup de cette **${jour}e journée** est signé **${premier.name}** : ` +
-        `**${places(premier.mouvement)} gagnées** en une journée, ` +
+        `**${placesGagnees(premier.mouvement)}** en une journée, ` +
         `${premier.rangVeille != null ? `de **${rangEcrit(premier.rangVeille)}** à ` : `désormais `}` +
         `**${rangEcrit(premier.rang)}**. Il a marqué **${pts(premier.derniereJournee)}** ce week-end. ` +
         `Son parcours depuis le début : **${parcoursEcrit(premier.etapes)}**.`,
@@ -311,7 +348,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
 
     e.remontees.slice(1).forEach((joueur, index) => {
       p.push(
-        `${amorces[index % amorces.length](`**${joueur.name}**`)} : **${places(joueur.mouvement)} gagnées** ` +
+        `${amorces[index % amorces.length](`**${joueur.name}**`)} : **${placesGagnees(joueur.mouvement)}** ` +
           `sur la journée${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""} ` +
           `(**${pts(joueur.derniereJournee)}** marqués), pour **${pts(joueur.points)}** au total. ` +
           `${joueur.rang <= 10 ? "Le voilà installé dans le haut du tableau." : "La dynamique est lancée."}`,
@@ -326,12 +363,21 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
       p.push(
         `Sur l'ensemble de la saison, la plus belle trajectoire reste celle de **${t.name}** : ` +
           `${rangEcrit(t.etapes[0]?.rang ?? t.rang)} après la première journée, ` +
-          `**${rangEcrit(t.rang)}** aujourd'hui, soit **${places(t.progression)} gagnées** ` +
+          `**${rangEcrit(t.rang)}** aujourd'hui, soit **${placesGagnees(t.progression)}** ` +
           `(**${parcoursEcrit(t.etapes)}**).`,
       );
     }
 
-    sections.push({ kicker: "Les remontées", titre: "Ils ont grimpé ce week-end", emoji: "🚀", ton: "vert", paragraphes: p });
+    sections.push({
+      kicker: "Les remontées",
+      titre: "Ils ont grimpé ce week-end",
+      emoji: "🚀",
+      ton: "vert",
+      paragraphes: p,
+      echelles: e.remontees
+        .filter((f) => f.etapes.length >= 2)
+        .map((f) => ({ nom: f.name, etapes: f.etapes })),
+    });
   }
 
   // ------------------------------------------------------------------
@@ -343,7 +389,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     for (const joueur of e.chutes) {
       p.push(
         `**${joueur.name}** recule de **${places(-joueur.mouvement)}** sur cette journée` +
-          `${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""} ` +
+          `${joueur.rangVeille != null ? `, de **${rangEcrit(joueur.rangVeille)}** à **${rangEcrit(joueur.rang)}**` : ""}, ` +
           `et totalise **${pts(joueur.points)}**. Son parcours : **${parcoursEcrit(joueur.etapes)}**.`,
       );
     }
@@ -355,7 +401,16 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
         `écarts aussi faibles, une seule bonne journée suffit à tout remettre en place.`,
     );
 
-    sections.push({ kicker: "Les dégringolades", titre: "Ils ont reculé ce week-end", emoji: "📉", ton: "rouge", paragraphes: p });
+    sections.push({
+      kicker: "Les dégringolades",
+      titre: "Ils ont reculé ce week-end",
+      emoji: "📉",
+      ton: "rouge",
+      paragraphes: p,
+      echelles: e.chutes
+        .filter((f) => f.etapes.length >= 2)
+        .map((f) => ({ nom: f.name, etapes: f.etapes })),
+    });
   }
 
   // ------------------------------------------------------------------
