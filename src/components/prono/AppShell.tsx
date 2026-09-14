@@ -313,7 +313,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { label: "Accueil", to: "/", icon: Home, principal: true },
     { label: "Pronos", to: "/pronostics", icon: Target, principal: true },
     { label: "Classement", to: "/classement", icon: Trophy, principal: true },
-    { label: "Gazette", to: "/gazette", icon: Newspaper, principal: false },
+    { label: "Debrief", to: "/debrief", icon: Newspaper, principal: false },
     { label: "Vestiaire", to: "/trophees", icon: MessageCircle, principal: true },
     // La route /trophees contient actuellement le Vestiaire.
     { label: "Stats", to: "/stats", icon: BarChart3, principal: false },

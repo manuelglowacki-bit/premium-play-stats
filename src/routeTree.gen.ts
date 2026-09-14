@@ -14,8 +14,8 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AdminBonusPersistantRouteImport } from './routes/admin-bonus-persistant'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ClassementRouteImport } from './routes/classement'
+import { Route as DebriefRouteImport } from './routes/debrief'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
-import { Route as GazetteRouteImport } from './routes/gazette'
 import { Route as ProfilRouteImport } from './routes/profil'
 import { Route as PronosticsRouteImport } from './routes/pronostics'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -47,14 +47,14 @@ const ClassementRoute = ClassementRouteImport.update({
   path: '/classement',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DebriefRoute = DebriefRouteImport.update({
+  id: '/debrief',
+  path: '/debrief',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GazetteRoute = GazetteRouteImport.update({
-  id: '/gazette',
-  path: '/gazette',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfilRoute = ProfilRouteImport.update({
@@ -89,8 +89,8 @@ export interface FileRoutesByFullPath {
   '/admin-bonus-persistant': typeof AdminBonusPersistantRoute
   '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
+  '/debrief': typeof DebriefRoute
   '/forgot-password': typeof ForgotPasswordRoute
-  '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -103,8 +103,8 @@ export interface FileRoutesByTo {
   '/admin-bonus-persistant': typeof AdminBonusPersistantRoute
   '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
+  '/debrief': typeof DebriefRoute
   '/forgot-password': typeof ForgotPasswordRoute
-  '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -118,8 +118,8 @@ export interface FileRoutesById {
   '/admin-bonus-persistant': typeof AdminBonusPersistantRoute
   '/auth': typeof AuthRoute
   '/classement': typeof ClassementRoute
+  '/debrief': typeof DebriefRoute
   '/forgot-password': typeof ForgotPasswordRoute
-  '/gazette': typeof GazetteRoute
   '/profil': typeof ProfilRoute
   '/pronostics': typeof PronosticsRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -134,8 +134,8 @@ export interface FileRouteTypes {
     | '/admin-bonus-persistant'
     | '/auth'
     | '/classement'
+    | '/debrief'
     | '/forgot-password'
-    | '/gazette'
     | '/profil'
     | '/pronostics'
     | '/reset-password'
@@ -148,8 +148,8 @@ export interface FileRouteTypes {
     | '/admin-bonus-persistant'
     | '/auth'
     | '/classement'
+    | '/debrief'
     | '/forgot-password'
-    | '/gazette'
     | '/profil'
     | '/pronostics'
     | '/reset-password'
@@ -162,8 +162,8 @@ export interface FileRouteTypes {
     | '/admin-bonus-persistant'
     | '/auth'
     | '/classement'
+    | '/debrief'
     | '/forgot-password'
-    | '/gazette'
     | '/profil'
     | '/pronostics'
     | '/reset-password'
@@ -177,8 +177,8 @@ export interface RootRouteChildren {
   AdminBonusPersistantRoute: typeof AdminBonusPersistantRoute
   AuthRoute: typeof AuthRoute
   ClassementRoute: typeof ClassementRoute
+  DebriefRoute: typeof DebriefRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
-  GazetteRoute: typeof GazetteRoute
   ProfilRoute: typeof ProfilRoute
   PronosticsRoute: typeof PronosticsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
@@ -223,18 +223,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ClassementRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/debrief': {
+      id: '/debrief'
+      path: '/debrief'
+      fullPath: '/debrief'
+      preLoaderRoute: typeof DebriefRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/forgot-password': {
       id: '/forgot-password'
       path: '/forgot-password'
       fullPath: '/forgot-password'
       preLoaderRoute: typeof ForgotPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/gazette': {
-      id: '/gazette'
-      path: '/gazette'
-      fullPath: '/gazette'
-      preLoaderRoute: typeof GazetteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profil': {
@@ -281,8 +281,8 @@ const rootRouteChildren: RootRouteChildren = {
   AdminBonusPersistantRoute: AdminBonusPersistantRoute,
   AuthRoute: AuthRoute,
   ClassementRoute: ClassementRoute,
+  DebriefRoute: DebriefRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
-  GazetteRoute: GazetteRoute,
   ProfilRoute: ProfilRoute,
   PronosticsRoute: PronosticsRoute,
   ResetPasswordRoute: ResetPasswordRoute,

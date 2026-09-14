@@ -27,7 +27,6 @@ import { getMatches, getMatchdays } from "@/services/adminService";
 import { getOfficialClubId } from "@/lib/team-identity";
 import { matchAppeal, type StandingsLookup } from "@/lib/clubReputation";
 import { getForeignClubLogo } from "@/lib/clubLogos";
-import { getLigue1Standings, type CompetitionStandings } from "@/services/standingsService";
 import { normalizeTeamName } from "@/services/bonusSelectionService";
 import { getTeamTheme } from "@/lib/team-theme";
 import { rankPlayers } from "@/lib/leaderboardRanking";
@@ -43,7 +42,6 @@ import {
   type LeaguePrediction,
   type LeagueProfile,
 } from "@/lib/leaderboardStats";
-import { fetchExternalGazetteNews, type GazetteArticle } from "@/services/gazetteNewsService";
 import {
   fetchLiveApiMatches,
   reconcileMatchesWithLive,
@@ -52,18 +50,18 @@ import {
   IN_PROGRESS_STATUSES,
 } from "@/lib/liveMatches";
 
-export const Route = createFileRoute("/gazette")({
+export const Route = createFileRoute("/debrief")({
   head: () => ({
     meta: [
-      { title: "La Gazette — Prono Ligue 1" },
+      { title: "Le Debrief — Prono Ligue 1" },
       {
         name: "description",
         content:
-          "La Gazette : toute l'actualité, les analyses et les tendances de la Ligue 1.",
+          "Le Debrief : le bilan de la journée, les remontées, les chutes et le classement.",
       },
     ],
   }),
-  component: GazettePage,
+  component: DebriefPage,
 });
 
 type Profile = {
@@ -283,7 +281,7 @@ function hasScore(match: any) {
 
 
 function getMatchState(match: any): "upcoming" | "live" | "finished" {
-  // Vocabulaire de statuts UNIQUE (src/lib/liveMatches.ts) — la Gazette ne
+  // Vocabulaire de statuts UNIQUE (src/lib/liveMatches.ts) — le Debrief ne
   // doit pas reconnaître un sous-ensemble différent de LIVE/FINISHED par
   // rapport à Classement/Accueil/Profil/Stats/Pronostics.
   const raw = String(
@@ -307,7 +305,7 @@ function getMatchState(match: any): "upcoming" | "live" | "finished" {
 
   // Fallback quand la base ne stocke pas encore de statut :
   // on considère le match en direct autour de son coup d'envoi si un score
-  // existe déjà. Cela permet à la Gazette de bouger pendant les rencontres
+  // existe déjà. Cela permet à le Debrief de bouger pendant les rencontres
   // sans toucher aux calculs de points.
   const kickoff = match?.kickoff ?? match?.kickoff_time;
   if (kickoff) {
@@ -422,7 +420,7 @@ function isFavoriteMatch(match: any, favoriteTeam: string) {
 }
 
 // Le classement réel (points/rang) est calculé plus bas, dans le composant
-// GazettePage, via rankPlayers (src/lib/leaderboardRanking.ts) — MÊME
+// DebriefPage, via rankPlayers (src/lib/leaderboardRanking.ts) — MÊME
 // source de vérité que Classement/Accueil/Profil, à partir des points déjà
 // enregistrés (predictions.points), jamais un recalcul 1N2 simplifié
 // parallèle (l'ancienne version de ce fichier en avait un ici — supprimé).
@@ -742,7 +740,7 @@ function EditorialEmptyState({
 // PAGE PRINCIPALE
 // ============================================================
 
-function GazettePage() {
+function DebriefPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [journees, setJournees] = useState<Journee[]>([]);
@@ -785,7 +783,7 @@ function GazettePage() {
         supabase.from("bonus_options").select("matchday_id, match_id").eq("is_active", true),
         supabase.from("profiles").select("*").order("pseudo", { ascending: true, nullsFirst: false }),
         // Paginee : sans cela PostgREST tronque a 1000 lignes en silence et
-        // la Gazette raconte la journee sur des chiffres incomplets.
+        // le Debrief raconte la journee sur des chiffres incomplets.
         // Colonnes explicites plutot que « * ». Verifie une par une : la
         // Gazette ne lit que user_id, match_id et les deux scores, et le
         // moteur de points a besoin de created_at (il departage les pronostics
@@ -845,7 +843,7 @@ function GazettePage() {
       // (statut/score + garde anti-régression + cache sessionStorage) passe
       // EXCLUSIVEMENT par src/lib/liveMatches.ts — même fonction que
       // Classement/Accueil/Profil/Stats/Pronostics, plus de fetch ni de
-      // fusion dédiés à la Gazette.
+      // fusion dédiés à le Debrief.
       const normalized: Journee[] = ligue1Matchdays
         .map((matchday: any) => ({
           id: matchday.id,
@@ -937,7 +935,7 @@ function GazettePage() {
 
     // La journee racontee est choisie par choisirJourneeGazette()
     // (src/lib/journeeGazette.ts) : un jour de match, celle du jour ; les
-    // jours creux, la derniere journee deja commencee — la Gazette continue
+    // jours creux, la derniere journee deja commencee — le Debrief continue
     // ainsi de raconter le week-end ecoule au lieu d'afficher une page vide
     // du lundi au jeudi. La regle vit dans une fonction pure pour etre
     // verifiable jour par jour (npm run verif-journee-gazette).
@@ -1071,7 +1069,7 @@ function GazettePage() {
 
   // LE GRAND BILAN — le parcours de chaque joueur depuis la premiere journee.
   //
-  // C'est ce que la Gazette ne savait pas raconter : « 17e -> 1er » dit une
+  // C'est ce que le Debrief ne savait pas raconter : « 17e -> 1er » dit une
   // saison, un total de points ne dit rien. Le rang apres chaque journee
   // n'est stocke nulle part, il se reconstruit en rejouant le classement
   // journee apres journee (src/lib/parcoursSaison.ts) — avec `rankPlayers`,
@@ -1167,32 +1165,6 @@ function GazettePage() {
 
 
 
-  // Classement Ligue 1 RÉEL, chargé via le proxy football-data.org déjà en
-  // place pour les championnats bonus (api/standings.ts, token côté serveur).
-  // Sert à juger l'affiche d'une journée sur la position des deux équipes.
-  const [ligue1Standings, setLigue1Standings] = useState<CompetitionStandings | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Année football-data.org : une saison européenne bascule en juillet
-    // (2026-2027 -> "2026"). standingsService retombe seul sur la saison
-    // précédente tant que celle en cours compte trop peu de journées jouées.
-    const now = new Date();
-    const seasonYear = String(now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1);
-
-    getLigue1Standings(seasonYear)
-      .then((standings) => {
-        if (!cancelled) setLigue1Standings(standings);
-      })
-      .catch(() => {
-        // Classement indisponible : la Gazette dégrade sur la seule
-        // réputation, sans jamais bloquer l'affichage.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
 
 
@@ -1247,10 +1219,10 @@ function GazettePage() {
             <div className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
               <div className="min-w-0">
                 <span className="font-mono text-[10px] font-black uppercase tracking-[.3em] text-emerald-300">
-                  Gazette live
+                  Le bilan
                 </span>
                 <h1 className="mt-1.5 font-display text-[3.25rem] font-black uppercase leading-[.82] tracking-[-.05em] text-white md:text-[4.5rem] lg:text-[5.5rem]">
-                  La Gazette
+                  Le Debrief
                 </h1>
                 <p className="mt-3.5 font-mono text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">
                   <span className="capitalize">
@@ -1308,7 +1280,7 @@ function GazettePage() {
           {/* ============================================================
               LE GRAND BILAN — TOUT L'ARTICLE
               ============================================================
-              La Gazette ne fait plus qu'une chose : raconter la saison, en
+              Le Debrief ne fait plus qu'une chose : raconter la saison, en
               un seul recit suivi. Les blocs d'avant — les trois cartes, la
               liste des matchs, le podium, le chiffre, l'affiche, la perf —
               ont ete retires a la demande de l'organisateur : « un vrai gros

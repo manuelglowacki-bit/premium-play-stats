@@ -305,7 +305,7 @@ function matchdayRangeLabel(mdId: string, allMatches: MatchRow[]): string {
  *  - reconstruire le pick affiché (boutons 1/N/2) à partir du score
  *    sauvegardé d'un match classique (voir la restauration plus bas) ;
  *  - dériver le pick du score exact saisi pour le club de cœur/bonus (même
- *    logique de lecture que classement.tsx/gazette.tsx/stats.tsx).
+ *    logique de lecture que classement.tsx/debrief.tsx/stats.tsx).
  */
 function derivePick(home: number, away: number): Pick {
   if (home > away) return "1";

@@ -6226,7 +6226,7 @@ const AUDIENCE_NOMS: Record<string, string> = {
   "/pronostics": "Pronostics",
   "/classement": "Classement",
   "/trophees": "Vestiaire",
-  "/gazette": "Gazette",
+  "/debrief": "Debrief",
   "/stats": "Stats",
   "/profil": "Profil",
   "/admin": "Admin",
