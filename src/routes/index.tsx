@@ -24,6 +24,8 @@ import { CountdownBlocks } from "@/components/prono/Countdown";
 import { useTeamTheme } from "@/hooks/useTeamTheme";
 import { calculateCareerScore, aggregateCareerStatsByUser, CAREER_LEVEL_TITLES } from "@/lib/careerLevel";
 import { lireNiveauMemorise, memoriserNiveau, niveauAAnnoncer } from "@/lib/annonceNiveau";
+import { debriefAAnnoncer, lireDebriefVu, memoriserDebriefVu } from "@/lib/annonceDebrief";
+import { journeeTerminee } from "@/lib/parcoursSaison";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -118,6 +120,20 @@ function IndexPage() {
   // depuis la valeur initiale de `careerLevel`, qui vaut 1 avant chargement
   // et ferait clignoter une fausse annonce.
   const [niveauFete, setNiveauFete] = useState<number | null>(null);
+  // La journee racontee par le Debrief, et celle qu'on annonce (ou null).
+  const [journeeDuDebrief, setJourneeDuDebrief] = useState<number | null>(null);
+  const [debriefAnnonce, setDebriefAnnonce] = useState<number | null>(null);
+
+  // ANNONCE DU DEBRIEF — une fois par journee et par joueur.
+  // Le numero est memorise des l'affichage : la banniere ne revient donc
+  // pas si le joueur ferme l'application sans cliquer.
+  useEffect(() => {
+    if (!user?.id || journeeDuDebrief === null) return;
+    const aAnnoncer = debriefAAnnoncer(journeeDuDebrief, lireDebriefVu(user.id));
+    if (aAnnoncer === null) return;
+    setDebriefAnnonce(aAnnoncer);
+    memoriserDebriefVu(user.id, aAnnoncer);
+  }, [user?.id, journeeDuDebrief]);
   const homeRequestSeq = useRef(0);
   // Les equipes arrivent par une requete separee. Sans ce temoin, on ne peut
   // pas distinguer « pas encore chargees » de « chargees, et il n'y en a
@@ -413,6 +429,61 @@ function IndexPage() {
             m.matchday_id &&
             ligue1MatchdayIds.has(String(m.matchday_id)),
         );
+
+        // QUELLE JOURNEE LE DEBRIEF RACONTE-T-IL ?
+        //
+        // La derniere dont TOUS les matchs sont termines — de Ligue 1 comme
+        // bonus. C'est mot pour mot la regle de la page Debrief
+        // (src/routes/debrief.tsx) : si les deux pages n'appliquaient pas la
+        // meme, l'Accueil annoncerait « le Debrief de la J4 est en ligne »
+        // pendant que le Debrief, lui, raconterait encore la J3.
+        //
+        // `reconciledMatches` et non la base brute : un score arrive par
+        // l'API compte, exactement comme sur le Debrief.
+        const journeeDuDebrief = (() => {
+          const parJournee = new Map<string, any[]>();
+
+          for (const match of (reconciledMatches || []) as any[]) {
+            if (match.is_bonus) continue;
+            const id = String(match.matchday_id ?? "");
+            if (!id || !ligue1MatchdayIds.has(id)) continue;
+            parJournee.set(id, [...(parJournee.get(id) ?? []), match]);
+          }
+
+          // Les matchs bonus sont rattaches a leur journee de Ligue 1 par
+          // bonus_options, jamais par leur propre matchday_id (qui pointe
+          // vers le championnat etranger).
+          const matchParId = new Map(
+            ((reconciledMatches || []) as any[]).map((m: any) => [String(m.id), m]),
+          );
+          for (const option of (bonusOptionsData || []) as any[]) {
+            const journeeId = String(option?.matchday_id ?? "");
+            const match = matchParId.get(String(option?.match_id ?? ""));
+            if (!journeeId || !match || !ligue1MatchdayIds.has(journeeId)) continue;
+            const deja = parJournee.get(journeeId) ?? [];
+            if (deja.some((m: any) => String(m.id) === String(match.id))) continue;
+            parJournee.set(journeeId, [...deja, match]);
+          }
+
+          const numeroParId = new Map(
+            (matchdays || []).map((md: any) => [String(md.id), Number(md.number) || 0]),
+          );
+
+          let derniere: number | null = null;
+          parJournee.forEach((matchsDeLaJournee, journeeId) => {
+            const numero = numeroParId.get(journeeId) ?? 0;
+            if (numero < 1) return;
+            const termines = matchsDeLaJournee.map((m: any) =>
+              Boolean(m.finished) && m.home_score != null && m.away_score != null,
+            );
+            if (!journeeTerminee(termines)) return;
+            if (derniere === null || numero > derniere) derniere = numero;
+          });
+
+          return derniere;
+        })();
+
+        if (!cancelled) setJourneeDuDebrief(journeeDuDebrief);
 
         const bonusOptions = (bonusOptionsData || []) as { matchday_id: string; match_id: string }[];
         const bonusMatchIds = new Set(bonusOptions.map((o) => String(o.match_id)));
@@ -787,6 +858,42 @@ setLeaderboard(rankedRankings);
           clairement séparées, cohérent avec la demande de blocs "qui
           respirent" plutôt que compressés. */}
       <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
+
+        {/* LE DEBRIEF EST EN LIGNE — la seule chose qui manquait pour que la
+            page soit lue : un mot sur l'Accueil, la ou tout le monde passe.
+            Elle ne s'affiche qu'une fois par journee (voir
+            src/lib/annonceDebrief.ts) ; le bouton ne fait que masquer. */}
+        {debriefAnnonce !== null && (
+          <Link
+            to="/debrief"
+            onClick={() => setDebriefAnnonce(null)}
+            className="tap group relative block overflow-hidden rounded-[26px] border border-emerald-300/35 bg-gradient-to-br from-emerald-400/[.14] via-emerald-400/[.05] to-transparent p-5 shadow-[0_18px_60px_-20px_rgba(16,185,129,.45)] transition-colors hover:border-emerald-300/60 md:p-6"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -right-16 -top-16 size-56 rounded-full bg-emerald-400/15 blur-3xl"
+            />
+            <div className="relative flex flex-wrap items-center gap-4">
+              <span className="text-4xl leading-none md:text-5xl" aria-hidden>
+                📰
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[10px] font-black uppercase tracking-[.2em] text-emerald-300">
+                  Le Debrief
+                </p>
+                <p className="mt-1 font-display text-xl font-black uppercase leading-tight text-white md:text-2xl">
+                  Le bilan de la journée {debriefAnnonce} est en ligne
+                </p>
+                <p className="mt-1.5 text-sm text-emerald-100/80">
+                  Qui grimpe, qui recule, et ce que ça change au classement.
+                </p>
+              </div>
+              <span className="w-full shrink-0 rounded-xl border border-emerald-300/40 px-3 py-2.5 text-center font-mono text-[10px] font-black uppercase tracking-[.12em] text-emerald-200 transition-colors group-hover:border-emerald-300/70 group-hover:text-emerald-100 sm:w-auto sm:py-2">
+                Aller voir →
+              </span>
+            </div>
+          </Link>
+        )}
 
         {/* PASSAGE DE NIVEAU — la premiere chose que le joueur voit en
             ouvrant le site apres avoir gagne un niveau. Ne s'affiche qu'une

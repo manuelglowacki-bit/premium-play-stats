@@ -34,7 +34,8 @@
     "verif-annonce-niveau": "tsx src/lib/annonceNiveau.verif.ts",
     "verif-mail-rappel": "tsx src/lib/mailRappel.verif.ts",
     "verif-parcours": "tsx src/lib/parcoursSaison.verif.ts",
-    "verif-recit": "tsx src/lib/recitDebrief.verif.ts"
+    "verif-recit": "tsx src/lib/recitDebrief.verif.ts",
+    "verif-annonce-debrief": "tsx src/lib/annonceDebrief.verif.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
