@@ -6,10 +6,16 @@
  *
  *   1. LE GENRE. « Il a marque 7 points » est faux pour Lulu. Un prenom ne
  *      dit pas le genre de quelqu'un, et un pseudo encore moins : la seule
- *      facon honnete de le savoir est qu'on nous le dise. Tant qu'un joueur
- *      n'est pas dans cette liste, le texte l'ecrit au NEUTRE — jamais au
- *      masculin par defaut. Se tromper de genre sur une vraie personne est
- *      une faute que « c'est le defaut » n'excuse pas.
+ *      facon honnete de le savoir est qu'on nous le dise. C'est fait :
+ *      l'organisateur a indique que Lulu et Mel11 sont des joueuses et que
+ *      le reste de la ligue est masculin. Ce ne sont donc pas des
+ *      suppositions, mais ce qu'il a declare sur SES vingt-trois joueurs.
+ *
+ *      ATTENTION pour la suite : cette declaration couvre la ligue telle
+ *      qu'elle est aujourd'hui. Un joueur qui arriverait plus tard serait
+ *      ecrit au masculin sans que personne l'ait dit — il faut donc
+ *      l'ajouter ici a son inscription. Le neutre existe toujours
+ *      (`genreDe` sait le rendre) : il suffit de mettre "neutre".
  *
  *   2. LES PSEUDOS CHANGES EN COURS DE SAISON. « North London » a la J1 et
  *      « Jo gunners » ensuite sont le meme joueur. Sans cette table, le
@@ -31,20 +37,22 @@ export type Genre = "feminin" | "masculin" | "neutre";
  * N'y figurent que les joueurs dont le genre nous a ete indique.
  */
 const GENRES: Record<string, Genre> = {
-  // Indique explicitement par l'organisateur.
+  // LES JOUEUSES, nommees par l'organisateur.
   lulu: "feminin",
-
-  // Joueurs dont il a parle au masculin dans ses consignes de redaction.
-  // Aucun n'est devine a partir du pseudo. Ceux qui ne figurent pas ici
-  // sont ecrits au neutre : il suffit de me dire lesquels ajouter.
-  fcs: "masculin",
-  sanji: "masculin",
-  quentin: "masculin",
-  "jo gunners": "masculin",
-  lapetitepute: "masculin",
-  "le lensois de lm": "masculin",
-  "le lensoiis de lm": "masculin",
+  mel11: "feminin",
+  mel: "feminin",
 };
+
+/**
+ * Le genre de ceux qui ne sont pas nommes ci-dessus.
+ *
+ * « Lulu et Mel se sont des filles, le reste des garcons » : le masculin
+ * n'est donc pas un defaut technique commode, c'est ce que l'organisateur a
+ * dit de sa ligue. Une valeur ecrite ici, en clair, plutot que cachee dans
+ * le code — pour qu'on sache d'ou elle vient et qu'on puisse la remettre a
+ * "neutre" le jour ou la ligue s'ouvre a des joueurs qu'on ne connait pas.
+ */
+const GENRE_PAR_DEFAUT: Genre = "masculin";
 
 /**
  * Anciens pseudos, et le pseudo actuel derriere. A gauche l'ancien, a droite
@@ -73,9 +81,9 @@ export function pseudoActuel(pseudo: string | null | undefined): string {
   return ANCIENS_PSEUDOS[clefPseudo(brut)] ?? brut;
 }
 
-/** @returns « neutre » tant que le genre n'a pas ete indique. */
+/** @returns Le genre declare, ou celui de la ligue a defaut. */
 export function genreDe(pseudo: string | null | undefined): Genre {
-  return GENRES[clefPseudo(pseudoActuel(pseudo))] ?? "neutre";
+  return GENRES[clefPseudo(pseudoActuel(pseudo))] ?? GENRE_PAR_DEFAUT;
 }
 
 /**

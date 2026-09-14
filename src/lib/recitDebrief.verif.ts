@@ -150,7 +150,7 @@ if (articleLulu) {
   verifier("Lulu est au feminin", texteLulu.includes("Elle") || texteLulu.includes(" elle "), texteLulu);
   verifier("jamais « il » pour Lulu", !/\bIl\b|\bil\b/.test(texteLulu), texteLulu);
 }
-// Mel11 n'est pas renseigne : on ne doit PAS lui inventer un genre.
+// Mel11 est la seconde joueuse de la ligue : elle aussi doit etre accordee.
 {
   const seule = ecrireRecit({
     ...entrees,
@@ -158,9 +158,19 @@ if (articleLulu) {
     remontees: [], chutes: [], densite: null, exAequoTete: 1,
   })!;
   const texte = sansAccents([...seule.chapeau, ...seule.sections.flatMap((s) => s.paragraphes)].join(" "));
-  verifier("un joueur non renseigne n'est jamais dit « il »",
-    !/\bil a\b|\bIl a\b|\bil est\b|\bIl est\b/.test(texte), texte.slice(0, 400));
-  verifier("son nom est repete a la place", texte.includes("Mel11"), texte.slice(0, 300));
+  verifier("Mel11 est au feminin", /\belle\b|\bElle\b/.test(texte), texte.slice(0, 400));
+  verifier("jamais « il » pour Mel11",
+    !/\bil\b|\bIl\b/.test(texte), texte.slice(0, 400));
+}
+// Le masculin des autres vient de l'organisateur, pas d'une supposition.
+{
+  const lui = ecrireRecit({
+    ...entrees,
+    fiches: [max, quentin],
+    remontees: [], chutes: [], densite: null, exAequoTete: 1,
+  })!;
+  const texte = sansAccents([...lui.chapeau, ...lui.sections.flatMap((s) => s.paragraphes)].join(" "));
+  verifier("les joueurs sont au masculin", /\bIl\b|\bil\b/.test(texte), texte.slice(0, 300));
 }
 
 console.log("\nLes accords de nombre");

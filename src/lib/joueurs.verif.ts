@@ -36,27 +36,27 @@ egal("un pseudo deja a jour reste tel quel", pseudoActuel("Jo gunners"), "Jo gun
 egal("vide", pseudoActuel(""), "");
 
 console.log("\nLe genre");
+// Les deux joueuses nommees par l'organisateur.
 egal("Lulu est une joueuse", genreDe("Lulu"), "feminin");
+egal("Mel11 aussi", genreDe("Mel11"), "feminin");
+egal("« Mel » tout court aussi", genreDe("Mel"), "feminin");
 egal("la casse ne change rien", genreDe("LULU"), "feminin");
-egal("FCS a ete indique au masculin", genreDe("FCS"), "masculin");
+// « Le reste des garcons » : c'est sa declaration sur SA ligue, pas une
+// supposition du code. Un nouveau venu devra etre ajoute a la liste.
+egal("le reste de la ligue est au masculin", genreDe("FCS"), "masculin");
+egal("y compris un pseudo qu'on n'a jamais vu", genreDe("Quelquun"), "masculin");
 egal("l'ancien pseudo herite du genre du nouveau",
   genreDe("North London"), genreDe("Jo gunners"));
-// LE POINT IMPORTANT : un joueur inconnu n'est PAS masculin par defaut.
-// Se tromper de genre sur une vraie personne est une faute ; le neutre, non.
-egal("un joueur non renseigne reste au neutre", genreDe("Mel11"), "neutre");
-egal("un pseudo vide aussi", genreDe(""), "neutre");
 
 console.log("\nLes accords");
 egal("au feminin", accordsDe("Lulu"),
   { il: "elle", lui: "elle", leJoueur: "la joueuse", son: "son", e: "e", aUnPronom: true });
 egal("au masculin", accordsDe("Sanji"),
   { il: "il", lui: "lui", leJoueur: "le joueur", son: "son", e: "", aUnPronom: true });
-verifier("au neutre, aucun pronom n'est propose", accordsDe("Mel11").aUnPronom === false);
-egal("au neutre, le nom commun reste neutre", accordsDe("Mel11").leJoueur, "le joueur");
+egal("Mel11 est accordee au feminin", accordsDe("Mel11").leJoueur, "la joueuse");
 // « derriere il » n'existe pas en francais : il faut le pronom tonique.
 egal("le pronom tonique au feminin", accordsDe("Lulu").lui, "elle");
 egal("le pronom tonique au masculin", accordsDe("Sanji").lui, "lui");
-egal("aucun pronom tonique au neutre", accordsDe("Mel11").lui, "");
 
 console.log("\n" + "=".repeat(64));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);
