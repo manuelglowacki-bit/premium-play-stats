@@ -313,6 +313,47 @@ console.log("\nLes echelles de parcours (ce que la page dessine)");
     JSON.stringify(debut.sections.map((x) => x.echelles)));
 }
 
+
+console.log("\nDeux superlatifs sur la meme journee : dire ce qu'on mesure");
+// L'organisateur a bute dessus : « la meilleure copie de la journee » (des
+// POINTS) et « le plus beau coup de la journee » (des PLACES) se suivaient
+// sans nommer leur critere, et designaient deux joueurs differents.
+{
+  const gros = fiche("Lapetitepute", 13, 21, [18, 10, 21, 13], 0, 14);   // 14 pts, +8 places
+  const bouge = fiche("Mel11", 12, 31, [14, 15, 17, 12], 0, 13);          // 13 pts, +5 places
+  const art = ecrireRecit({
+    ...entrees,
+    fiches: [fcs, lulu, sanji, bouge, gros],
+    remontees: [bouge],
+    chutes: [],
+    trajectoire: null,
+    meilleureJournee: gros,
+  })!;
+  const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
+
+  verifier("le critere « points » est nomme",
+    texte.includes("Le plus gros total de la journée 4 revient à Lapetitepute"), texte.slice(0, 900));
+  verifier("le critere « places » est nomme",
+    texte.includes("La plus forte progression de cette 4e journée est signée Mel11"), texte);
+  verifier("plus de « meilleure copie » sans critere",
+    !texte.includes("meilleure copie"), texte);
+}
+
+// Deux joueurs au meme total : on ne peut pas n'en nommer qu'un.
+{
+  const a = fiche("A", 4, 30, [5, 5, 5, 4], 0, 14);
+  const b = fiche("B", 5, 29, [6, 6, 6, 5], 0, 14);
+  const art = ecrireRecit({
+    ...entrees,
+    fiches: [fcs, lulu, sanji, a, b],
+    remontees: [], chutes: [], trajectoire: null,
+    meilleureJournee: a,
+  })!;
+  const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
+  verifier("les ex aequo de la journee sont tous nommes",
+    texte.includes("revient à A et B") && texte.includes("marqués chacun"), texte.slice(0, 900));
+}
+
 console.log("\n" + "=".repeat(62));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);
 if (echecs > 0) process.exit(1);

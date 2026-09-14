@@ -1541,7 +1541,23 @@ function DebriefPage() {
                             <p className="truncate font-display text-xs font-black uppercase tracking-[.08em] text-white">
                               {echelle.nom}
                             </p>
-                            <div className="mt-2 space-y-1">
+
+                            {/* LES DEUX COLONNES SONT NOMMEES. Sans ces
+                                etiquettes, « 15 pts +15 » suivi de « 34 pts »
+                                se lit comme une addition qui ne tombe pas
+                                juste : on essaie 15 + 15 et on trouve 34.
+                                Il s'agit en realite du TOTAL a l'issue de la
+                                journee, et des points marques SUR cette
+                                journee — deux choses differentes. */}
+                            <div className="mt-2 flex min-w-0 items-center gap-2 border-b border-slate-800 pb-1 font-mono text-[8px] font-black uppercase tracking-[.14em] text-slate-600">
+                              <span className="w-5 shrink-0" aria-hidden />
+                              <span className="w-7 shrink-0" aria-hidden />
+                              <span className="w-10 shrink-0">Rang</span>
+                              <span className="flex-1 text-right">Total</span>
+                              <span className="w-12 shrink-0 text-right">Journée</span>
+                            </div>
+
+                            <div className="mt-1.5 space-y-1">
                               {echelle.etapes.map((etape, i) => {
                                 const avant = i > 0 ? echelle.etapes[i - 1].rang : null;
                                 const delta = avant == null ? 0 : avant - etape.rang;
@@ -1573,11 +1589,16 @@ function DebriefPage() {
                                             ? "🥉"
                                             : `${etape.rang}e`}
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate text-right text-slate-400">
-                                      <span className="font-black text-slate-200">{etape.points}</span> pts
-                                      {etape.gainJournee > 0 && (
-                                        <span className="ml-1.5 text-emerald-400">+{etape.gainJournee}</span>
-                                      )}
+                                    <span className="min-w-0 flex-1 truncate text-right">
+                                      <span className="font-black text-slate-200">{etape.points}</span>
+                                      <span className="text-slate-500"> pts</span>
+                                    </span>
+                                    <span
+                                      className={`w-12 shrink-0 text-right font-black ${
+                                        etape.gainJournee > 0 ? "text-emerald-400" : "text-slate-600"
+                                      }`}
+                                    >
+                                      {etape.gainJournee > 0 ? `+${etape.gainJournee}` : "—"}
                                     </span>
                                   </div>
                                 );

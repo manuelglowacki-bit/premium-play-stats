@@ -251,9 +251,16 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
   }
 
   if (e.meilleureJournee && e.meilleureJournee.derniereJournee > 0) {
+    // DIRE CE QU'ON MESURE. Cette phrase parle des POINTS marques ; la
+    // section des remontees, juste apres, parle des PLACES gagnees. Sans le
+    // critere, deux « meilleurs de la journee » differents se suivent et le
+    // lecteur cherche l'erreur de calcul — il n'y en a pas.
+    const record = e.meilleureJournee.derniereJournee;
+    const exAequo = e.fiches.filter((f) => f.derniereJournee === record).map((f) => f.name);
     tete.push(
-      `La meilleure copie de la journée ${e.numeroDerniereJournee} revient à ` +
-        `**${e.meilleureJournee.name}**, avec **${pts(e.meilleureJournee.derniereJournee)}** marqués.`,
+      `Le plus gros total de la journée ${e.numeroDerniereJournee} revient à ` +
+        `**${listeFr(exAequo)}**, avec **${pts(record)}** marqués` +
+        `${exAequo.length > 1 ? " chacun" : ""}.`,
     );
   }
 
@@ -325,7 +332,7 @@ export function ecrireRecit(e: EntreesRecit): Recit | null {
     // LE MOUVEMENT DE LA JOURNEE, pas celui de la saison : c'est un Debrief
     // de journee. Le parcours complet reste cite juste apres, en contexte.
     p.push(
-      `Le plus beau coup de cette **${jour}e journée** est signé **${premier.name}** : ` +
+      `La plus forte progression de cette **${jour}e journée** est signée **${premier.name}** : ` +
         `**${placesGagnees(premier.mouvement)}** en une journée, ` +
         `${premier.rangVeille != null ? `de **${rangEcrit(premier.rangVeille)}** à ` : `désormais `}` +
         `**${rangEcrit(premier.rang)}**. Il a marqué **${pts(premier.derniereJournee)}** ce week-end. ` +
