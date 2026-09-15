@@ -1,3 +1,5 @@
+import { EMOJIS_FAVORIS, emojiValide } from "./catalogueEmojis";
+
 /**
  * LES REACTIONS DES JOUEURS SUR LE DEBRIEF.
  *
@@ -19,31 +21,34 @@
  */
 
 /**
- * LES EMOJIS, dans l'ordre d'affichage.
+ * LES EMOJIS PROPOSES EN PREMIER, sous l'article.
  *
- * Douze, choisis pour une ligue de pronostics : on applaudit, on chambre, on
- * salue un score exact, on se moque d'une journee ratee. L'ordre va du plus
- * flatteur au plus moqueur — c'est celui qu'on parcourt naturellement.
- *
- * LES SIX PREMIERS EMOJIS D'ORIGINE Y FIGURENT TOUJOURS (👏 🔥 😮 😂 😢 💪).
- * Les retirer effacerait des reactions deja posees : une reaction dont
- * l'emoji n'est plus dans la liste cesse d'etre comptee.
- *
- * Cette liste est reprise telle quelle par la contrainte
- * `debrief_reactions_emoji_valide` en base (migration 20260915090000). Si
- * elle change ici, la migration doit changer aussi, sans quoi
- * l'enregistrement sera refuse par la base — c'est voulu : mieux vaut un
- * refus franc qu'un emoji fantome que personne ne peut plus choisir.
+ * Le choix complet se fait dans le selecteur (src/lib/catalogueEmojis.ts) ;
+ * ces douze-la restent a portee de pouce pour ne pas avoir a l'ouvrir a
+ * chaque fois. Les six emojis de la toute premiere version y figurent
+ * toujours : les retirer ferait disparaitre du choix des reactions deja
+ * posees.
  */
-export const EMOJIS_DEBRIEF = [
-  "👏", "🔥", "💪", "🎯", "🏆", "🐐",
-  "⚽", "🤯", "😮", "😂", "😢", "👀",
-] as const;
+export const EMOJIS_DEBRIEF = EMOJIS_FAVORIS;
 
-export type EmojiDebrief = (typeof EMOJIS_DEBRIEF)[number];
+/** Un emoji, au sens de `emojiValide` : un symbole court, jamais du texte. */
+export type EmojiDebrief = string;
 
+/**
+ * CE QUI PEUT ETRE ENREGISTRE.
+ *
+ * Plus une liste fermee mais une regle de forme — « un symbole court, pas du
+ * texte » — parce que le selecteur propose desormais des centaines d'emojis
+ * et que le catalogue s'enrichira. Une reaction posee aujourd'hui doit rester
+ * valable demain.
+ *
+ * Ce qui compte : sans cette regle, le champ deviendrait du texte libre sur
+ * une page lue par vingt-trois personnes. La meme regle est appliquee par la
+ * base (contrainte `debrief_reactions_emoji_valide`), qui a le dernier mot :
+ * ici c'est du confort, la-bas c'est la garantie.
+ */
 export function emojiAutorise(emoji: string): emoji is EmojiDebrief {
-  return (EMOJIS_DEBRIEF as readonly string[]).includes(emoji);
+  return emojiValide(emoji);
 }
 
 export type LigneReaction = {

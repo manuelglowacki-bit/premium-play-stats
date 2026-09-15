@@ -35,6 +35,7 @@ import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { lireArticle } from "@/lib/articleManuel";
 import { pseudoActuel } from "@/lib/joueurs";
 import { useAuth } from "@/context/AuthContext";
+import { CATEGORIES_EMOJIS } from "@/lib/catalogueEmojis";
 import {
   EMOJIS_DEBRIEF,
   apresLeGeste,
@@ -1834,11 +1835,126 @@ function DebriefPage() {
 }
 
 /**
+ * LE SELECTEUR D'EMOJIS.
+ *
+ * Ouvert par le « + » sous un article. Onglets par categorie, grille
+ * defilante, et une ligne « recents » alimentee par les derniers choix du
+ * joueur — c'est elle qu'on utilise neuf fois sur dix.
+ *
+ * Les recents vivent dans le navigateur (localStorage) : ils ne concernent
+ * que celui qui les a choisis, et n'ont rien a faire sur le serveur.
+ */
+const CLE_RECENTS = "prono.debrief.emojis-recents";
+
+function lireRecents(): string[] {
+  try {
+    const brut = window.localStorage.getItem(CLE_RECENTS);
+    const liste = brut ? JSON.parse(brut) : [];
+    return Array.isArray(liste) ? liste.filter((e) => typeof e === "string").slice(0, 16) : [];
+  } catch {
+    // Navigation privee, stockage refuse : on s'en passe, ce n'est qu'un
+    // confort. Jamais d'erreur affichee pour cela.
+    return [];
+  }
+}
+
+function memoriserRecent(emoji: string) {
+  try {
+    const liste = [emoji, ...lireRecents().filter((e) => e !== emoji)].slice(0, 16);
+    window.localStorage.setItem(CLE_RECENTS, JSON.stringify(liste));
+  } catch {
+    /* sans stockage, pas de recents — et c'est tout */
+  }
+}
+
+function SelecteurEmojis({
+  onChoisir,
+  onFermer,
+}: {
+  onChoisir: (emoji: string) => void;
+  onFermer: () => void;
+}) {
+  const [categorie, setCategorie] = useState<string>(CATEGORIES_EMOJIS[0].cle);
+  const recents = useMemo(() => lireRecents(), []);
+  const active = CATEGORIES_EMOJIS.find((c) => c.cle === categorie) ?? CATEGORIES_EMOJIS[0];
+
+  return (
+    <div className="mt-3 w-full max-w-[26rem] rounded-2xl border border-slate-700 bg-slate-950 p-3 shadow-[0_20px_60px_rgba(0,0,0,.6)]">
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-mono text-[9px] font-black uppercase tracking-[.2em] text-emerald-300">
+          {active.nom}
+        </p>
+        <button
+          type="button"
+          onClick={onFermer}
+          className="tap rounded-lg px-2 py-1 font-mono text-[10px] font-black uppercase tracking-[.1em] text-slate-500 hover:text-slate-300"
+        >
+          Fermer
+        </button>
+      </div>
+
+      {recents.length > 0 && (
+        <div className="mt-2 border-b border-slate-800 pb-2">
+          <p className="mb-1 font-mono text-[8px] font-black uppercase tracking-[.16em] text-slate-600">
+            Récents
+          </p>
+          <div className="flex flex-wrap gap-0.5">
+            {recents.map((emoji) => (
+              <button
+                key={`recent-${emoji}`}
+                type="button"
+                onClick={() => onChoisir(emoji)}
+                className="tap size-9 rounded-lg text-xl leading-none hover:bg-white/10"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* La grille defile ; les onglets restent visibles. */}
+      <div className="mt-2 max-h-[13.5rem] overflow-y-auto overscroll-contain">
+        <div className="grid grid-cols-7 gap-0.5 sm:grid-cols-8">
+          {active.emojis.map((emoji) => (
+            <button
+              key={`${active.cle}-${emoji}`}
+              type="button"
+              onClick={() => onChoisir(emoji)}
+              className="tap size-9 rounded-lg text-xl leading-none hover:bg-white/10"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-2 flex gap-0.5 overflow-x-auto border-t border-slate-800 pt-2">
+        {CATEGORIES_EMOJIS.map((c) => (
+          <button
+            key={c.cle}
+            type="button"
+            onClick={() => setCategorie(c.cle)}
+            aria-label={c.nom}
+            aria-pressed={c.cle === active.cle}
+            className={`tap size-9 shrink-0 rounded-lg text-lg leading-none transition-colors ${
+              c.cle === active.cle ? "bg-emerald-400/15" : "hover:bg-white/10"
+            }`}
+          >
+            {c.onglet}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * LA BARRE DE REACTIONS D'UN ARTICLE.
  *
  * Au repos elle ne montre que les emojis deja choisis, en petit : la page
- * reste un journal. Elle s'ouvre au survol ou au clic sur le « + », et le
- * bouton qu'on a soi-meme choisi est cercle de vert.
+ * reste un journal. Le « + » ouvre douze raccourcis, puis le catalogue
+ * complet. Le bouton qu'on a soi-meme choisi est cercle de vert.
  */
 function BarreReactions({
   article,
@@ -1854,59 +1970,82 @@ function BarreReactions({
   onReagir: (emoji: string) => void;
 }) {
   const [ouverte, setOuverte] = useState(false);
+  const [selecteur, setSelecteur] = useState(false);
   const comptes = etat?.comptes ?? {};
   const lemien = etat?.lemien ?? null;
   const total = etat?.total ?? 0;
 
-  // Les emojis a montrer au repos : ceux qui ont au moins une voix.
-  const choisis = EMOJIS_DEBRIEF.filter((emoji) => (comptes[emoji] ?? 0) > 0);
-  const toutMontrer = ouverte || total === 0;
-  const aMontrer = toutMontrer ? [...EMOJIS_DEBRIEF] : choisis;
+  // Au repos : les emojis qui ont au moins une voix, quels qu'ils soient —
+  // le catalogue en propose des centaines, la barre ne peut pas tous les
+  // porter. Ouverte : les douze raccourcis, plus ceux deja choisis.
+  const dejaChoisis = Object.keys(comptes);
+  const aMontrer = ouverte || total === 0
+    ? [...new Set([...EMOJIS_DEBRIEF, ...dejaChoisis])]
+    : dejaChoisis;
 
   if (!peutReagir && total === 0) return null;
 
+  function choisir(emoji: string) {
+    memoriserRecent(emoji);
+    setSelecteur(false);
+    onReagir(emoji);
+  }
+
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-1.5">
-      {aMontrer.map((emoji) => {
-        const compte = comptes[emoji] ?? 0;
-        const cestMoi = lemien === emoji;
-        return (
+    <div className="mt-6">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {aMontrer.map((emoji) => {
+          const compte = comptes[emoji] ?? 0;
+          const cestMoi = lemien === emoji;
+          return (
+            <button
+              key={`${article}-${emoji}`}
+              type="button"
+              disabled={!peutReagir || occupe}
+              onClick={() => choisir(emoji)}
+              aria-pressed={cestMoi}
+              aria-label={`Réagir ${emoji}${compte > 0 ? ` — ${compte}` : ""}`}
+              className={`tap inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                cestMoi
+                  ? "border-emerald-400/60 bg-emerald-400/[.12]"
+                  : "border-slate-800 hover:border-slate-600"
+              }`}
+            >
+              <span aria-hidden>{emoji}</span>
+              {compte > 0 && (
+                <span
+                  className={`font-mono text-[11px] font-black tabular-nums ${
+                    cestMoi ? "text-emerald-300" : "text-slate-500"
+                  }`}
+                >
+                  {compte}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {peutReagir && (
           <button
-            key={`${article}-${emoji}`}
             type="button"
-            disabled={!peutReagir || occupe}
-            onClick={() => onReagir(emoji)}
-            aria-pressed={cestMoi}
-            aria-label={`Réagir ${emoji}${compte > 0 ? ` — ${compte}` : ""}`}
-            className={`tap inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              cestMoi
-                ? "border-emerald-400/60 bg-emerald-400/[.12]"
-                : "border-slate-800 hover:border-slate-600"
+            onClick={() => {
+              if (!ouverte && total > 0) setOuverte(true);
+              else setSelecteur((v) => !v);
+            }}
+            aria-label={selecteur ? "Fermer le choix des emojis" : "Choisir un autre emoji"}
+            className={`tap inline-flex size-8 items-center justify-center rounded-full border font-mono text-xs font-black transition-colors ${
+              selecteur
+                ? "border-emerald-400/60 text-emerald-300"
+                : "border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300"
             }`}
           >
-            <span aria-hidden>{emoji}</span>
-            {compte > 0 && (
-              <span
-                className={`font-mono text-[11px] font-black tabular-nums ${
-                  cestMoi ? "text-emerald-300" : "text-slate-500"
-                }`}
-              >
-                {compte}
-              </span>
-            )}
+            +
           </button>
-        );
-      })}
+        )}
+      </div>
 
-      {!toutMontrer && peutReagir && (
-        <button
-          type="button"
-          onClick={() => setOuverte(true)}
-          aria-label="Choisir une réaction"
-          className="tap inline-flex size-8 items-center justify-center rounded-full border border-slate-800 font-mono text-xs font-black text-slate-500 transition-colors hover:border-slate-600 hover:text-slate-300"
-        >
-          +
-        </button>
+      {selecteur && peutReagir && (
+        <SelecteurEmojis onChoisir={choisir} onFermer={() => setSelecteur(false)} />
       )}
     </div>
   );

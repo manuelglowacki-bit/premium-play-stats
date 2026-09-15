@@ -33,7 +33,7 @@ const MOI = "moi";
 const AUTRE = "autre";
 
 console.log("\nLes emojis autorises");
-egal("douze emojis", EMOJIS_DEBRIEF.length, 12);
+egal("douze emojis proposes en premier", EMOJIS_DEBRIEF.length, 12);
 // LES SIX D'ORIGINE doivent survivre a tout elargissement : en retirer un
 // effacerait de fait les reactions deja posees avec, qui cesseraient d'etre
 // comptees.
@@ -43,7 +43,10 @@ egal("douze emojis", EMOJIS_DEBRIEF.length, 12);
 verifier("aucun emoji en double", new Set(EMOJIS_DEBRIEF).size === EMOJIS_DEBRIEF.length,
   JSON.stringify(EMOJIS_DEBRIEF));
 verifier("un nouvel emoji passe", emojiAutorise("🐐"));
-verifier("un autre emoji est refuse", !emojiAutorise("🍕"));
+// La liste n'est plus fermee : tout VRAI emoji est accepte, c'est le
+// selecteur qui en propose des centaines. Ce qui reste refuse, c'est le
+// texte — voir verif-emojis pour le detail de la regle.
+verifier("un emoji hors des favoris est accepte", emojiAutorise("🍕"));
 verifier("du texte est refuse", !emojiAutorise("coucou"));
 verifier("le vide est refuse", !emojiAutorise(""));
 
@@ -55,8 +58,8 @@ const lignes: LigneReaction[] = [
   { user_id: MOI,   journee: 4, article: "chiffre", emoji: "😮" },
   // Une autre journee : ne doit pas se melanger a celle affichee.
   { user_id: MOI,   journee: 3, article: "leader", emoji: "😂" },
-  // Un emoji devenu invalide : ignore plutot qu'affiche.
-  { user_id: "d",   journee: 4, article: "leader", emoji: "🍕" },
+  // Du texte glisse a la place d'un emoji : ignore plutot qu'affiche.
+  { user_id: "d",   journee: 4, article: "leader", emoji: "arnaque" },
 ];
 
 const r = reactionsParArticle(lignes, 4, MOI);
@@ -66,8 +69,8 @@ egal("ma reaction est reconnue", r.get("leader")!.lemien, "🔥");
 egal("un autre article a les siens", r.get("chiffre")!.comptes, { "😮": 1 });
 verifier("une autre journee n'est pas comptee",
   !JSON.stringify([...r.entries()]).includes("😂"), JSON.stringify([...r.entries()]));
-verifier("un emoji hors liste n'est pas compte",
-  !JSON.stringify([...r.entries()]).includes("🍕"));
+verifier("du texte n'est jamais compte comme une reaction",
+  !JSON.stringify([...r.entries()]).includes("arnaque"), JSON.stringify([...r.entries()]));
 egal("sans joueur connecte, aucune reaction n'est « la mienne »",
   reactionsParArticle(lignes, 4, null).get("leader")!.lemien, null);
 egal("aucune ligne : aucun article", [...reactionsParArticle([], 4, MOI).entries()], []);
@@ -76,7 +79,8 @@ console.log("\nCe qu'un clic doit faire");
 egal("aucune reaction : on ajoute", gesteAuClic(null, "🔥"), { action: "ajouter", emoji: "🔥" });
 egal("le meme emoji : on retire", gesteAuClic("🔥", "🔥"), { action: "retirer" });
 egal("un autre emoji : on remplace", gesteAuClic("🔥", "👏"), { action: "remplacer", emoji: "👏" });
-egal("un emoji hors liste : on ne fait rien", gesteAuClic(null, "🍕"), { action: "rien" });
+egal("du texte : on ne fait rien", gesteAuClic(null, "arnaque"), { action: "rien" });
+egal("un emoji du catalogue : on ajoute", gesteAuClic(null, "🍕"), { action: "ajouter", emoji: "🍕" });
 
 console.log("\nL'affichage immediat, avant la reponse du serveur");
 const depart = { comptes: { "🔥": 2, "👏": 1 }, lemien: "🔥", total: 3 };
