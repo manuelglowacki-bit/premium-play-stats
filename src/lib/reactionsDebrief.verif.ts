@@ -33,8 +33,16 @@ const MOI = "moi";
 const AUTRE = "autre";
 
 console.log("\nLes emojis autorises");
-egal("six emojis, pas davantage", EMOJIS_DEBRIEF.length, 6);
-verifier("un emoji de la liste passe", emojiAutorise("🔥"));
+egal("douze emojis", EMOJIS_DEBRIEF.length, 12);
+// LES SIX D'ORIGINE doivent survivre a tout elargissement : en retirer un
+// effacerait de fait les reactions deja posees avec, qui cesseraient d'etre
+// comptees.
+["👏", "🔥", "😮", "😂", "😢", "💪"].forEach((emoji) =>
+  verifier(`${emoji} — emoji d'origine, toujours accepte`, emojiAutorise(emoji)),
+);
+verifier("aucun emoji en double", new Set(EMOJIS_DEBRIEF).size === EMOJIS_DEBRIEF.length,
+  JSON.stringify(EMOJIS_DEBRIEF));
+verifier("un nouvel emoji passe", emojiAutorise("🐐"));
 verifier("un autre emoji est refuse", !emojiAutorise("🍕"));
 verifier("du texte est refuse", !emojiAutorise("coucou"));
 verifier("le vide est refuse", !emojiAutorise(""));

@@ -19,14 +19,26 @@
  */
 
 /**
- * LES SIX EMOJIS, dans l'ordre d'affichage.
+ * LES EMOJIS, dans l'ordre d'affichage.
  *
- * Six et pas davantage : au-dela, la barre ne tient plus sur un telephone et
- * le choix devient une corvee. Cette liste est reprise telle quelle par la
- * contrainte `debrief_reactions_emoji_valide` en base — si elle change ici,
- * la migration doit changer aussi, sans quoi l'enregistrement sera refuse.
+ * Douze, choisis pour une ligue de pronostics : on applaudit, on chambre, on
+ * salue un score exact, on se moque d'une journee ratee. L'ordre va du plus
+ * flatteur au plus moqueur — c'est celui qu'on parcourt naturellement.
+ *
+ * LES SIX PREMIERS EMOJIS D'ORIGINE Y FIGURENT TOUJOURS (👏 🔥 😮 😂 😢 💪).
+ * Les retirer effacerait des reactions deja posees : une reaction dont
+ * l'emoji n'est plus dans la liste cesse d'etre comptee.
+ *
+ * Cette liste est reprise telle quelle par la contrainte
+ * `debrief_reactions_emoji_valide` en base (migration 20260915090000). Si
+ * elle change ici, la migration doit changer aussi, sans quoi
+ * l'enregistrement sera refuse par la base — c'est voulu : mieux vaut un
+ * refus franc qu'un emoji fantome que personne ne peut plus choisir.
  */
-export const EMOJIS_DEBRIEF = ["👏", "🔥", "😮", "😂", "😢", "💪"] as const;
+export const EMOJIS_DEBRIEF = [
+  "👏", "🔥", "💪", "🎯", "🏆", "🐐",
+  "⚽", "🤯", "😮", "😂", "😢", "👀",
+] as const;
 
 export type EmojiDebrief = (typeof EMOJIS_DEBRIEF)[number];
 
