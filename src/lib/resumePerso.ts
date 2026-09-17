@@ -235,3 +235,14 @@ export function titrePodium(p: PodiumJoueur): string {
   if (p.rang === 2) return p.nouveau ? "Tu montes sur le podium" : "Dauphin";
   return p.nouveau ? "Tu entres sur le podium" : "Sur le podium";
 }
+
+/**
+ * « la 1re place », « la 2e place ».
+ *
+ * Le premier rang ne s'ecrit pas « 1e » : au feminin — une place — c'est
+ * « 1re ». Colle a la main, l'affichage donnait « tu passes de la 2e a la
+ * 1e place », ce qui saute aux yeux du premier joueur qui le lit.
+ */
+export function placeEcrite(rang: number): string {
+  return rang === 1 ? "1re" : `${rang}e`;
+}

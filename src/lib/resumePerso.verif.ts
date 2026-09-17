@@ -3,6 +3,7 @@
  *   npm run verif-resume
  */
 import {
+  placeEcrite,
   podiumDuJoueur,
   resumeDuJoueur,
   titrePodium,
@@ -161,6 +162,15 @@ console.log("\nLE PODIUM — l'accueil des trois premiers");
   egal("la serie compte les journees classees", r.depuis, 2);
   egal("l'ecart avec le second", r.derriere, { nom: "B", ecart: 5 });
 }
+
+
+console.log("\nComment s'ecrit une place");
+// « la 1e place » n'existe pas : au feminin c'est « 1re ». Le defaut sautait
+// aux yeux du premier joueur qui lisait sa propre bulle.
+egal("la premiere place", placeEcrite(1), "1re");
+egal("jamais « 1e »", placeEcrite(1) === "1e", false);
+egal("la deuxieme", placeEcrite(2), "2e");
+egal("la vingt-troisieme", placeEcrite(23), "23e");
 
 console.log("\n" + "=".repeat(64));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);

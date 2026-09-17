@@ -30,6 +30,7 @@ import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { journeesDeLaSaison } from "@/lib/perimetreClassement";
 import { parcoursSaison } from "@/lib/parcoursSaison";
 import {
+  placeEcrite,
   podiumDuJoueur,
   resumeDuJoueur,
   titrePodium,
@@ -1164,8 +1165,12 @@ setLeaderboard(rankedRankings);
                 {resumePerso.rangVeille !== null && resumePerso.mouvement !== 0 && (
                   <p>
                     Tu passes de la{" "}
-                    <span className="font-black text-white">{resumePerso.rangVeille}e</span> à la{" "}
-                    <span className="font-black text-white">{resumePerso.rang}e</span> place —{" "}
+                    <span className="font-black text-white">
+                      {placeEcrite(resumePerso.rangVeille)}
+                    </span>{" "}
+                    à la{" "}
+                    <span className="font-black text-white">{placeEcrite(resumePerso.rang)}</span>{" "}
+                    place —{" "}
                     <span className={resumePerso.mouvement > 0 ? "font-black text-emerald-300" : "font-black text-red-300"}>
                       {resumePerso.mouvement > 0 ? "+" : ""}
                       {resumePerso.mouvement} place{Math.abs(resumePerso.mouvement) > 1 ? "s" : ""}
