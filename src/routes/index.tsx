@@ -29,7 +29,14 @@ import { journeeTerminee } from "@/lib/parcoursSaison";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { journeesDeLaSaison } from "@/lib/perimetreClassement";
 import { parcoursSaison } from "@/lib/parcoursSaison";
-import { resumeDuJoueur, titreResume, type ResumePerso } from "@/lib/resumePerso";
+import {
+  podiumDuJoueur,
+  resumeDuJoueur,
+  titrePodium,
+  titreResume,
+  type PodiumJoueur,
+  type ResumePerso,
+} from "@/lib/resumePerso";
 import { lireResumeVu, memoriserResumeVu, resumeAMontrer } from "@/lib/annonceResume";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
@@ -129,6 +136,8 @@ function IndexPage() {
   const [journeeDuDebrief, setJourneeDuDebrief] = useState<number | null>(null);
   // « Ta journee » : le resume personnel, et le numero de journee a annoncer.
   const [resumePerso, setResumePerso] = useState<ResumePerso | null>(null);
+  // Le podium : l'accueil change d'habit pour les trois premiers.
+  const [podium, setPodium] = useState<PodiumJoueur | null>(null);
   const [resumeAnnonce, setResumeAnnonce] = useState<number | null>(null);
   const [debriefAnnonce, setDebriefAnnonce] = useState<number | null>(null);
 
@@ -668,9 +677,11 @@ function IndexPage() {
 
           if (!cancelled) {
             setResumePerso(resumeDuJoueur(String(user.id), parcoursTous, journeeDuDebrief));
+            setPodium(podiumDuJoueur(String(user.id), parcoursTous, journeeDuDebrief));
           }
         } else if (!cancelled) {
           setResumePerso(null);
+          setPodium(null);
         }
         // -------- Carriere multi-saisons --------
         // prediction -> match -> matchday -> season.
@@ -956,6 +967,121 @@ setLeaderboard(rankedRankings);
           clairement séparées, cohérent avec la demande de blocs "qui
           respirent" plutôt que compressés. */}
       <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
+
+        {/* ============================================================
+            L'ACCUEIL DU PODIUM
+            ============================================================
+            Etre premier ne devrait pas se lire dans un tableau : ca doit se
+            voir en ouvrant le site. Les trois premiers ont donc leur propre
+            en-tete — or, argent, bronze — a la place du bandeau ordinaire.
+
+            LA PLACE EST CELLE DU SOIR DE LA DERNIERE JOURNEE TERMINEE, et
+            non celle de l'instant. Pendant que les matchs se jouent, les
+            rangs s'echangent plusieurs fois : une couronne qui apparait et
+            disparait le samedi apres-midi ne veut plus rien dire. Elle se
+            fixe a la fin de la journee et tient jusqu'a la suivante — c'est
+            ce qui en fait un titre. Voir podiumDuJoueur(). */}
+        {podium !== null && (
+          <div
+            className={`relative overflow-hidden rounded-[26px] border p-5 md:p-6 ${
+              podium.rang === 1
+                ? "border-amber-300/45 bg-gradient-to-br from-amber-400/[.18] via-amber-400/[.06] to-transparent shadow-[0_18px_60px_-20px_rgba(245,158,11,.5)]"
+                : podium.rang === 2
+                  ? "border-slate-200/35 bg-gradient-to-br from-slate-200/[.14] via-slate-200/[.05] to-transparent shadow-[0_18px_60px_-20px_rgba(203,213,225,.35)]"
+                  : "border-orange-400/35 bg-gradient-to-br from-orange-500/[.14] via-orange-500/[.05] to-transparent shadow-[0_18px_60px_-20px_rgba(249,115,22,.4)]"
+            }`}
+          >
+            <div
+              aria-hidden
+              className={`pointer-events-none absolute -right-20 -top-20 size-64 rounded-full blur-3xl ${
+                podium.rang === 1
+                  ? "bg-amber-400/20"
+                  : podium.rang === 2
+                    ? "bg-slate-200/15"
+                    : "bg-orange-500/15"
+              }`}
+            />
+
+            <div className="relative flex items-center gap-4">
+              <span className="text-5xl leading-none md:text-6xl" aria-hidden>
+                {podium.rang === 1 ? "👑" : podium.rang === 2 ? "🥈" : "🥉"}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <p
+                  className={`font-mono text-[10px] font-black uppercase tracking-[.2em] ${
+                    podium.rang === 1
+                      ? "text-amber-300"
+                      : podium.rang === 2
+                        ? "text-slate-300"
+                        : "text-orange-300"
+                  }`}
+                >
+                  {podium.rang === 1 ? "1er" : `${podium.rang}e`} · Journée {podium.journee}
+                </p>
+                <p className="mt-1 font-display text-2xl font-black uppercase leading-[1.05] tracking-[-.02em] text-white md:text-3xl">
+                  {titrePodium(podium)}
+                </p>
+                <p className="mt-1.5 font-display text-lg font-black tabular-nums text-white/90">
+                  {podium.points} <span className="text-sm font-bold text-white/60">points</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="relative mt-4 space-y-1.5 text-sm leading-relaxed text-white/85">
+              {/* Depuis combien de temps : c'est ce qui separe un coup
+                  d'eclat d'une vraie domination. */}
+              {podium.depuis > 1 && (
+                <p>
+                  {podium.rang === 1 ? "En tête" : `${podium.rang}e`} depuis{" "}
+                  <span className="font-black text-white">{podium.depuis} journées</span> d'affilée.
+                </p>
+              )}
+
+              {podium.devant && (
+                <p>
+                  <span className="font-black text-white">{podium.devant.nom}</span> est devant toi
+                  {podium.devant.ecart === 0 ? (
+                    <span className="font-black text-white"> à égalité de points</span>
+                  ) : (
+                    <>
+                      , à{" "}
+                      <span className="font-black text-white">
+                        {podium.devant.ecart} point{podium.devant.ecart > 1 ? "s" : ""}
+                      </span>
+                    </>
+                  )}
+                  .
+                </p>
+              )}
+
+              {podium.derriere && (
+                <p>
+                  <span className="font-black text-white">{podium.derriere.nom}</span>{" "}
+                  {podium.derriere.ecart === 0 ? (
+                    <>te suit <span className="font-black text-white">à égalité de points</span>.</>
+                  ) : podium.derriere.ecart <= 2 ? (
+                    <>
+                      te souffle dans le cou :{" "}
+                      <span className="font-black text-white">
+                        {podium.derriere.ecart} point{podium.derriere.ecart > 1 ? "s" : ""}
+                      </span>{" "}
+                      seulement.
+                    </>
+                  ) : (
+                    <>
+                      te suit à{" "}
+                      <span className="font-black text-white">
+                        {podium.derriere.ecart} points
+                      </span>
+                      .
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* « TA JOURNEE » — la bulle personnelle, en premier.
             Le Debrief raconte la ligue ; celle-ci ne raconte qu'une

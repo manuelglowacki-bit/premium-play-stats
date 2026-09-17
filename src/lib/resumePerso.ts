@@ -138,3 +138,100 @@ export function titreResume(r: ResumePerso): string {
   if (r.gain === 0) return "Journée blanche";
   return "Tu tiens ta place";
 }
+
+/**
+ * LE PODIUM — l'accueil change d'habit pour les trois premiers.
+ *
+ * Etre premier ne devrait pas se lire dans un tableau : ca doit se voir en
+ * ouvrant le site. Or ni le rang seul ni les points ne racontent une place
+ * de leader — ce qui compte, c'est depuis quand on y est et qui souffle
+ * dans le cou.
+ *
+ * LA PLACE EST CELLE DU SOIR DE LA DERNIERE JOURNEE TERMINEE, jamais celle
+ * de l'instant. Pendant que les matchs se jouent, les rangs s'echangent
+ * plusieurs fois : une couronne qui apparait et disparait le samedi
+ * apres-midi ne veut plus rien dire. Elle se fixe a la fin de la journee et
+ * tient jusqu'a la suivante — c'est ce qui en fait un titre.
+ */
+export type PodiumJoueur = {
+  /** 1, 2 ou 3. */
+  rang: number;
+  points: number;
+  journee: number;
+  /** Journees consecutives a CETTE place exacte, celle-ci comprise. */
+  depuis: number;
+  /** Journees consecutives sur le podium, celle-ci comprise. */
+  surLePodiumDepuis: number;
+  /** Le joueur immediatement devant, et l'ecart. `null` pour le premier. */
+  devant: { nom: string; ecart: number } | null;
+  /** Le joueur immediatement derriere, et l'ecart. */
+  derriere: { nom: string; ecart: number } | null;
+  /** Vient-il de prendre cette place lors de cette journee ? */
+  nouveau: boolean;
+};
+
+/**
+ * @returns `null` si le joueur n'est pas dans les trois premiers — l'accueil
+ *   reste alors celui de tout le monde.
+ */
+export function podiumDuJoueur(
+  moi: string,
+  parcours: readonly ParcoursJoueur[],
+  journee: number,
+): PodiumJoueur | null {
+  const etapeDe = (p: ParcoursJoueur, numero: number) =>
+    p.etapes.find((e) => e.numero === numero) ?? null;
+
+  const lui = parcours.find((p) => String(p.id) === String(moi));
+  if (!lui) return null;
+
+  const etape = etapeDe(lui, journee);
+  if (!etape || etape.rang > 3 || etape.rang < 1) return null;
+
+  // Depuis combien de journees d'affilee ? On remonte SON parcours tant que
+  // la condition tient. Les journees absentes (report, treve) ne cassent pas
+  // la serie : c'est la suite de ses classements qui compte, pas le
+  // calendrier.
+  const index = lui.etapes.findIndex((e) => e.numero === journee);
+  let depuis = 0;
+  let surLePodiumDepuis = 0;
+  for (let i = index; i >= 0; i -= 1) {
+    if (lui.etapes[i].rang === etape.rang) depuis += 1;
+    else break;
+  }
+  for (let i = index; i >= 0; i -= 1) {
+    if (lui.etapes[i].rang <= 3) surLePodiumDepuis += 1;
+    else break;
+  }
+
+  const classement = parcours
+    .map((p) => ({ nom: p.nom, etape: etapeDe(p, journee) }))
+    .filter((x): x is { nom: string; etape: EtapeJoueur } => x.etape !== null)
+    .sort((a, b) => a.etape.rang - b.etape.rang);
+
+  const place = classement.findIndex((x) => x.etape.rang === etape.rang && x.nom === lui.nom);
+  const devantLui = place > 0 ? classement[place - 1] : null;
+  const derriereLui = place >= 0 && place < classement.length - 1 ? classement[place + 1] : null;
+
+  return {
+    rang: etape.rang,
+    points: etape.points,
+    journee,
+    depuis,
+    surLePodiumDepuis,
+    devant: devantLui
+      ? { nom: devantLui.nom, ecart: Math.max(0, devantLui.etape.points - etape.points) }
+      : null,
+    derriere: derriereLui
+      ? { nom: derriereLui.nom, ecart: Math.max(0, etape.points - derriereLui.etape.points) }
+      : null,
+    nouveau: depuis === 1 && index > 0,
+  };
+}
+
+/** Le mot qui va avec la place. Le premier n'est pas « 1er », il est patron. */
+export function titrePodium(p: PodiumJoueur): string {
+  if (p.rang === 1) return p.nouveau ? "Tu prends la tête" : "Tu es le patron";
+  if (p.rang === 2) return p.nouveau ? "Tu montes sur le podium" : "Dauphin";
+  return p.nouveau ? "Tu entres sur le podium" : "Sur le podium";
+}

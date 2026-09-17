@@ -2,7 +2,13 @@
  * Verification du resume personnel.
  *   npm run verif-resume
  */
-import { resumeDuJoueur, titreResume, type ParcoursJoueur } from "./resumePerso";
+import {
+  podiumDuJoueur,
+  resumeDuJoueur,
+  titrePodium,
+  titreResume,
+  type ParcoursJoueur,
+} from "./resumePerso";
 
 let total = 0;
 let echecs = 0;
@@ -97,6 +103,63 @@ egal("aucun joueur : aucun resume", resumeDuJoueur("lulu", [], 4), null);
   const r = resumeDuJoueur("a", trou, 4)!;
   egal("la veille est la derniere journee classee", r.rangVeille, 3);
   egal("le mouvement est calcule dessus", r.mouvement, 2);
+}
+
+
+console.log("\nLE PODIUM — l'accueil des trois premiers");
+{
+  const fcs = podiumDuJoueur("fcs", ligue, 4)!;
+  egal("le leader est sur le podium", fcs.rang, 1);
+  egal("il y est depuis quatre journees", fcs.depuis, 4);
+  egal("personne devant lui", fcs.devant, null);
+  egal("Lulu le suit a trois points", fcs.derriere, { nom: "Lulu", ecart: 3 });
+  verifier("ce n'est pas une prise de pouvoir recente", fcs.nouveau === false);
+  egal("le titre du leader installe", titrePodium(fcs), "Tu es le patron");
+
+  const lulu = podiumDuJoueur("lulu", ligue, 4)!;
+  egal("Lulu est 2e", lulu.rang, 2);
+  egal("elle vient d'y arriver", lulu.depuis, 1);
+  verifier("c'est nouveau pour elle", lulu.nouveau);
+  egal("FCS est devant, a trois points", lulu.devant, { nom: "FCS", ecart: 3 });
+  egal("Sanji est derriere, a trois points", lulu.derriere, { nom: "Sanji", ecart: 3 });
+  egal("le titre le dit", titrePodium(lulu), "Tu montes sur le podium");
+  // Elle etait 4e la veille : sa serie sur le podium commence maintenant.
+  egal("un seul passage sur le podium", lulu.surLePodiumDepuis, 1);
+
+  const sanji = podiumDuJoueur("sanji", ligue, 4)!;
+  egal("Sanji est 3e", sanji.rang, 3);
+  egal("mais sur le podium depuis le debut", sanji.surLePodiumDepuis, 4);
+  verifier("sa place a change, donc « depuis » repart a un", sanji.depuis === 1);
+
+  egal("le quatrieme n'a pas d'accueil special", podiumDuJoueur("max", ligue, 4), null);
+  egal("un joueur inconnu non plus", podiumDuJoueur("personne", ligue, 4), null);
+  egal("une journee sans classement non plus", podiumDuJoueur("fcs", ligue, 9), null);
+}
+
+{
+  // A la toute premiere journee, personne ne « prend » la tete : il n'y a
+  // pas d'avant. Dire « tu prends la tete » serait faux.
+  const j1 = podiumDuJoueur("fcs", ligue, 1)!;
+  verifier("premiere journee : ce n'est pas une prise de pouvoir", j1.nouveau === false);
+  egal("le titre reste sobre", titrePodium(j1), "Tu es le patron");
+}
+
+{
+  // Une journee absente du parcours ne casse pas la serie : c'est la suite
+  // des classements qui compte, pas le calendrier.
+  const troue: ParcoursJoueur[] = [
+    { id: "a", nom: "A", etapes: [
+      { numero: 1, rang: 1, points: 10, gainJournee: 10 },
+      { numero: 4, rang: 1, points: 20, gainJournee: 10 },
+    ] },
+    { id: "b", nom: "B", etapes: [
+      { numero: 1, rang: 2, points: 8, gainJournee: 8 },
+      { numero: 4, rang: 2, points: 15, gainJournee: 7 },
+    ] },
+  ];
+  const r = podiumDuJoueur("a", troue, 4)!;
+  egal("la serie compte les journees classees", r.depuis, 2);
+  egal("l'ecart avec le second", r.derriere, { nom: "B", ecart: 5 });
 }
 
 console.log("\n" + "=".repeat(64));
