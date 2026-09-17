@@ -11,7 +11,7 @@
  * compris, ce qui est precisement ce qu'un gabarit ne sait pas faire seul.
  */
 
-import { accordsDe } from "./joueurs";
+import { accordsPour } from "./joueurs";
 
 export type EtapeRecit = {
   numero: number;
@@ -34,6 +34,8 @@ export type FicheRecit = {
   /** Rang au soir de la journee precedente, `null` s'il n'y en a pas. */
   rangVeille?: number | null;
   derniereJournee: number;
+  /** Ce que le joueur a declare sur sa page Profil, ou null. */
+  genre?: string | null;
   etapes: EtapeRecit[];
 };
 
@@ -193,30 +195,30 @@ export function parcoursEcrit(etapes: readonly EtapeRecit[]): string {
 
 /** « Il » / « Elle » en debut de phrase, ou le nom au neutre. */
 function Il(f: FicheRecit): string {
-  const a = accordsDe(f.name);
+  const a = accordsPour(f.genre, f.name);
   return a.aUnPronom ? a.il.replace(/^./, (c) => c.toUpperCase()) : `**${f.name}**`;
 }
 
 /** « il » / « elle » en milieu de phrase, ou le nom au neutre. */
 function il(f: FicheRecit): string {
-  const a = accordsDe(f.name);
+  const a = accordsPour(f.genre, f.name);
   return a.aUnPronom ? a.il : `**${f.name}**`;
 }
 
 /** « lui » / « elle » apres une preposition, ou le nom au neutre. */
 function lui(f: FicheRecit): string {
-  const a = accordsDe(f.name);
+  const a = accordsPour(f.genre, f.name);
   return a.aUnPronom ? a.lui : `**${f.name}**`;
 }
 
 /** « le joueur » / « la joueuse ». */
 function leJoueur(f: FicheRecit): string {
-  return accordsDe(f.name).leJoueur;
+  return accordsPour(f.genre, f.name).leJoueur;
 }
 
 /** Le « e » d'un participe : « installé » / « installée ». */
 function e(f: FicheRecit): string {
-  return accordsDe(f.name).e;
+  return accordsPour(f.genre, f.name).e;
 }
 
 const maj = (texte: string) => texte.replace(/^./, (c) => c.toUpperCase());
@@ -287,10 +289,10 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
   chapeau.push(
     `Alors que la journée ${journee} vient de redistribuer les cartes, ` +
       `**${leader.name}** s'est ${
-        accordsDe(leader.name).aUnPronom ? `installé${e(leader)}` : "hissé"
+        accordsPour(leader.genre, leader.name).aUnPronom ? `installé${e(leader)}` : "hissé"
       } en tête du classement avec **${pts(leader.points)}**.` +
       (exAequo.length > 1
-        ? ` Mais derrière ${accordsDe(leader.name).aUnPronom ? lui(leader) : "le leader"}, la menace est immédiate : ` +
+        ? ` Mais derrière ${accordsPour(leader.genre, leader.name).aUnPronom ? lui(leader) : "le leader"}, la menace est immédiate : ` +
           `**${listeFr(exAequo.slice(1).map((f) => f.name))}** ` +
           `compte${exAequo.length > 2 ? "nt" : ""} exactement le même total.`
         : fiches[1]
@@ -331,7 +333,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
       );
       if (etapes.length >= 3) {
         p.push(
-          `${Il(leader)} est ensuite ${accordsDe(leader.name).aUnPronom ? "remonté" + e(leader) : "remonté"} à la ` +
+          `${Il(leader)} est ensuite ${accordsPour(leader.genre, leader.name).aUnPronom ? "remonté" + e(leader) : "remonté"} à la ` +
             `**${rangEcrit(etapes[1].rang)} place** après la journée ${etapes[1].numero}, avant de ` +
             `${etapes[2].rang <= etapes[1].rang ? "s'installer" : "reculer"} à la ` +
             `**${rangEcrit(etapes[etapes.length - 2].rang)} place** à l'issue de la journée ` +
@@ -342,8 +344,8 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
         `Et lors de la journée ${journee}, tout s'est accéléré.` +
           (leader.derniereJournee > 0
             ? ` Avec **${pts(leader.derniereJournee)}** supplémentaires, ` +
-              `${accordsDe(leader.name).aUnPronom ? il(leader) : `**${leader.name}**`} s'est ` +
-              `${accordsDe(leader.name).aUnPronom ? `emparé${e(leader)}` : "emparé"} de la première place ` +
+              `${accordsPour(leader.genre, leader.name).aUnPronom ? il(leader) : `**${leader.name}**`} s'est ` +
+              `${accordsPour(leader.genre, leader.name).aUnPronom ? `emparé${e(leader)}` : "emparé"} de la première place ` +
               `avec **${pts(leader.points)}**.`
             : ""),
       );
@@ -360,7 +362,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
       );
       if (leader.derniereJournee > 0) {
         p.push(
-          `Sur la seule journée ${journee}, ${accordsDe(leader.name).aUnPronom ? il(leader) : `**${leader.name}**`} ` +
+          `Sur la seule journée ${journee}, ${accordsPour(leader.genre, leader.name).aUnPronom ? il(leader) : `**${leader.name}**`} ` +
             `a ajouté **${pts(leader.derniereJournee)}** à son total.`,
         );
       }
@@ -500,7 +502,7 @@ export function ecrireRecit(e_: EntreesRecit): Recit | null {
       cle: "regulier",
       intertitre: `${regulier.name}, la régularité qui paie`,
       paragraphes: p,
-      phraseForte: `${regulier.name} ne fait pas de bruit. ${maj(accordsDe(regulier.name).aUnPronom ? il(regulier) : regulier.name)} avance. Et ${accordsDe(regulier.name).aUnPronom ? il(regulier) : regulier.name} est désormais à ${pts(regulier.points)}.`,
+      phraseForte: `${regulier.name} ne fait pas de bruit. ${maj(accordsPour(regulier.genre, regulier.name).aUnPronom ? il(regulier) : regulier.name)} avance. Et ${accordsPour(regulier.genre, regulier.name).aUnPronom ? il(regulier) : regulier.name} est désormais à ${pts(regulier.points)}.`,
     });
   }
 

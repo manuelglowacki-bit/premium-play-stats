@@ -77,9 +77,10 @@ egal("sansAccents retire les etoiles", sansAccents("Il a **25 points**."), "Il a
 // ------------------------------------------------------------------
 function fiche(
   name: string, rang: number, rangs: number[], cumuls: number[], gains: number[], exact = 0,
+  genre: string | null = null,
 ): FicheRecit {
   return {
-    id: name, name, rang,
+    id: name, name, rang, genre,
     points: cumuls[cumuls.length - 1],
     exactScores: exact,
     progression: rangs.length > 1 ? rangs[0] - rangs[rangs.length - 1] : 0,
@@ -207,6 +208,23 @@ console.log("\nLes clefs d'article (ce a quoi les reactions se rattachent)");
     clefs.every((c) => !/FCS|Lulu|Sanji|Quentin|Max|Mel11/i.test(c)), JSON.stringify(clefs));
   verifier("la clef du leader est stable", clefs.includes("leader"), JSON.stringify(clefs));
   verifier("celle de la conclusion aussi", clefs.includes("conclusion"), JSON.stringify(clefs));
+}
+
+
+console.log("\nLE GENRE DECLARE SUR LE PROFIL l'emporte");
+// Un joueur qui corrige son profil doit voir l'article changer. Sans cela,
+// la correction resterait sans effet et il n'aurait aucun recours.
+{
+  const declare = fiche("Sanji", 1, [1, 1], [10, 20], [10, 10], 0, "feminin");
+  const art = ecrireRecit({
+    ...entrees,
+    fiches: [declare, fiche("B", 2, [2, 2], [8, 15], [8, 7])],
+    remontees: [], chutes: [], densite: null, exAequoTete: 1,
+  })!;
+  const texte = sansAccents(art.sections.flatMap((x) => x.paragraphes).join(" "));
+  verifier("Sanji declare au feminin est ecrit au feminin",
+    /\belle\b|\bElle\b/.test(texte), texte.slice(0, 300));
+  verifier("et plus au masculin", !/\bIl\b|\bil\b/.test(texte), texte.slice(0, 300));
 }
 
 console.log("\n" + "=".repeat(64));

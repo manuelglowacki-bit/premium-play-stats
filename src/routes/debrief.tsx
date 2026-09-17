@@ -1170,6 +1170,8 @@ function DebriefPage() {
       // sous un seul nom, sinon l'article raconte deux personnes la ou il
       // n'y en a qu'une (voir src/lib/joueurs.ts).
       name: pseudoActuel(profile.pseudo) || "Joueur",
+      // Ce que le joueur a declare sur son Profil : c'est lui qui sait.
+      genre: (profile as any).genre ?? null,
       avatar: profile.avatar_url || "",
       points: leagueStats.pointsByUser[profile.id] ?? 0,
       exactScores: leagueStats.exactScoresByUser[profile.id] ?? 0,
@@ -1290,6 +1292,7 @@ function DebriefPage() {
       return {
         id: String(joueur.id),
         name: joueur.name as string,
+        genre: (joueur.genre as string | null) ?? null,
         avatar: (joueur.avatar as string) || "",
         rang: derniereEtape ? derniereEtape.rang : Number(joueur.rank),
         points: derniereEtape ? derniereEtape.points : Number(joueur.points),

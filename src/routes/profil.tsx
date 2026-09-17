@@ -55,6 +55,11 @@ function ProfilPage() {
 
   // Profil classique
   const [username, setUsername] = useState("Red evils");
+  // COMMENT LE SITE DOIT PARLER DE TOI. Le Debrief ecrit des phrases sur
+  // chaque joueur ; sans cette information il ne peut que supposer, et se
+  // tromper sur une vraie personne. Personne n'est mieux place pour le dire
+  // que l'interesse. Vide = pas encore repondu : le texte reste au neutre.
+  const [genre, setGenre] = useState<string>("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [savedProfile, setSavedProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -248,6 +253,7 @@ function ProfilPage() {
 
         if (profile) {
           setUsername(profile.pseudo || "Red evils");
+          setGenre(((profile as any).genre as string) || "");
           setAvatarUrl(profile.avatar_url || "");
         } else {
           const { error: profileCreateError } = await supabase
@@ -787,6 +793,9 @@ function ProfilPage() {
           id: user.id,
           pseudo: cleanUsername,
           avatar_url: avatarUrl || null,
+          // Vide => null : « pas repondu » est une valeur a part entiere,
+          // et la base n'accepte de toute facon que feminin, masculin ou rien.
+          genre: genre === "feminin" || genre === "masculin" ? genre : null,
           updated_at: new Date().toISOString(),
         });
 
@@ -1355,6 +1364,47 @@ function ProfilPage() {
                     </>
                   )}
                 </button>
+              </div>
+
+              {/* JOUEUSE OU JOUEUR — pour que le Debrief ecrive juste.
+                  Sans cette reponse, il parle de toi au neutre en repetant
+                  ton pseudo plutot que de supposer. */}
+              <div className="mt-4">
+                <p className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">
+                  Comment le site parle de toi
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[
+                    { valeur: "feminin", mot: "Joueuse", exemple: "« elle a marqué »" },
+                    { valeur: "masculin", mot: "Joueur", exemple: "« il a marqué »" },
+                    { valeur: "", mot: "Je préfère ne pas dire", exemple: "ton pseudo est répété" },
+                  ].map((choix) => (
+                    <button
+                      key={choix.valeur || "neutre"}
+                      type="button"
+                      onClick={() => setGenre(choix.valeur)}
+                      aria-pressed={genre === choix.valeur}
+                      className={`tap rounded-xl border px-3.5 py-2.5 text-left transition-colors ${
+                        genre === choix.valeur
+                          ? "border-emerald-400/60 bg-emerald-400/[.10]"
+                          : "border-slate-700 hover:border-slate-500"
+                      }`}
+                    >
+                      <span
+                        className={`block font-display text-sm font-black ${
+                          genre === choix.valeur ? "text-emerald-200" : "text-white"
+                        }`}
+                      >
+                        {choix.mot}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-slate-500">{choix.exemple}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                  Sert uniquement à accorder les phrases du Debrief. Personne
+                  d'autre ne voit ce choix, et tu peux le changer quand tu veux.
+                </p>
               </div>
 
               <div className="mt-2.5 flex items-center gap-2 text-xs text-slate-500">

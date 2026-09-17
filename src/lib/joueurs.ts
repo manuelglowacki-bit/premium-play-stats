@@ -6,16 +6,17 @@
  *
  *   1. LE GENRE. « Il a marque 7 points » est faux pour Lulu. Un prenom ne
  *      dit pas le genre de quelqu'un, et un pseudo encore moins : la seule
- *      facon honnete de le savoir est qu'on nous le dise. C'est fait :
- *      l'organisateur a indique que Lulu et Mel11 sont des joueuses et que
- *      le reste de la ligue est masculin. Ce ne sont donc pas des
- *      suppositions, mais ce qu'il a declare sur SES vingt-trois joueurs.
+ *      facon honnete de le savoir est qu'on nous le dise.
  *
- *      ATTENTION pour la suite : cette declaration couvre la ligue telle
- *      qu'elle est aujourd'hui. Un joueur qui arriverait plus tard serait
- *      ecrit au masculin sans que personne l'ait dit — il faut donc
- *      l'ajouter ici a son inscription. Le neutre existe toujours
- *      (`genreDe` sait le rendre) : il suffit de mettre "neutre".
+ *      C'EST DESORMAIS CHACUN QUI LE DIT, depuis sa page Profil
+ *      (`profiles.genre`). Personne n'est mieux place, et cela evite qu'une
+ *      liste ecrite ici vieillisse en silence a chaque nouvelle
+ *      inscription. `accordsPour()` lit ce choix en priorite.
+ *
+ *      La table ci-dessous ne sert plus que de REPLI, pour les joueurs qui
+ *      n'ont pas encore repondu : elle garde ce que l'organisateur avait
+ *      indique pour sa ligue. Elle s'effacera d'elle-meme a mesure que
+ *      chacun renseigne son profil.
  *
  *   2. LES PSEUDOS CHANGES EN COURS DE SAISON. « North London » a la J1 et
  *      « Jo gunners » ensuite sont le meme joueur. Sans cette table, le
@@ -108,8 +109,28 @@ export type Accords = {
   aUnPronom: boolean;
 };
 
+/**
+ * LES ACCORDS D'UN JOUEUR, a partir de ce QU'IL A DECLARE.
+ *
+ * Le genre choisi sur sa page Profil l'emporte toujours : c'est lui qui
+ * sait. On ne retombe sur la table de repli que s'il n'a rien repondu.
+ *
+ * @param genreDeclare La valeur de `profiles.genre`, ou null.
+ */
+export function accordsPour(
+  genreDeclare: string | null | undefined,
+  pseudo: string | null | undefined,
+): Accords {
+  const declare = String(genreDeclare ?? "").trim();
+  if (declare === "feminin" || declare === "masculin") return accordsDuGenre(declare);
+  return accordsDe(pseudo);
+}
+
 export function accordsDe(pseudo: string | null | undefined): Accords {
-  const genre = genreDe(pseudo);
+  return accordsDuGenre(genreDe(pseudo));
+}
+
+function accordsDuGenre(genre: Genre): Accords {
   if (genre === "feminin") {
     return { il: "elle", lui: "elle", leJoueur: "la joueuse", son: "son", e: "e", aUnPronom: true };
   }

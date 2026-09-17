@@ -2,7 +2,7 @@
  * Verification des accords et des anciens pseudos.
  *   npm run verif-joueurs
  */
-import { accordsDe, clefPseudo, genreDe, pseudoActuel } from "./joueurs";
+import { accordsDe, accordsPour, clefPseudo, genreDe, pseudoActuel } from "./joueurs";
 
 let total = 0;
 let echecs = 0;
@@ -57,6 +57,23 @@ egal("Mel11 est accordee au feminin", accordsDe("Mel11").leJoueur, "la joueuse")
 // « derriere il » n'existe pas en francais : il faut le pronom tonique.
 egal("le pronom tonique au feminin", accordsDe("Lulu").lui, "elle");
 egal("le pronom tonique au masculin", accordsDe("Sanji").lui, "lui");
+
+
+console.log("\nCE QUE LE JOUEUR A DECLARE SUR SON PROFIL");
+// C'est lui qui sait. Son choix l'emporte toujours sur la table de repli —
+// sinon une correction faite sur son propre profil resterait sans effet.
+egal("le choix du joueur l'emporte sur le repli",
+  accordsPour("feminin", "Sanji").il, "elle");
+egal("et dans l'autre sens aussi",
+  accordsPour("masculin", "Lulu").il, "il");
+egal("les accords suivent", accordsPour("feminin", "Sanji").leJoueur, "la joueuse");
+egal("le participe aussi", accordsPour("feminin", "Sanji").e, "e");
+
+// Pas encore repondu : on retombe sur ce que l'organisateur avait indique.
+egal("sans reponse, on garde le repli", accordsPour(null, "Lulu").il, "elle");
+egal("vide vaut pas de reponse", accordsPour("", "Lulu").il, "elle");
+egal("une valeur inconnue ne casse rien", accordsPour("bidule", "Lulu").il, "elle");
+egal("les espaces autour ne genent pas", accordsPour(" masculin ", "Lulu").il, "il");
 
 console.log("\n" + "=".repeat(64));
 console.log(echecs === 0 ? `TOUT PASSE (${total} verifications)` : `${echecs} ECHEC(S) sur ${total}`);
