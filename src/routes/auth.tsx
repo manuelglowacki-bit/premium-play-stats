@@ -48,6 +48,11 @@ export function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pseudo, setPseudo] = useState("");
+  // COMMENT LE SITE PARLERA DE LUI. Demande des l'inscription plutot que
+  // laissee a decouvrir dans le Profil : le Debrief ecrit des phrases sur
+  // chaque joueur, et il vaut mieux savoir avant le premier article
+  // qu'apres. Facultatif : vide = le texte reste au neutre.
+  const [genre, setGenre] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -154,6 +159,9 @@ export function AuthPage() {
               pseudo: pseudoPropre,
               avatar_url: null,
               favorite_team: null,
+              // Vide => null : « pas repondu » est une valeur a part
+              // entiere, modifiable a tout moment dans le Profil.
+              genre: genre === "feminin" || genre === "masculin" ? genre : null,
               is_admin: false,
             });
 
@@ -373,6 +381,49 @@ export function AuthPage() {
                     maxLength={20}
                     className="w-full rounded-xl border border-slate-800/80 bg-[#050b16]/80 px-4 py-3.5 pl-10 text-sm text-white placeholder-slate-600 shadow-[inset_0_1px_3px_rgba(0,0,0,.4)] transition-all duration-200 focus:border-emerald-500/60 focus:bg-[#050b16] focus:shadow-[0_0_0_3px_rgba(16,185,129,.15),inset_0_1px_3px_rgba(0,0,0,.4)] focus:outline-none"
                   />
+                </div>
+              </div>
+            )}
+
+            {/* JOUEUSE OU JOUEUR — facultatif, et dit comme tel.
+                On montre la phrase qui en decoule plutot que d'attendre du
+                joueur qu'il devine a quoi ca sert. Modifiable ensuite dans
+                le Profil. */}
+            {isSignUp && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300">
+                  Comment le site parlera de toi{" "}
+                  <span className="font-normal text-slate-500">— facultatif</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { valeur: "feminin", mot: "Joueuse", exemple: "« elle a marqué »" },
+                    { valeur: "masculin", mot: "Joueur", exemple: "« il a marqué »" },
+                    { valeur: "", mot: "Je ne dis pas", exemple: "ton pseudo est répété" },
+                  ].map((choix) => (
+                    <button
+                      key={choix.valeur || "neutre"}
+                      type="button"
+                      onClick={() => setGenre(choix.valeur)}
+                      aria-pressed={genre === choix.valeur}
+                      className={`tap flex-1 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                        genre === choix.valeur
+                          ? "border-emerald-500/60 bg-emerald-400/[.10]"
+                          : "border-slate-800/80 hover:border-slate-600"
+                      }`}
+                    >
+                      <span
+                        className={`block text-sm font-bold ${
+                          genre === choix.valeur ? "text-emerald-200" : "text-white"
+                        }`}
+                      >
+                        {choix.mot}
+                      </span>
+                      <span className="mt-0.5 block text-[10px] leading-tight text-slate-500">
+                        {choix.exemple}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
