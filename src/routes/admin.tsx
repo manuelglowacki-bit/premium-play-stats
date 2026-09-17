@@ -53,6 +53,7 @@ import {
 import { lienRappel } from "@/lib/mailRappel";
 import { useAuth } from "@/context/AuthContext";
 import { oublierDebriefVu } from "@/lib/annonceDebrief";
+import { oublierResumeVu } from "@/lib/annonceResume";
 import { oublierNiveau } from "@/lib/annonceNiveau";
 import {
   type BonusCandidate,
@@ -6123,14 +6124,16 @@ function SettingsTab({
           Revoir les annonces
         </h2>
         <p className="mb-4 text-xs text-slate-500">
-          Les bannières de l'Accueil ne s'affichent qu'une fois. Ce bouton les
-          remet en attente <span className="font-semibold text-slate-300">pour toi seul</span>,
+          Les bannières de l'Accueil ne s'affichent qu'une fois : « Ta journée »,
+          le passage de niveau, le Debrief en ligne. Ce bouton les remet en
+          attente <span className="font-semibold text-slate-300">pour toi seul</span>,
           pour vérifier ce que voient les joueurs. Aucun autre compte n'est touché.
         </p>
         <GhostButton
           onClick={() => {
             oublierDebriefVu(user?.id);
             oublierNiveau(user?.id);
+            oublierResumeVu(user?.id);
             notify("👁️ Annonces réarmées — retourne sur l'Accueil");
           }}
           disabled={!user?.id}

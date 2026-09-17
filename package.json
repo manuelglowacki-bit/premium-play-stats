@@ -35,6 +35,8 @@
     "verif-mail-rappel": "tsx src/lib/mailRappel.verif.ts",
     "verif-parcours": "tsx src/lib/parcoursSaison.verif.ts",
     "verif-recit": "tsx src/lib/recitDebrief.verif.ts",
+    "verif-annonce-resume": "tsx src/lib/annonceResume.verif.ts",
+    "verif-resume": "tsx src/lib/resumePerso.verif.ts",
     "verif-emojis": "tsx src/lib/catalogueEmojis.verif.ts",
     "verif-reactions": "tsx src/lib/reactionsDebrief.verif.ts",
     "verif-perimetre": "tsx src/lib/perimetreClassement.verif.ts",

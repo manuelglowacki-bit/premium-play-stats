@@ -28,6 +28,9 @@ import { debriefAAnnoncer, lireDebriefVu, memoriserDebriefVu } from "@/lib/annon
 import { journeeTerminee } from "@/lib/parcoursSaison";
 import { bonusEnVigueurParJournee } from "@/lib/journeeBonus";
 import { journeesDeLaSaison } from "@/lib/perimetreClassement";
+import { parcoursSaison } from "@/lib/parcoursSaison";
+import { resumeDuJoueur, titreResume, type ResumePerso } from "@/lib/resumePerso";
+import { lireResumeVu, memoriserResumeVu, resumeAMontrer } from "@/lib/annonceResume";
 import { rankPlayers } from "@/lib/leaderboardRanking";
 import { computePrizeByRank } from "@/lib/prizePool";
 import { computeLeagueStats } from "@/lib/leaderboardStats";
@@ -124,11 +127,25 @@ function IndexPage() {
   const [niveauFete, setNiveauFete] = useState<number | null>(null);
   // La journee racontee par le Debrief, et celle qu'on annonce (ou null).
   const [journeeDuDebrief, setJourneeDuDebrief] = useState<number | null>(null);
+  // « Ta journee » : le resume personnel, et le numero de journee a annoncer.
+  const [resumePerso, setResumePerso] = useState<ResumePerso | null>(null);
+  const [resumeAnnonce, setResumeAnnonce] = useState<number | null>(null);
   const [debriefAnnonce, setDebriefAnnonce] = useState<number | null>(null);
 
   // ANNONCE DU DEBRIEF — une fois par journee et par joueur.
   // Le numero est memorise des l'affichage : la banniere ne revient donc
   // pas si le joueur ferme l'application sans cliquer.
+  // LA BULLE « TA JOURNEE » — une fois par journee et par joueur, a sa
+  // premiere visite apres la fin de la journee. Le numero est memorise DES
+  // l'affichage : elle ne revient donc pas si le joueur ferme sans lire.
+  useEffect(() => {
+    if (!user?.id || !resumePerso) return;
+    const aMontrer = resumeAMontrer(resumePerso.journee, lireResumeVu(user.id));
+    if (aMontrer === null) return;
+    setResumeAnnonce(aMontrer);
+    memoriserResumeVu(user.id, aMontrer);
+  }, [user?.id, resumePerso]);
+
   useEffect(() => {
     if (!user?.id || journeeDuDebrief === null) return;
     const aAnnoncer = debriefAAnnoncer(journeeDuDebrief, lireDebriefVu(user.id));
@@ -442,7 +459,7 @@ function IndexPage() {
         //
         // `reconciledMatches` et non la base brute : un score arrive par
         // l'API compte, exactement comme sur le Debrief.
-        const journeeDuDebrief = (() => {
+        const debriefEtJournees = (() => {
           // MEME PERIMETRE QUE LE DEBRIEF, saison comprise. Sans ce filtre,
           // la banniere comptait les journees de toutes les saisons : elle
           // pouvait annoncer une journee que le Debrief ne raconte pas.
@@ -499,9 +516,13 @@ function IndexPage() {
             if (derniere === null || numero > derniere) derniere = numero;
           });
 
-          return derniere;
+          // Le detail sort avec le numero : la bulle « Ta journee » se
+          // reconstruit sur EXACTEMENT les memes journees que le Debrief,
+          // sans refaire ce tri une seconde fois dans son coin.
+          return { derniere, parJournee, numeroParId };
         })();
 
+        const journeeDuDebrief = debriefEtJournees.derniere;
         if (!cancelled) setJourneeDuDebrief(journeeDuDebrief);
 
         const bonusOptions = (bonusOptionsData || []) as { matchday_id: string; match_id: string }[];
@@ -593,6 +614,64 @@ function IndexPage() {
         // Tri + attribution du rang : source unique de vérité, réutilisée
         // telle quelle par la page Classement et le Profil.
         const rankedRankings = rankPlayers(normalizedRankings);
+
+        // ============================================================
+        // « TA JOURNEE » — le resume personnel du joueur connecte
+        // ============================================================
+        // On rejoue le classement journee par journee (parcoursSaison, celui
+        // du Debrief) pour savoir OU en etait chacun la veille : c'est la
+        // seule facon de dire « tu as double Untel ». Les points ne sont pas
+        // recalcules — ils viennent de pointsByUserAndMatchday, la meme
+        // source que le Classement.
+        if (journeeDuDebrief && user?.id) {
+          const journeesJouees = [...debriefEtJournees.parJournee.entries()]
+            .map(([id, matchs]) => ({
+              id,
+              numero: debriefEtJournees.numeroParId.get(id) ?? 0,
+              matchIds: (matchs as any[]).map((m) => String(m.id)),
+            }))
+            .filter((j) => j.numero > 0 && j.numero <= journeeDuDebrief);
+
+          const pronoParCle = new Map<string, any>();
+          (predictions || []).forEach((pred: any) => {
+            if (!pred?.user_id || !pred?.match_id) return;
+            pronoParCle.set(`${pred.user_id}:${pred.match_id}`, pred);
+          });
+          const matchParIdPourExacts = new Map(
+            ((reconciledMatches || []) as any[]).map((m: any) => [String(m.id), m]),
+          );
+
+          const parcours = parcoursSaison({
+            joueurs: rankedRankings.map((r: any) => ({ id: String(r.user_id), name: r.name })),
+            journees: journeesJouees,
+            pointsDeLaJournee: (uid, journeeId) =>
+              pointsByUserAndMatchday?.[uid]?.[journeeId] ?? 0,
+            pointsDe: (uid, matchId) => pointsByPredictionKey[`${uid}:${matchId}`] ?? 0,
+            exactDe: (uid, matchId) => {
+              const prono = pronoParCle.get(`${uid}:${matchId}`);
+              const match = matchParIdPourExacts.get(String(matchId));
+              if (!prono || !match) return false;
+              if (match.home_score == null || match.away_score == null) return false;
+              return (
+                Number(prono.home_prediction) === Number(match.home_score) &&
+                Number(prono.away_prediction) === Number(match.away_score)
+              );
+            },
+            classer: rankPlayers,
+          });
+
+          const parcoursTous = rankedRankings.map((r: any) => ({
+            id: String(r.user_id),
+            nom: String(r.name),
+            etapes: parcours.get(String(r.user_id)) ?? [],
+          }));
+
+          if (!cancelled) {
+            setResumePerso(resumeDuJoueur(String(user.id), parcoursTous, journeeDuDebrief));
+          }
+        } else if (!cancelled) {
+          setResumePerso(null);
+        }
         // -------- Carriere multi-saisons --------
         // prediction -> match -> matchday -> season.
         // Toutes les saisons sont cumulees ; aucun reset annuel.
@@ -877,6 +956,129 @@ setLeaderboard(rankedRankings);
           clairement séparées, cohérent avec la demande de blocs "qui
           respirent" plutôt que compressés. */}
       <div className="relative z-10 mx-auto max-w-6xl space-y-7 pb-28 md:space-y-8 md:pb-20">
+
+        {/* « TA JOURNEE » — la bulle personnelle, en premier.
+            Le Debrief raconte la ligue ; celle-ci ne raconte qu'une
+            personne : ce qu'elle a marque, ou elle en est, qui elle a double.
+            C'est la question qu'on se pose en ouvrant le site, et la reponse
+            demandait jusqu'ici de comparer deux pages.
+            Une fois par journee et par joueur (src/lib/annonceResume.ts) ;
+            le bouton ne fait que masquer, le numero est deja memorise. */}
+        {resumeAnnonce !== null && resumePerso !== null && (
+          <div
+            role="status"
+            className="relative overflow-hidden rounded-[26px] border border-cyan-300/35 bg-gradient-to-br from-cyan-400/[.14] via-cyan-400/[.05] to-transparent p-5 shadow-[0_18px_60px_-20px_rgba(34,211,238,.45)] md:p-6"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -right-16 -top-16 size-56 rounded-full bg-cyan-400/15 blur-3xl"
+            />
+
+            <div className="relative">
+              <div className="flex items-start gap-4">
+                <span className="text-4xl leading-none md:text-5xl" aria-hidden>
+                  {resumePerso.meilleureJournee
+                    ? "🏆"
+                    : resumePerso.mouvement > 0
+                      ? "📈"
+                      : resumePerso.mouvement < 0
+                        ? "📉"
+                        : "🎯"}
+                </span>
+
+                <div className="min-w-0 flex-1">
+                  <p className="font-mono text-[10px] font-black uppercase tracking-[.2em] text-cyan-300">
+                    Ta journée {resumePerso.journee}
+                  </p>
+                  <p className="mt-1 font-display text-xl font-black uppercase leading-tight text-white md:text-2xl">
+                    {titreResume(resumePerso)}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setResumeAnnonce(null)}
+                  aria-label="Fermer"
+                  className="tap -mr-1 -mt-1 shrink-0 rounded-lg px-2 py-1 font-mono text-lg leading-none text-cyan-200/60 transition-colors hover:text-cyan-100"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* LES TROIS CHIFFRES, gros et lisibles d'un coup d'oeil. */}
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
+                  <p className="font-mono text-[9px] font-black uppercase tracking-[.14em] text-cyan-200/70">
+                    Marqués
+                  </p>
+                  <p className="mt-0.5 font-display text-2xl font-black tabular-nums text-white">
+                    {resumePerso.gain}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
+                  <p className="font-mono text-[9px] font-black uppercase tracking-[.14em] text-cyan-200/70">
+                    Ta place
+                  </p>
+                  <p className="mt-0.5 font-display text-2xl font-black tabular-nums text-white">
+                    {resumePerso.rang}
+                    <span className="text-sm text-slate-400">/{resumePerso.participants}</span>
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
+                  <p className="font-mono text-[9px] font-black uppercase tracking-[.14em] text-cyan-200/70">
+                    Total
+                  </p>
+                  <p className="mt-0.5 font-display text-2xl font-black tabular-nums text-white">
+                    {resumePerso.points}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-1.5 text-sm leading-relaxed text-cyan-50/90">
+                {resumePerso.rangVeille !== null && resumePerso.mouvement !== 0 && (
+                  <p>
+                    Tu passes de la{" "}
+                    <span className="font-black text-white">{resumePerso.rangVeille}e</span> à la{" "}
+                    <span className="font-black text-white">{resumePerso.rang}e</span> place —{" "}
+                    <span className={resumePerso.mouvement > 0 ? "font-black text-emerald-300" : "font-black text-red-300"}>
+                      {resumePerso.mouvement > 0 ? "+" : ""}
+                      {resumePerso.mouvement} place{Math.abs(resumePerso.mouvement) > 1 ? "s" : ""}
+                    </span>
+                    .
+                  </p>
+                )}
+
+                {resumePerso.doubles.length > 0 && (
+                  <p>
+                    Tu passes devant{" "}
+                    <span className="font-black text-white">{resumePerso.doubles.join(", ")}</span>.
+                  </p>
+                )}
+
+                {resumePerso.doublePar.length > 0 && (
+                  <p>
+                    <span className="font-black text-white">{resumePerso.doublePar.join(", ")}</span>{" "}
+                    {resumePerso.doublePar.length > 1 ? "sont passés" : "est passé"} devant toi.
+                  </p>
+                )}
+
+                <p>
+                  {resumePerso.retard === 0
+                    ? "Personne devant toi. À toi de tenir."
+                    : `Tu es à ${resumePerso.retard} point${resumePerso.retard > 1 ? "s" : ""} de la tête.`}
+                </p>
+              </div>
+
+              <Link
+                to="/debrief"
+                onClick={() => setResumeAnnonce(null)}
+                className="tap mt-4 inline-block rounded-xl border border-cyan-300/40 px-3 py-2.5 font-mono text-[10px] font-black uppercase tracking-[.12em] text-cyan-200 transition-colors hover:border-cyan-300/70 hover:text-cyan-100"
+              >
+                Lire le Debrief →
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* LE DEBRIEF EST EN LIGNE — la seule chose qui manquait pour que la
             page soit lue : un mot sur l'Accueil, la ou tout le monde passe.
