@@ -179,6 +179,11 @@ function ClassementPage() {
   // src/lib/classementBadges.ts et ses verifications).
   const [badgesByUser, setBadgesByUser] = useState<Record<string, Badge[]>>({});
   const [latestMatchdayNumber, setLatestMatchdayNumber] = useState<number | null>(null);
+  // CE QUE CHACUN A PRIS SUR LA DERNIERE JOURNEE TERMINEE. Le total seul ne
+  // dit pas qui vient de faire une grosse journee : « 28 pts » se lit de la
+  // meme facon qu'on en ait pris 12 ou 1 ce week-end. Affiche en petit sous
+  // le total, il ne prend pas la place du classement.
+  const [gainDerniereJournee, setGainDerniereJournee] = useState<Record<string, number>>({});
   const [careerStatsByUser, setCareerStatsByUser] = useState<Record<string, { points: number; exactScores: number }>>({});
   const [previousRankByUser, setPreviousRankByUser] = useState<Record<string, number>>({});
   // Liste des journées Ligue 1 de la saison (id + numéro) — sert uniquement au
@@ -297,6 +302,8 @@ function ClassementPage() {
             setExactScoresByUser({});
             setRegularitySuccessByUser({});
             setPlayedMatchdaysByUser({});
+          setGainDerniereJournee({});
+            setGainDerniereJournee({});
             setFinishedMatchdayCount(0);
             setLatestMatchdayNumber(null);
             setBestMatchday(null);
@@ -751,6 +758,19 @@ function ClassementPage() {
               scoresExactsParJoueur: exactScores,
             }),
           );
+          // Les points de la derniere journee TERMINEE, joueur par joueur.
+          // Rien n'est recalcule : pointsByUserAndMatchday sort du moteur,
+          // c'est la meme source que le total affiche a cote.
+          const derniereJourneeId = journeesTerminees[journeesTerminees.length - 1] ?? null;
+          const gains: Record<string, number> = {};
+          if (derniereJourneeId) {
+            (profiles ?? []).forEach((profil: any) => {
+              const uid = String(profil.id);
+              gains[uid] = Number(pointsByUserAndMatchday?.[uid]?.[derniereJourneeId] ?? 0);
+            });
+          }
+          setGainDerniereJournee(gains);
+
           setLatestMatchdayNumber(latestFinishedNumber);
           setBestMatchday(topMatchday);
           setCareerStatsByUser(Object.fromEntries(careerByUser));
@@ -804,6 +824,7 @@ function ClassementPage() {
           setExactScoresByUser({});
           setRegularitySuccessByUser({});
           setPlayedMatchdaysByUser({});
+          setGainDerniereJournee({});
           setFinishedMatchdayCount(0);
           setLatestMatchdayNumber(null);
           setBestMatchday(null);
@@ -1155,6 +1176,14 @@ function ClassementPage() {
 
                           <div className="text-center">
                             <div className={`font-display text-3xl font-black leading-none ${pointTone}`}>{p.points}</div>
+                            {/* Ce qu'il vient de prendre. Rien quand il n'a
+                                rien marque : « +0 » n'apprend rien et alourdit
+                                vingt-trois lignes. */}
+                            {(gainDerniereJournee[p.id] ?? 0) > 0 && (
+                              <div className="mt-0.5 font-mono text-[9px] font-black tabular-nums text-emerald-400">
+                                +{gainDerniereJournee[p.id]} pts
+                              </div>
+                            )}
                           </div>
 
                           <div className={`text-center font-display text-base font-black ${gapTone}`}>
@@ -1383,9 +1412,18 @@ function ClassementPage() {
                           <div className={`font-display text-[23px] font-black leading-none ${pointTone}`}>
                             {p.points}
                           </div>
-                          <div className="mt-0.5 font-mono text-[6px] font-bold uppercase tracking-widest text-slate-400">
-                            points
-                          </div>
+                          {/* Sur telephone, ce qu'il vient de prendre remplace
+                              le mot « points » : la colonne est etroite, et un
+                              chiffre en dit plus qu'un mot qu'on devine deja. */}
+                          {(gainDerniereJournee[p.id] ?? 0) > 0 ? (
+                            <div className="mt-0.5 font-mono text-[8px] font-black tabular-nums text-emerald-400">
+                              +{gainDerniereJournee[p.id]}
+                            </div>
+                          ) : (
+                            <div className="mt-0.5 font-mono text-[6px] font-bold uppercase tracking-widest text-slate-400">
+                              points
+                            </div>
+                          )}
                         </div>
                       </div>
 
